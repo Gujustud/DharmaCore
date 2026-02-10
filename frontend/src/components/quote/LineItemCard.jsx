@@ -67,9 +67,9 @@ export function LineItemCard({
 
   return (
     <Card className="mb-4">
-      <div className="mb-3 flex flex-nowrap items-center gap-[20px] border-b border-gray-200 pb-3">
+      <div className="mb-3 flex flex-wrap items-center gap-3 border-b border-gray-200 pb-3 sm:gap-[20px]">
         <span className="shrink-0 font-medium text-gray-500">Part {lineIndex + 1}</span>
-        <div className="min-w-0 shrink-0 max-w-[200px]">
+        <div className="min-w-0 flex-1 sm:max-w-[200px] sm:flex-initial">
           <Input
             placeholder="Part number"
             value={str(lineItem.part_number)}

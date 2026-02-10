@@ -3,8 +3,16 @@ export function Input({
   type = 'text',
   className = '',
   error,
+  value,
+  onChange,
   ...props
 }) {
+  const isNumeric = type === 'number'
+  const inputType = isNumeric ? 'text' : type
+  const displayValue = isNumeric
+    ? (value === '' || value == null ? '' : String(value))
+    : value
+
   return (
     <div className="w-full">
       {label && (
@@ -13,12 +21,15 @@ export function Input({
         </label>
       )}
       <input
-        type={type}
+        type={inputType}
+        inputMode={isNumeric ? 'decimal' : undefined}
         className={
           'w-full rounded-input border-2 border-gray-300 px-3 py-2 focus:border-primary-from focus:outline-none ' +
           (error ? 'border-danger ' : '') +
           className
         }
+        value={displayValue}
+        onChange={onChange}
         {...props}
       />
       {error && <p className="mt-1 text-sm text-danger">{error}</p>}

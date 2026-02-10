@@ -152,9 +152,20 @@ export function JobsBoard() {
   }
 
   const mult = sortDir === 'asc' ? 1 : -1
+  function jobNumberToDate(jobNumber) {
+    const s = String(jobNumber ?? '').replace(/\D/g, '')
+    if (s.length !== 8) return 0
+    const mm = parseInt(s.slice(0, 2), 10)
+    const dd = parseInt(s.slice(2, 4), 10)
+    const yyyy = parseInt(s.slice(4, 8), 10)
+    const d = new Date(yyyy, mm - 1, dd)
+    return isNaN(d.getTime()) ? 0 : d.getTime()
+  }
   const sortedJobs = [...jobs].sort((a, b) => {
     if (sortKey === 'job_number') {
-      return mult * String(a.job_number || '').localeCompare(String(b.job_number || ''), undefined, { numeric: true })
+      const ta = jobNumberToDate(a.job_number)
+      const tb = jobNumberToDate(b.job_number)
+      return sortDir === 'desc' ? tb - ta : ta - tb
     }
     if (sortKey === 'customer') {
       const ca = a.customer_name || ''

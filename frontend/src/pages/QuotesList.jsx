@@ -95,9 +95,20 @@ export function QuotesList() {
     })
 
     const mult = sortDir === 'asc' ? 1 : -1
-    list.sort((a, b) => {
+    function jobNumberToDate(jobNumber) {
+      const s = String(jobNumber ?? '').replace(/\D/g, '')
+      if (s.length !== 8) return 0
+      const mm = parseInt(s.slice(0, 2), 10)
+      const dd = parseInt(s.slice(2, 4), 10)
+      const yyyy = parseInt(s.slice(4, 8), 10)
+      const d = new Date(yyyy, mm - 1, dd)
+      return isNaN(d.getTime()) ? 0 : d.getTime()
+    }
+    return [...list].sort((a, b) => {
       if (sortKey === 'job_number') {
-        return mult * String(a.job_number || '').localeCompare(String(b.job_number || ''), undefined, { numeric: true })
+        const ta = jobNumberToDate(a.job_number)
+        const tb = jobNumberToDate(b.job_number)
+        return sortDir === 'desc' ? tb - ta : ta - tb
       }
       if (sortKey === 'customer') {
         const ca = a.expand?.customer?.company || a.customer_name || ''
@@ -117,7 +128,6 @@ export function QuotesList() {
       }
       return 0
     })
-    return list
   }, [quotes, searchDebounced, statusFilter, sortKey, sortDir, lineItemsByQuote])
 
   const handleSort = (key) => {
@@ -181,8 +191,6 @@ export function QuotesList() {
           material_cost_cad: item.material_cost_cad != null && item.material_cost_cad !== '' ? Number(item.material_cost_cad) : undefined,
           material_shipping_cost: item.material_shipping_cost ?? 0,
           testing_cost: item.testing_cost ?? 0,
-          ut_cost: item.ut_cost ?? 0,
-          dp_cost: item.dp_cost ?? 0,
           tooling_total_cost: item.tooling_total_cost ?? 0,
           tooling_description: item.tooling_description,
           programming_hours: item.programming_hours ?? 0,

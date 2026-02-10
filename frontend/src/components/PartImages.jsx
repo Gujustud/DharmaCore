@@ -2,29 +2,34 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 import { pb } from '../lib/pocketbase'
 import { Button } from './ui/Button'
 
+const isPdf = (name) => (name || '').toLowerCase().endsWith('.pdf')
+
 export function PartImages({ record, collectionName, onUpdate, title = 'About this project' }) {
   const [images, setImages] = useState([])
   const [uploading, setUploading] = useState(false)
   const [hoveredImage, setHoveredImage] = useState(null)
+  const [pdfViewerUrl, setPdfViewerUrl] = useState(null)
   const fileInputRef = useRef(null)
   const containerRef = useRef(null)
 
   useEffect(() => {
-    // Load images from record
     const imageList = record?.part_images || []
     setImages(Array.isArray(imageList) ? imageList : imageList ? [imageList] : [])
   }, [record])
 
-  const getImageUrl = (filename, useThumb = true) => {
+  const getFileUrl = (filename, useThumb = true) => {
     if (!record?.id || !filename) return null
-    if (useThumb) {
-      return pb.files.getUrl(record, filename, { thumb: '300x300f' })
+    if (!useThumb || isPdf(filename)) {
+      return pb.files.getUrl(record, filename)
     }
-    return pb.files.getUrl(record, filename)
+    return pb.files.getUrl(record, filename, { thumb: '300x300f' })
   }
 
   const ensureFileName = async (file) => {
-    // Always ensure the file has a valid image mime type
+    if (file.type === 'application/pdf' || isPdf(file.name)) {
+      const name = file.name && file.name.trim() !== '' ? file.name : `document-${Date.now()}.pdf`
+      return new File([file], name, { type: 'application/pdf' })
+    }
     let mimeType = file.type
     
     // If no mime type or invalid, try to detect from file content or default to image/png
@@ -74,7 +79,7 @@ export function PartImages({ record, collectionName, onUpdate, title = 'About th
   const handleFileSelect = useCallback(async (files) => {
     if (!files || files.length === 0) return
     if (!record?.id) {
-      alert('Please save the record first before uploading images.')
+      alert('Please save the record first before uploading images or PDFs.')
       return
     }
 
@@ -82,29 +87,11 @@ export function PartImages({ record, collectionName, onUpdate, title = 'About th
     try {
       // Process files to ensure they have correct mime types (async)
       const fileList = await Promise.all(Array.from(files).map(ensureFileName))
-      
-      // Log file info for debugging
-      fileList.forEach((file, idx) => {
-        console.log(`File ${idx + 1}:`, {
-          name: file.name,
-          type: file.type,
-          size: file.size,
-        })
-      })
-      
-      // Upload files one at a time using FormData to ensure mime type is sent correctly
+
       let lastUpdated = null
       for (const file of fileList) {
-        console.log('Uploading file:', file.name, 'with type:', file.type)
-        
-        // Use FormData to ensure the file's mime type is properly sent
         const formData = new FormData()
         formData.append('part_images+', file, file.name)
-        
-        // Verify FormData entry
-        const formDataEntry = formData.get('part_images+')
-        console.log('FormData file type:', formDataEntry?.type, 'name:', formDataEntry?.name)
-        
         lastUpdated = await pb.collection(collectionName).update(record.id, formData)
       }
       
@@ -114,10 +101,7 @@ export function PartImages({ record, collectionName, onUpdate, title = 'About th
       if (onUpdate) onUpdate(updated)
     } catch (e) {
       console.error('Failed to upload images:', e)
-      console.error('Error response:', e?.response)
-      console.error('Error response.data:', e?.response?.data)
-      console.error('Full error:', JSON.stringify(e?.response, null, 2))
-      const errorMsg = e?.response?.data?.message || e?.response?.message || e?.message || 'Failed to upload images. Check the console.'
+      const errorMsg = e?.response?.data?.message || e?.response?.message || e?.message || 'Failed to upload images.'
       alert(errorMsg)
     } finally {
       setUploading(false)
@@ -150,7 +134,7 @@ export function PartImages({ record, collectionName, onUpdate, title = 'About th
   }, [record?.id, handleFileSelect])
 
   const handleDelete = async (filename) => {
-    if (!record?.id || !confirm('Delete this image?')) return
+    if (!record?.id || !confirm('Delete this file?')) return
 
     try {
       const updated = await pb.collection(collectionName).update(record.id, {
@@ -172,6 +156,15 @@ export function PartImages({ record, collectionName, onUpdate, title = 'About th
     return () => container.removeEventListener('paste', handlePaste)
   }, [record?.id, handlePaste])
 
+  useEffect(() => {
+    if (!pdfViewerUrl) return
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') setPdfViewerUrl(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [pdfViewerUrl])
+
   return (
     <div ref={containerRef} className="space-y-3">
       {title ? (
@@ -182,7 +175,7 @@ export function PartImages({ record, collectionName, onUpdate, title = 'About th
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
+              accept="image/*,.pdf,application/pdf"
               multiple
               className="hidden"
               onChange={handleFileInput}
@@ -194,7 +187,7 @@ export function PartImages({ record, collectionName, onUpdate, title = 'About th
               disabled={uploading}
               onClick={() => fileInputRef.current?.click()}
             >
-              {uploading ? 'Uploading…' : '+ Upload images'}
+              {uploading ? 'Uploading…' : '+ Upload images or PDF'}
             </Button>
           </div>
           )}
@@ -204,7 +197,7 @@ export function PartImages({ record, collectionName, onUpdate, title = 'About th
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept="image/*,.pdf,application/pdf"
             multiple
             className="hidden"
             onChange={handleFileInput}
@@ -216,14 +209,14 @@ export function PartImages({ record, collectionName, onUpdate, title = 'About th
             disabled={uploading}
             onClick={() => fileInputRef.current?.click()}
           >
-            {uploading ? 'Uploading…' : '+ Upload images'}
+            {uploading ? 'Uploading…' : '+ Upload images or PDF'}
           </Button>
         </div>
       ) : null}
 
       {!record?.id && (
         <p className="text-sm text-gray-500">
-          Save this {collectionName === 'quotes' ? 'quote' : 'job'} first to upload images.
+          Save this {collectionName === 'quotes' ? 'quote' : 'job'} first to upload images or PDFs.
         </p>
       )}
 
@@ -231,9 +224,48 @@ export function PartImages({ record, collectionName, onUpdate, title = 'About th
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
             {images.map((filename, idx) => {
-              const thumbUrl = getImageUrl(filename, true)
-              const fullUrl = getImageUrl(filename, false)
-              if (!thumbUrl || !fullUrl) return null
+              const fullUrl = getFileUrl(filename, false)
+              if (!fullUrl) return null
+
+              if (isPdf(filename)) {
+                return (
+                  <div
+                    key={idx}
+                    className="group relative flex aspect-square flex-col overflow-hidden rounded-lg border border-gray-200 bg-gray-100"
+                  >
+                    <div
+                      className="relative flex-1 min-h-0 w-full cursor-pointer overflow-hidden"
+                      onClick={() => setPdfViewerUrl(fullUrl)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPdfViewerUrl(fullUrl) } }}
+                      title="Click to open PDF"
+                    >
+                      <iframe
+                        src={fullUrl}
+                        title={`Preview: ${filename}`}
+                        className="absolute left-0 top-0 h-[400%] w-[400%] origin-top-left scale-[0.25] pointer-events-none"
+                      />
+                    </div>
+                    <div className="flex shrink-0 items-center justify-between gap-1 border-t border-gray-200 bg-white px-2 py-1.5">
+                      <span className="min-w-0 truncate text-xs text-gray-600" title={filename}>
+                        {filename}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleDelete(filename) }}
+                        className="rounded bg-red-500 px-2 py-1 text-xs text-white hover:bg-red-600 shrink-0"
+                        title="Delete file"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                )
+              }
+
+              const thumbUrl = getFileUrl(filename, true)
+              if (!thumbUrl) return null
               return (
                 <div
                   key={idx}
@@ -261,8 +293,8 @@ export function PartImages({ record, collectionName, onUpdate, title = 'About th
               )
             })}
           </div>
-          
-          {/* Hover popup */}
+
+          {/* Hover popup for images */}
           {hoveredImage && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-75 p-4 pointer-events-none">
               <img
@@ -273,12 +305,33 @@ export function PartImages({ record, collectionName, onUpdate, title = 'About th
               />
             </div>
           )}
+
+          {/* PDF viewer popup - sits below app header, Esc to close */}
+          {pdfViewerUrl && (
+            <div className="fixed top-14 left-0 right-0 bottom-0 z-50 flex flex-col bg-white border-t border-gray-200 shadow-lg">
+              <div className="flex shrink-0 items-center justify-between border-b border-gray-200 bg-gray-100 px-4 py-2">
+                <span className="text-sm text-gray-600">Press <kbd className="rounded border border-gray-400 bg-gray-200 px-1.5 py-0.5 font-mono text-xs">Esc</kbd> to close</span>
+                <button
+                  type="button"
+                  onClick={() => setPdfViewerUrl(null)}
+                  className="rounded border border-gray-400 bg-white px-3 py-1.5 text-sm hover:bg-gray-100"
+                >
+                  Close
+                </button>
+              </div>
+              <iframe
+                src={pdfViewerUrl}
+                title="PDF document"
+                className="flex-1 w-full min-h-0 border-0"
+              />
+            </div>
+          )}
         </>
       )}
 
       {images.length === 0 && record?.id && (
         <div className="rounded-lg border-2 border-dashed border-gray-300 p-8 text-center">
-          <p className="text-sm text-gray-500">No images yet. Upload or paste images to add them.</p>
+          <p className="text-sm text-gray-500">No images or PDFs yet. Upload or paste to add them.</p>
         </div>
       )}
     </div>

@@ -1,7 +1,7 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { pb } from '../../lib/pocketbase'
 
-const nav = [
+const fullNav = [
   { to: '/', label: 'Dashboard' },
   { to: '/quotes', label: 'Quotes' },
   { to: '/jobs', label: 'Jobs' },
@@ -14,6 +14,8 @@ export function Header() {
   const location = useLocation()
   const navigate = useNavigate()
   const isAuth = pb.authStore.isValid
+  const isJobsOnly = pb.authStore.model?.role === 'jobs_only'
+  const nav = isJobsOnly ? fullNav.filter((item) => item.to !== '/quotes') : fullNav
 
   const handleLogout = () => {
     pb.authStore.clear()
@@ -21,7 +23,7 @@ export function Header() {
   }
 
   return (
-    <header className="border-b border-gray-200 bg-white">
+    <header className="sticky top-0 z-10 border-b border-gray-200 bg-white">
       <div className="mx-auto flex h-14 max-w-[1600px] items-center justify-between px-4">
         <Link to="/" className="text-lg font-bold bg-gradient-to-r from-primary-from to-primary-to bg-clip-text text-transparent">
           DharmaCore
@@ -44,7 +46,7 @@ export function Header() {
             <button
               type="button"
               onClick={handleLogout}
-              className="text-sm text-gray-600 hover:text-gray-900"
+              className="text-gray-600 hover:text-gray-900"
             >
               Logout
             </button>

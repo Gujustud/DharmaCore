@@ -287,6 +287,21 @@ export function QuoteDetail() {
       }
       for (let i = 0; i < calculatedLineItems.length; i++) {
         const item = calculatedLineItems[i]
+        
+        // Process material_cost_cad
+        let materialCostCad = null
+        if (item.material_cost_cad != null && item.material_cost_cad !== '') {
+          const num = Number(item.material_cost_cad)
+          if (!isNaN(num)) materialCostCad = num
+        }
+        
+        // Process material_shipping_cost
+        let materialShippingCost = 0
+        if (item.material_shipping_cost != null && item.material_shipping_cost !== '') {
+          const num = Number(item.material_shipping_cost)
+          if (!isNaN(num)) materialShippingCost = num
+        }
+        
         const payload = {
           quote: quoteId,
           line_number: item.line_number ?? i + 1,
@@ -300,11 +315,8 @@ export function QuoteDetail() {
           material_vendor: item.material_vendor || undefined,
           vendor_supplied: item.vendor_supplied,
           usd_cost: item.usd_cost ?? 0,
-          material_cost_cad: item.material_cost_cad != null && item.material_cost_cad !== '' ? Number(item.material_cost_cad) : undefined,
-          material_shipping_cost: item.material_shipping_cost ?? 0,
+          material_shipping_cost: materialShippingCost,
           testing_cost: item.testing_cost ?? 0,
-          ut_cost: item.ut_cost ?? 0,
-          dp_cost: item.dp_cost ?? 0,
           tooling_total_cost: item.tooling_total_cost ?? 0,
           tooling_description: item.tooling_description,
           programming_hours: item.programming_hours ?? 0,
@@ -325,6 +337,7 @@ export function QuoteDetail() {
           shipping_cost: item.shipping_cost ?? 0,
           previous_quote_reference: item.previous_quote_reference,
           material_actual_cost_cad: item.material_actual_cost_cad ?? 0,
+          material_cost_cad: materialCostCad ?? null, // Explicitly set to null if no value
           material_with_markup: item.material_with_markup ?? 0,
           labor_cost: item.labor_cost ?? 0,
           subcontractor_1_total: item.subcontractor_1_total ?? 0,
@@ -332,6 +345,7 @@ export function QuoteDetail() {
           line_total_cad: item.line_total_cad ?? 0,
           price_per_part_cad: item.price_per_part_cad ?? 0,
           price_per_part_usd: item.price_per_part_usd ?? 0,
+          quote_part_price_cad: item.quote_part_price_cad != null && item.quote_part_price_cad !== '' ? Number(item.quote_part_price_cad) : undefined,
         }
         if (item.id) {
           await updateLineItem(item.id, payload)
@@ -407,11 +421,9 @@ export function QuoteDetail() {
           material_vendor: item.material_vendor || undefined,
           vendor_supplied: item.vendor_supplied,
           usd_cost: item.usd_cost ?? 0,
-          material_cost_cad: item.material_cost_cad != null && item.material_cost_cad !== '' ? Number(item.material_cost_cad) : undefined,
-          material_shipping_cost: item.material_shipping_cost ?? 0,
+          material_cost_cad: item.material_cost_cad != null && item.material_cost_cad !== '' && !isNaN(Number(item.material_cost_cad)) ? Number(item.material_cost_cad) : null,
+          material_shipping_cost: item.material_shipping_cost != null && item.material_shipping_cost !== '' && !isNaN(Number(item.material_shipping_cost)) ? Number(item.material_shipping_cost) : 0,
           testing_cost: item.testing_cost ?? 0,
-          ut_cost: item.ut_cost ?? 0,
-          dp_cost: item.dp_cost ?? 0,
           tooling_total_cost: item.tooling_total_cost ?? 0,
           tooling_description: item.tooling_description,
           programming_hours: item.programming_hours ?? 0,
@@ -499,14 +511,33 @@ export function QuoteDetail() {
                 />
               </div>
               <div className="sm:col-span-2">
-                <div className="mb-1 flex items-center justify-between">
-                  <label className="text-sm font-medium text-gray-700">
-                    Customer
-                  </label>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Customer
+                </label>
+                <div className="flex gap-2">
+                  <select
+                    className="flex-1 rounded-input border-2 border-gray-300 px-3 py-2 focus:border-primary-from focus:outline-none"
+                    value={quote.customer ?? ''}
+                    onChange={(e) => {
+                      const cId = e.target.value || null
+                      const c = cId ? customers.find((x) => x.id === cId) : null
+                      handleQuoteChange({
+                        customer: cId,
+                        customer_name: (c?.company || c?.name) ?? '',
+                      })
+                    }}
+                  >
+                    <option value="">— Select —</option>
+                    {customers.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.company || c.name}
+                      </option>
+                    ))}
+                  </select>
                   <Button
                     type="button"
                     variant="secondary"
-                    className="!py-1 !text-xs"
+                    className="!py-1 !text-xs shrink-0"
                     onClick={() => {
                       setNewCustomerForm({ name: '', company: '', email: '', phone: '' })
                       setAddCustomerOpen(true)
@@ -515,25 +546,6 @@ export function QuoteDetail() {
                     + Add customer
                   </Button>
                 </div>
-                <select
-                  className="w-full rounded-input border-2 border-gray-300 px-3 py-2 focus:border-primary-from focus:outline-none"
-                  value={quote.customer ?? ''}
-                  onChange={(e) => {
-                    const cId = e.target.value || null
-                    const c = cId ? customers.find((x) => x.id === cId) : null
-                    handleQuoteChange({
-                      customer: cId,
-                      customer_name: (c?.company || c?.name) ?? '',
-                    })
-                  }}
-                >
-                  <option value="">— Select —</option>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.company || c.name}
-                    </option>
-                  ))}
-                </select>
               </div>
               <Input
                 label="Engineer"
@@ -550,7 +562,7 @@ export function QuoteDetail() {
                       key={o.value}
                       type="button"
                       variant={(quote.status ?? 'draft') === o.value ? 'primary' : 'secondary'}
-                      className="!py-1"
+                      className="!py-2"
                       onClick={() => handleQuoteChange({ status: o.value })}
                     >
                       {o.label}
@@ -689,6 +701,18 @@ export function QuoteDetail() {
                 setQuote((prev) => ({ ...prev, ...updated }))
               }}
             />
+            <div className="mt-4 border-t border-gray-100 pt-4">
+              <label className="mb-1 block text-sm font-medium text-gray-700">
+                Project notes
+              </label>
+              <textarea
+                className="w-full rounded-input border-2 border-gray-300 px-3 py-2 text-sm focus:border-primary-from focus:outline-none"
+                rows={3}
+                placeholder="Notes about this project..."
+                value={quote?.notes ?? ''}
+                onChange={(e) => handleQuoteChange({ notes: e.target.value })}
+              />
+            </div>
           </Card>
 
           <div className="mb-4">
@@ -709,7 +733,7 @@ export function QuoteDetail() {
             />
           ))}
         </div>
-        <aside className="lg:sticky lg:top-4">
+        <aside className="lg:w-[500px] lg:sticky lg:top-4">
           <QuoteTotals quote={calculatedQuote} />
           {saveError && (
             <div className="mt-4 rounded border border-danger bg-red-50 p-3 text-sm text-danger">

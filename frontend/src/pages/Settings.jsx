@@ -5,6 +5,7 @@ import { Input } from '../components/ui/Input'
 import { Button } from '../components/ui/Button'
 import { getSettings, createSettings, updateSettings } from '../lib/api'
 import { fetchExchangeRate } from '../lib/exchangeRate'
+import { pb } from '../lib/pocketbase'
 import { format } from 'date-fns'
 
 const DEFAULT_SETTINGS = {
@@ -104,6 +105,7 @@ export function Settings() {
   }
 
   const num = (v) => (v === '' || v == null ? '' : Number(v))
+  const isJobsOnly = pb.authStore.model?.role === 'jobs_only'
 
   return (
     <Layout>
@@ -120,143 +122,155 @@ export function Settings() {
         </p>
       )}
 
-      <Card className="mb-6">
-        <h2 className="mb-3 text-lg font-semibold text-gray-900">
-          Default markups
-        </h2>
-        <p className="mb-4 text-sm text-gray-500">
-          Used when creating a new quote.
-        </p>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Input
-            type="number"
-            label="Shipping markup (%)"
-            value={settings.default_shipping_markup_percent ?? ''}
-            onChange={(e) =>
-              handleChange('default_shipping_markup_percent', num(e.target.value))
-            }
-          />
-          <Input
-            type="number"
-            label="Final markup (%)"
-            value={settings.default_final_markup_percent ?? ''}
-            onChange={(e) =>
-              handleChange('default_final_markup_percent', num(e.target.value))
-            }
-          />
-        </div>
-      </Card>
+      <div className="grid gap-4 sm:grid-cols-2 sm:items-start">
+        <div className="flex flex-col gap-4">
+        {!isJobsOnly && (
+          <Card>
+            <h2 className="mb-2 text-lg font-semibold text-gray-900">
+              Default markups
+            </h2>
+            <p className="mb-3 text-sm text-gray-500">
+              Used when creating a new quote.
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Input
+                type="number"
+                label="Shipping markup (%)"
+                value={settings.default_shipping_markup_percent ?? ''}
+                onChange={(e) =>
+                  handleChange('default_shipping_markup_percent', num(e.target.value))
+                }
+              />
+              <Input
+                type="number"
+                label="Final markup (%)"
+                value={settings.default_final_markup_percent ?? ''}
+                onChange={(e) =>
+                  handleChange('default_final_markup_percent', num(e.target.value))
+                }
+              />
+            </div>
+          </Card>
+        )}
 
-      <Card className="mb-6">
-        <h2 className="mb-3 text-lg font-semibold text-gray-900">
-          Exchange rate (USD → CAD)
-        </h2>
-        <p className="mb-4 text-sm text-gray-500">
-          Used for converting material costs and quote totals. Fetch from Bank of Canada or enter manually.
-        </p>
-        <div className="flex flex-wrap items-end gap-4">
+        {!isJobsOnly && (
+        <Card>
+          <h2 className="mb-2 text-lg font-semibold text-gray-900">
+            Default hourly rates (CAD)
+          </h2>
+          <p className="mb-3 text-sm text-gray-500">
+            Used when creating a new quote.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Input
+              type="number"
+              label="Programming"
+              value={settings.default_hourly_rate_programming ?? ''}
+              onChange={(e) =>
+                handleChange('default_hourly_rate_programming', num(e.target.value))
+              }
+            />
+            <Input
+              type="number"
+              label="Setup"
+              value={settings.default_hourly_rate_setup ?? ''}
+              onChange={(e) =>
+                handleChange('default_hourly_rate_setup', num(e.target.value))
+              }
+            />
+            <Input
+              type="number"
+              label="First run"
+              value={settings.default_hourly_rate_first_run ?? ''}
+              onChange={(e) =>
+                handleChange('default_hourly_rate_first_run', num(e.target.value))
+              }
+            />
+            <Input
+              type="number"
+              label="Production"
+              value={settings.default_hourly_rate_production ?? ''}
+              onChange={(e) =>
+                handleChange('default_hourly_rate_production', num(e.target.value))
+              }
+            />
+          </div>
+        </Card>
+        )}
+        </div>
+
+        <div className="flex flex-col gap-4">
+        {!isJobsOnly && (
+        <Card>
+          <h2 className="mb-2 text-lg font-semibold text-gray-900">
+            Exchange rate (USD → CAD)
+          </h2>
+          <p className="mb-3 text-sm text-gray-500">
+            Used for converting material costs and quote totals. Fetch from Bank of Canada or enter manually.
+          </p>
+          <div className="flex flex-wrap items-end gap-3">
+            <Input
+              type="number"
+              step="0.0001"
+              label="Rate"
+              value={settings.exchange_rate_usd_to_cad ?? ''}
+              onChange={(e) =>
+                handleChange('exchange_rate_usd_to_cad', e.target.value === '' ? '' : num(e.target.value))
+              }
+              className="max-w-[140px]"
+            />
+            <Button
+              variant="secondary"
+              disabled={fetchingRate}
+              onClick={handleFetchRate}
+            >
+              {fetchingRate ? 'Fetching…' : 'Fetch latest rate'}
+            </Button>
+          </div>
+          {settings.exchange_rate_last_updated && (
+            <p className="mt-2 text-sm text-gray-500">
+              Last updated: {format(new Date(settings.exchange_rate_last_updated), 'MMM d, yyyy HH:mm')}
+            </p>
+          )}
+          <div className="mt-3">
+            <label className="flex cursor-pointer items-center gap-2">
+              <input
+                type="checkbox"
+                checked={!!settings.exchange_rate_auto_update}
+                onChange={(e) => handleChange('exchange_rate_auto_update', e.target.checked)}
+                className="rounded border-gray-300"
+              />
+              <span className="text-sm font-medium text-gray-700">
+                Auto-update rate (e.g. on app load)
+              </span>
+            </label>
+            <p className="mt-1 text-xs text-gray-500">
+              When enabled, the app can refresh the rate automatically. Manual fetch still available above.
+            </p>
+          </div>
+        </Card>
+        )}
+
+        <Card>
+          <h2 className="mb-2 text-lg font-semibold text-gray-900">
+            Session
+          </h2>
+          <p className="mb-3 text-sm text-gray-500">
+            Automatically log out after a period of inactivity. Set to 0 to disable.
+          </p>
           <Input
             type="number"
-            step="0.0001"
-            label="Rate"
-            value={settings.exchange_rate_usd_to_cad ?? ''}
+            min={0}
+            label="Auto-logout after (minutes)"
+            value={settings.auto_logout_minutes ?? ''}
             onChange={(e) =>
-              handleChange('exchange_rate_usd_to_cad', e.target.value === '' ? '' : num(e.target.value))
+              handleChange('auto_logout_minutes', e.target.value === '' ? '' : num(e.target.value))
             }
             className="max-w-[140px]"
           />
-          <Button
-            variant="secondary"
-            disabled={fetchingRate}
-            onClick={handleFetchRate}
-          >
-            {fetchingRate ? 'Fetching…' : 'Fetch latest rate'}
-          </Button>
+        </Card>
         </div>
-        {settings.exchange_rate_last_updated && (
-          <p className="mt-2 text-sm text-gray-500">
-            Last updated: {format(new Date(settings.exchange_rate_last_updated), 'MMM d, yyyy HH:mm')}
-          </p>
-        )}
-        <div className="mt-4">
-          <label className="flex cursor-pointer items-center gap-2">
-            <input
-              type="checkbox"
-              checked={!!settings.exchange_rate_auto_update}
-              onChange={(e) => handleChange('exchange_rate_auto_update', e.target.checked)}
-              className="rounded border-gray-300"
-            />
-            <span className="text-sm font-medium text-gray-700">
-              Auto-update rate (e.g. on app load)
-            </span>
-          </label>
-          <p className="mt-1 text-xs text-gray-500">
-            When enabled, the app can refresh the rate automatically. Manual fetch still available above.
-          </p>
-        </div>
-      </Card>
-
-      <Card className="mb-6">
-        <h2 className="mb-3 text-lg font-semibold text-gray-900">
-          Default hourly rates (CAD)
-        </h2>
-        <p className="mb-4 text-sm text-gray-500">
-          Used when creating a new quote.
-        </p>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Input
-            type="number"
-            label="Programming"
-            value={settings.default_hourly_rate_programming ?? ''}
-            onChange={(e) =>
-              handleChange('default_hourly_rate_programming', num(e.target.value))
-            }
-          />
-          <Input
-            type="number"
-            label="Setup"
-            value={settings.default_hourly_rate_setup ?? ''}
-            onChange={(e) =>
-              handleChange('default_hourly_rate_setup', num(e.target.value))
-            }
-          />
-          <Input
-            type="number"
-            label="First run"
-            value={settings.default_hourly_rate_first_run ?? ''}
-            onChange={(e) =>
-              handleChange('default_hourly_rate_first_run', num(e.target.value))
-            }
-          />
-          <Input
-            type="number"
-            label="Production"
-            value={settings.default_hourly_rate_production ?? ''}
-            onChange={(e) =>
-              handleChange('default_hourly_rate_production', num(e.target.value))
-            }
-          />
-        </div>
-      </Card>
-
-      <Card className="mb-6">
-        <h2 className="mb-3 text-lg font-semibold text-gray-900">
-          Session
-        </h2>
-        <p className="mb-4 text-sm text-gray-500">
-          Automatically log out after a period of inactivity. Set to 0 to disable.
-        </p>
-        <Input
-          type="number"
-          min={0}
-          label="Auto-logout after (minutes)"
-          value={settings.auto_logout_minutes ?? ''}
-          onChange={(e) =>
-            handleChange('auto_logout_minutes', e.target.value === '' ? '' : num(e.target.value))
-          }
-          className="max-w-[140px]"
-        />
-      </Card>
+      </div>
     </Layout>
   )
 }

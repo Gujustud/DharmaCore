@@ -6,6 +6,7 @@ import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { Badge } from '../components/ui/Badge'
 import { getQuotes, getJobs } from '../lib/api'
+import { pb } from '../lib/pocketbase'
 
 function formatCurrency(n) {
   if (n == null || n === '') return '—'
@@ -39,6 +40,7 @@ function jobStatusLabel(status) {
 }
 
 export function Dashboard() {
+  const isJobsOnly = pb.authStore.model?.role === 'jobs_only'
   const [quotes, setQuotes] = useState([])
   const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(true)
@@ -46,16 +48,20 @@ export function Dashboard() {
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    Promise.all([getQuotes(), getJobs()])
-      .then(([quotesRes, jobsRes]) => {
-        if (!cancelled) {
+    const promises = isJobsOnly ? [getJobs()] : [getQuotes(), getJobs()]
+    Promise.all(promises)
+      .then((results) => {
+        if (cancelled) return
+        const quotesRes = isJobsOnly ? null : results[0]
+        const jobsRes = isJobsOnly ? results[0] : results[1]
+        if (!isJobsOnly && quotesRes) {
           const quoteItems = quotesRes?.items ?? []
           quoteItems.sort((a, b) => new Date(b.created || 0) - new Date(a.created || 0))
           setQuotes(quoteItems)
-          const jobItems = jobsRes?.items ?? []
-          jobItems.sort((a, b) => new Date(b.updated || 0) - new Date(a.updated || 0))
-          setJobs(jobItems)
         }
+        const jobItems = jobsRes?.items ?? []
+        jobItems.sort((a, b) => new Date(b.updated || 0) - new Date(a.updated || 0))
+        setJobs(jobItems)
       })
       .catch((e) => {
         if (e?.status !== 0 && !e?.message?.includes('autocancelled')) console.error(e)
@@ -64,7 +70,7 @@ export function Dashboard() {
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [])
+  }, [isJobsOnly])
 
   const now = new Date()
   const monthStart = startOfMonth(now)
@@ -112,42 +118,46 @@ export function Dashboard() {
           <h1 className="text-2xl font-bold text-gray-900">DharmaCore</h1>
           <p className="text-gray-600">Manage your shop operations</p>
         </div>
-        <Link to="/quotes/new">
-          <Button>+ New Quote</Button>
-        </Link>
+        {!isJobsOnly && (
+          <Link to="/quotes/new">
+            <Button>+ New Quote</Button>
+          </Link>
+        )}
       </div>
 
       {loading ? (
         <p className="py-4 text-center text-gray-500">Loading…</p>
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Card>
-              <p className="text-sm text-gray-600">Quotes this month</p>
-              <p className="text-2xl font-bold">{quotesThisMonth.length}</p>
-            </Card>
-            <Card>
-              <p className="text-sm text-gray-600">Won</p>
-              <p className="text-2xl font-bold">
-                {wonQuotes.length}
-                {quotes.length > 0 && (
-                  <span className="ml-1 text-sm font-normal text-gray-500">
-                    ({winRate}% win rate)
-                  </span>
-                )}
-              </p>
-            </Card>
-            <Card>
-              <p className="text-sm text-gray-600">Pending</p>
-              <p className="text-2xl font-bold">{pendingQuotes.length}</p>
-            </Card>
-            <Card>
-              <p className="text-sm text-gray-600">Revenue this month</p>
-              <p className="text-2xl font-bold">{formatCurrency(revenueThisMonth)}</p>
-            </Card>
-          </div>
+          {!isJobsOnly && (
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Card>
+                <p className="text-sm text-gray-600">Quotes this month</p>
+                <p className="text-2xl font-bold">{quotesThisMonth.length}</p>
+              </Card>
+              <Card>
+                <p className="text-sm text-gray-600">Won</p>
+                <p className="text-2xl font-bold">
+                  {wonQuotes.length}
+                  {quotes.length > 0 && (
+                    <span className="ml-1 text-sm font-normal text-gray-500">
+                      ({winRate}% win rate)
+                    </span>
+                  )}
+                </p>
+              </Card>
+              <Card>
+                <p className="text-sm text-gray-600">Pending</p>
+                <p className="text-2xl font-bold">{pendingQuotes.length}</p>
+              </Card>
+              <Card>
+                <p className="text-sm text-gray-600">Revenue this month</p>
+                <p className="text-2xl font-bold">{formatCurrency(revenueThisMonth)}</p>
+              </Card>
+            </div>
+          )}
 
-          <Card className="mt-6">
+          <Card className={isJobsOnly ? '' : 'mt-6'}>
             <h2 className="mb-2 font-semibold">Active Jobs</h2>
             {activeJobs.length === 0 ? (
               <p className="text-sm text-gray-500">
@@ -203,57 +213,59 @@ export function Dashboard() {
             </Link>
           </Card>
 
-          <Card className="mt-4">
-            <h2 className="mb-2 font-semibold">Recent Quotes</h2>
-            {recentQuotes.length === 0 ? (
-              <p className="text-sm text-gray-500">No quotes yet. Create one from Quotes.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[400px]">
-                  <thead>
-                    <tr className="border-b border-gray-200 text-left text-sm text-gray-600">
-                      <th className="pb-2 pr-4 font-medium">Job #</th>
-                      <th className="pb-2 pr-4 font-medium">Customer</th>
-                      <th className="pb-2 pr-4 font-medium">Status</th>
-                      <th className="pb-2 pr-4 font-medium">Total</th>
-                      <th className="pb-2 font-medium">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentQuotes.map((q) => (
-                      <tr key={q.id} className="border-b border-gray-100">
-                        <td className="py-2 pr-4">
-                          <Link
-                            to={`/quotes/${q.id}`}
-                            className="font-medium text-primary-from hover:underline"
-                          >
-                            {q.job_number || '—'}
-                          </Link>
-                        </td>
-                        <td className="py-2 pr-4 text-gray-700">{customerDisplay(q)}</td>
-                        <td className="py-2 pr-4">
-                          <Badge status={q.status}>{q.status || 'draft'}</Badge>
-                        </td>
-                        <td className="py-2 pr-4 tabular-nums">
-                          {formatCurrency(q.final_total_cad)}
-                        </td>
-                        <td className="py-2">
-                          <Link to={`/quotes/${q.id}`}>
-                            <Button variant="secondary" className="!py-1 !text-sm">
-                              View →
-                            </Button>
-                          </Link>
-                        </td>
+          {!isJobsOnly && (
+            <Card className="mt-4">
+              <h2 className="mb-2 font-semibold">Recent Quotes</h2>
+              {recentQuotes.length === 0 ? (
+                <p className="text-sm text-gray-500">No quotes yet. Create one from Quotes.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[400px]">
+                    <thead>
+                      <tr className="border-b border-gray-200 text-left text-sm text-gray-600">
+                        <th className="pb-2 pr-4 font-medium">Job #</th>
+                        <th className="pb-2 pr-4 font-medium">Customer</th>
+                        <th className="pb-2 pr-4 font-medium">Status</th>
+                        <th className="pb-2 pr-4 font-medium">Total</th>
+                        <th className="pb-2 font-medium">Action</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            <Link to="/quotes" className="mt-3 inline-block text-primary-from hover:underline">
-              All Quotes →
-            </Link>
-          </Card>
+                    </thead>
+                    <tbody>
+                      {recentQuotes.map((q) => (
+                        <tr key={q.id} className="border-b border-gray-100">
+                          <td className="py-2 pr-4">
+                            <Link
+                              to={`/quotes/${q.id}`}
+                              className="font-medium text-primary-from hover:underline"
+                            >
+                              {q.job_number || '—'}
+                            </Link>
+                          </td>
+                          <td className="py-2 pr-4 text-gray-700">{customerDisplay(q)}</td>
+                          <td className="py-2 pr-4">
+                            <Badge status={q.status}>{q.status || 'draft'}</Badge>
+                          </td>
+                          <td className="py-2 pr-4 tabular-nums">
+                            {formatCurrency(q.final_total_cad)}
+                          </td>
+                          <td className="py-2">
+                            <Link to={`/quotes/${q.id}`}>
+                              <Button variant="secondary" className="!py-1 !text-sm">
+                                View →
+                              </Button>
+                            </Link>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <Link to="/quotes" className="mt-3 inline-block text-primary-from hover:underline">
+                All Quotes →
+              </Link>
+            </Card>
+          )}
         </>
       )}
     </Layout>

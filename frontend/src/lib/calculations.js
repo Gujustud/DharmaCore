@@ -15,8 +15,6 @@ export function calculateLineItem(lineItem, quoteSettings) {
     material_cost_cad,
     material_shipping_cost = 0,
     testing_cost = 0,
-    ut_cost = 0,
-    dp_cost = 0,
     tooling_total_cost = 0,
     programming_hours = 0,
     setup_hours = 0,
@@ -66,7 +64,7 @@ export function calculateLineItem(lineItem, quoteSettings) {
   const subcontractor_1_total = sub1Base * (1 + subcontractor_markup_percent / 100)
   const subcontractor_2_total = sub2Base * (1 + subcontractor_markup_percent / 100)
 
-  // 5. LINE ITEM TOTAL (ut_cost, dp_cost removed from UI; heat_treat remains in schema for existing data)
+  // 5. LINE ITEM TOTAL
   const line_total_cad =
     material_with_markup +
     tooling_total +
