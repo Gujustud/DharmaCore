@@ -38,6 +38,10 @@ DharmaCore is a full-featured quote and job tracking system designed specificall
 - Active jobs overview
 - Recent quotes list
 
+### User Interface
+- **Dark mode** – Toggle in Settings → Appearance; applies immediately across the app (cards, tables, forms, buttons, status badges)
+- Sticky sidebar on Quote detail: Quote Totals and Settings stay visible while scrolling line items
+
 ### Security & Session Management
 - User authentication system
 - Auto-logout after configurable inactivity period
@@ -146,6 +150,10 @@ The app uses PocketBase migrations to manage schema changes. Migrations are auto
 - Jobs are automatically created when a quote is marked "Won"
 - Job inherits quote information (customer, job number, parts description)
 - Can be created manually if needed (quote optional)
+
+### Tracking Links
+- Tracking numbers on jobs generate carrier-specific links (FedEx, UPS, Canada Post, Purolator, DHL Express)
+- DHL Express uses MyDHL format: `https://mydhl.express.dhl/ca/en/tracking.html#/results?id=...`
 
 ### Part Images
 - Upload images via file picker or paste from clipboard
