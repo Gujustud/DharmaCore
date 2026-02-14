@@ -28,47 +28,47 @@ export function QuoteTotals({ quote }) {
 
   return (
     <Card className="sticky top-4 w-[500px] shrink-0">
-      <h3 className="mb-4 font-semibold text-gray-900">QUOTE TOTALS</h3>
+      <h3 className="mb-4 font-semibold text-gray-900 dark:text-white">QUOTE TOTALS</h3>
       <div className="space-y-2 text-sm">
         <div className="flex justify-between">
-          <span className="text-gray-600">Materials</span>
-          <span>${fmt(materials_total)}</span>
+          <span className="text-gray-600 dark:text-gray-300">Materials</span>
+          <span className="text-gray-900 dark:text-gray-100">${fmt(materials_total)}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-gray-600">Tooling</span>
-          <span>${fmt(tooling_total)}</span>
+          <span className="text-gray-600 dark:text-gray-300">Tooling</span>
+          <span className="text-gray-900 dark:text-gray-100">${fmt(tooling_total)}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-gray-600">Labor</span>
-          <span>${fmt(labor_total)}</span>
+          <span className="text-gray-600 dark:text-gray-300">Labor</span>
+          <span className="text-gray-900 dark:text-gray-100">${fmt(labor_total)}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-gray-600">Subcontractors</span>
-          <span>${fmt(subcontractor_total)}</span>
+          <span className="text-gray-600 dark:text-gray-300">Subcontractors</span>
+          <span className="text-gray-900 dark:text-gray-100">${fmt(subcontractor_total)}</span>
         </div>
       </div>
-      <div className="my-3 border-t border-gray-200 pt-3">
-        <div className="flex justify-between font-medium">
+      <div className="my-3 border-t border-gray-200 pt-3 dark:border-gray-600">
+        <div className="flex justify-between font-medium text-gray-900 dark:text-white">
           <span>Subtotal</span>
           <span>${fmt(subtotal)}</span>
         </div>
         {Number(final_markup_percent) > 0 && (
-          <div className="mt-1 flex justify-between text-gray-600">
+          <div className="mt-1 flex justify-between text-gray-600 dark:text-gray-300">
             <span>Final Markup ({final_markup_percent}%)</span>
             <span>${fmt(markupAmount)}</span>
           </div>
         )}
       </div>
-      <div className="border-t border-gray-200 pt-3 font-bold">
-        <div className="flex justify-between text-gray-900">
+      <div className="border-t border-gray-200 pt-3 font-bold dark:border-gray-600">
+        <div className="flex justify-between text-gray-900 dark:text-white">
           <span>TOTAL (CAD)</span>
           <span>${fmt(final_total_cad)}</span>
         </div>
-        <div className="mt-1 flex justify-between text-gray-700">
+        <div className="mt-1 flex justify-between text-gray-700 dark:text-gray-300">
           <span>TOTAL (USD)</span>
           <span>${fmt(final_total_usd)}</span>
         </div>
-        <div className="mt-2 flex justify-between border-t border-gray-100 pt-2 text-gray-900">
+        <div className="mt-2 flex justify-between border-t border-gray-100 pt-2 text-gray-900 dark:border-gray-700 dark:text-white">
           <span>REVENUE</span>
           <span>
             ({fmt(marginPercent)}% margin) ${fmt(revenueCad)}

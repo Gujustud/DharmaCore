@@ -63,7 +63,7 @@ export async function getJobs(params = {}) {
 }
 
 export async function getJob(id) {
-  return pb.collection('jobs').getOne(id, { expand: 'quote,customer' })
+  return pb.collection('jobs').getOne(id, { expand: 'quote,customer,material_source_vendor' })
 }
 
 export async function createJob(data) {

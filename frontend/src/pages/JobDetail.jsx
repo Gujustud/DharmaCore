@@ -6,7 +6,7 @@ import { Input } from '../components/ui/Input'
 import { Button } from '../components/ui/Button'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog'
 import { generateTrackingLink } from '../lib/calculations'
-import { getJob, updateJob, deleteJob } from '../lib/api'
+import { getJob, updateJob, deleteJob, getVendors } from '../lib/api'
 import { format } from 'date-fns'
 import { PartImages } from '../components/PartImages'
 
@@ -46,12 +46,12 @@ function dateInputValue(d) {
 function Row({ label, value, emptyLabel = 'Empty', children }) {
   const isEmpty = value == null || value === ''
   return (
-    <div className="flex items-center gap-4 py-[10px] border-b border-gray-100 last:border-0">
-      <span className="w-[140px] shrink-0 text-sm font-medium text-gray-500">
+    <div className="flex items-center gap-4 py-[10px] border-b border-gray-100 last:border-0 dark:border-gray-700">
+      <span className="w-[140px] shrink-0 text-sm font-medium text-gray-500 dark:text-gray-400">
         {label}
       </span>
-      <div className="min-w-0 flex-1 text-sm text-gray-900">
-        {children != null ? children : (isEmpty ? <span className="text-gray-400">{emptyLabel}</span> : value)}
+      <div className="min-w-0 flex-1 text-sm text-gray-900 dark:text-gray-100">
+        {children != null ? children : (isEmpty ? <span className="text-gray-400 dark:text-gray-500">{emptyLabel}</span> : value)}
       </div>
     </div>
   )
@@ -61,6 +61,7 @@ export function JobDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const [job, setJob] = useState(null)
+  const [vendors, setVendors] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
@@ -70,8 +71,11 @@ export function JobDetail() {
     async function load() {
       setLoading(true)
       try {
-        const j = await getJob(id)
-        if (!cancelled) setJob(j)
+        const [j, vendorsRes] = await Promise.all([getJob(id), getVendors({ perPage: 500 })])
+        if (!cancelled) {
+          setJob(j)
+          setVendors(vendorsRes?.items ?? [])
+        }
       } catch (e) {
         if (!cancelled) console.error(e)
       } finally {
@@ -109,10 +113,12 @@ export function JobDetail() {
         po_number: job.po_number || '',
         material_lot: job.material_lot || '',
         material_source: job.material_source || '',
+        material_source_vendor: job.material_source_vendor || null,
         material_notes: job.material_notes || '',
         project_notes: job.project_notes || '',
         notes: job.notes || '',
       })
+      navigate('/jobs')
     } catch (e) {
       console.error(e)
     } finally {
@@ -133,7 +139,7 @@ export function JobDetail() {
   if (loading || !job) {
     return (
       <Layout>
-        <div className="py-8 text-center text-gray-500">Loading…</div>
+        <div className="py-8 text-center text-gray-500 dark:text-gray-400">Loading…</div>
       </Layout>
     )
   }
@@ -145,9 +151,14 @@ export function JobDetail() {
   return (
     <Layout>
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">
-          Job: {job.job_number}
-        </h1>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+            Job: {job.job_number}
+          </h1>
+          <p className="mt-0.5 text-base text-gray-600 dark:text-gray-300">
+            {job.expand?.customer?.company || job.customer_name || '—'}
+          </p>
+        </div>
         <div className="flex gap-2">
           {quoteId && (
             <Link to={`/quotes/${quoteId}`}>
@@ -174,7 +185,7 @@ export function JobDetail() {
         {/* Left column - Job details */}
         <div className="min-w-0 flex-1 lg:flex-1">
           <Card>
-            <div className="divide-y divide-gray-100">
+            <div className="divide-y divide-gray-100 dark:divide-gray-700">
           <Row label="Status" value={job.status} emptyLabel="">
             <select
               className={`rounded-full border px-3 py-1 text-sm font-medium ${statusClass}`}
@@ -192,7 +203,7 @@ export function JobDetail() {
           <Row label="Ship Date" value={job.ship_date} emptyLabel="Empty">
             <input
               type="date"
-              className="rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none"
+              className="rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
               value={dateInputValue(job.ship_date)}
               onChange={(e) => handleChange({ ship_date: e.target.value || null })}
             />
@@ -237,20 +248,20 @@ export function JobDetail() {
           <Row label="Due Date" value={job.due_date} emptyLabel="Empty">
             <input
               type="date"
-              className="rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none"
+              className="rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
               value={dateInputValue(job.due_date)}
               onChange={(e) => handleChange({ due_date: e.target.value || null })}
             />
           </Row>
 
           <Row label="Job" value={job.job_number}>
-            <span className="text-gray-900">{job.job_number}</span>
+            <span className="text-gray-900 dark:text-white">{job.job_number}</span>
           </Row>
 
           <Row label="Invoice" value={job.wave_invoice_number}>
             <input
               type="text"
-              className="w-full max-w-[200px] rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none"
+              className="w-full max-w-[200px] rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
               value={job.wave_invoice_number ?? ''}
               onChange={(e) => handleChange({ wave_invoice_number: e.target.value })}
             />
@@ -259,7 +270,7 @@ export function JobDetail() {
           <Row label="PO #" value={job.po_number}>
             <input
               type="text"
-              className="w-full max-w-[200px] rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none"
+              className="w-full max-w-[200px] rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
               value={job.po_number ?? ''}
               onChange={(e) => handleChange({ po_number: e.target.value })}
             />
@@ -268,7 +279,7 @@ export function JobDetail() {
           <Row label="Completion" value={job.completion_date} emptyLabel="Empty">
             <input
               type="date"
-              className="rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none"
+              className="rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
               value={dateInputValue(job.completion_date)}
               onChange={(e) =>
                 handleChange({ completion_date: e.target.value || null })
@@ -279,25 +290,31 @@ export function JobDetail() {
           <Row label="Material LOT" value={job.material_lot}>
             <input
               type="text"
-              className="w-full max-w-[200px] rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none"
+              className="w-full max-w-[200px] rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
               value={job.material_lot ?? ''}
               onChange={(e) => handleChange({ material_lot: e.target.value })}
             />
           </Row>
 
-          <Row label="Material source" value={job.material_source}>
-            <input
-              type="text"
-              className="w-full max-w-[200px] rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none"
-              value={job.material_source ?? ''}
-              onChange={(e) => handleChange({ material_source: e.target.value })}
-            />
+          <Row label="Material source" value={job.expand?.material_source_vendor?.name ?? job.material_source}>
+            <select
+              className="w-full max-w-[280px] rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+              value={job.material_source_vendor ?? ''}
+              onChange={(e) => handleChange({ material_source_vendor: e.target.value || null })}
+            >
+              <option value="">— Select vendor —</option>
+              {vendors.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.name}
+                </option>
+              ))}
+            </select>
           </Row>
 
           <Row label="Tracking 2" value={job.tracking_number_2}>
             <input
               type="text"
-              className="w-full max-w-sm rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none"
+              className="w-full max-w-sm rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
               value={job.tracking_number_2 ?? ''}
               onChange={(e) => handleChange({ tracking_number_2: e.target.value })}
             />
@@ -317,7 +334,7 @@ export function JobDetail() {
           </Row>
 
           <Row label="Attachments" value="" emptyLabel="Empty">
-            <span className="text-gray-400">Empty</span>
+            <span className="text-gray-400 dark:text-gray-500">Empty</span>
           </Row>
             </div>
           </Card>
@@ -337,14 +354,14 @@ export function JobDetail() {
           </Card>
 
           <Card>
-            <h2 className="mb-3 text-sm font-semibold text-gray-700">Notes</h2>
+            <h2 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">Notes</h2>
             <div className="space-y-3">
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-500">
+                <label className="mb-1 block text-sm font-medium text-gray-500 dark:text-gray-400">
                   Project notes
                 </label>
                 <textarea
-                  className="w-full rounded-input border border-gray-300 px-3 py-2 text-sm focus:border-primary-from focus:outline-none"
+                  className="w-full rounded-input border border-gray-300 px-3 py-2 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
                   rows={3}
                   value={job.project_notes ?? ''}
                   onChange={(e) => handleChange({ project_notes: e.target.value })}
@@ -352,10 +369,10 @@ export function JobDetail() {
               </div>
               {job.parts_description && (
                 <div>
-                  <p className="mb-1 text-sm font-medium text-gray-500">
+                  <p className="mb-1 text-sm font-medium text-gray-500 dark:text-gray-400">
                     Parts in this job
                   </p>
-                  <pre className="whitespace-pre-wrap rounded bg-gray-50 p-2 text-sm text-gray-800">
+                  <pre className="whitespace-pre-wrap rounded bg-gray-50 p-2 text-sm text-gray-800 dark:bg-gray-700 dark:text-gray-200">
                     {job.parts_description}
                   </pre>
                 </div>

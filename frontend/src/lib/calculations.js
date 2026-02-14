@@ -1,7 +1,13 @@
 /**
  * Quote and line item calculation functions.
  * Matches CNC_QUOTE_TRACKER_PLAN_V3 formulas. Handles null/zero edge cases.
+ * All dollar values are rounded to 2 decimal places.
  */
+
+export function round2(n) {
+  if (n == null || n === '' || Number.isNaN(Number(n))) return n
+  return Math.round(Number(n) * 100) / 100
+}
 
 /**
  * Calculate all computed fields for a line item.
@@ -95,16 +101,16 @@ export function calculateLineItem(lineItem, quoteSettings) {
 
   return {
     ...lineItem,
-    material_actual_cost_cad,
-    material_with_markup,
-    labor_cost,
-    subcontractor_1_total,
-    subcontractor_2_total,
-    line_total_cad,
-    price_per_part_cad,
-    price_per_part_usd,
-    quoted_price_per_part_cad,
-    quoted_price_per_part_usd,
+    material_actual_cost_cad: round2(material_actual_cost_cad),
+    material_with_markup: round2(material_with_markup),
+    labor_cost: round2(labor_cost),
+    subcontractor_1_total: round2(subcontractor_1_total),
+    subcontractor_2_total: round2(subcontractor_2_total),
+    line_total_cad: round2(line_total_cad),
+    price_per_part_cad: round2(price_per_part_cad),
+    price_per_part_usd: round2(price_per_part_usd),
+    quoted_price_per_part_cad: round2(quoted_price_per_part_cad),
+    quoted_price_per_part_usd: round2(quoted_price_per_part_usd),
   }
 }
 
@@ -118,33 +124,34 @@ export function calculateQuoteTotals(quote, lineItems) {
   const final_markup_percent = Number(quote?.final_markup_percent) ?? 0
   const exchange_rate_usd_to_cad = Number(quote?.exchange_rate_usd_to_cad) || 0
 
-  const materials_total = (lineItems || []).reduce(
+  const materials_total = round2((lineItems || []).reduce(
     (sum, item) => sum + (item.material_with_markup ?? 0),
     0
-  )
-  const tooling_total = (lineItems || []).reduce(
+  ))
+  const tooling_total = round2((lineItems || []).reduce(
     (sum, item) => sum + (item.tooling_total_cost ?? 0),
     0
-  )
-  const labor_total = (lineItems || []).reduce((sum, item) => sum + (item.labor_cost ?? 0), 0)
-  const subcontractor_total = (lineItems || []).reduce(
+  ))
+  const labor_total = round2((lineItems || []).reduce((sum, item) => sum + (item.labor_cost ?? 0), 0))
+  const subcontractor_total = round2((lineItems || []).reduce(
     (sum, item) =>
       sum + (item.subcontractor_1_total ?? 0) + (item.subcontractor_2_total ?? 0),
     0
-  )
-  const subtotal = (lineItems || []).reduce(
+  ))
+  const subtotal = round2((lineItems || []).reduce(
     (sum, item) => sum + (item.line_total_cad ?? 0),
     0
-  )
+  ))
 
   // Quote total = sum of (quoted per part × qty) so it matches line-level quoted values and overrides
-  const final_total_cad = (lineItems || []).reduce(
+  const final_total_cad = round2((lineItems || []).reduce(
     (sum, item) =>
       sum + (item.quoted_price_per_part_cad ?? 0) * (item.part_quantity ?? 0),
     0
-  )
-  const final_total_usd =
+  ))
+  const final_total_usd = round2(
     exchange_rate_usd_to_cad > 0 ? final_total_cad / exchange_rate_usd_to_cad : 0
+  )
 
   return {
     ...quote,
@@ -211,7 +218,7 @@ export function generateTrackingLink(trackingNumber) {
   }
   // DHL Express (e.g. 10-digit)
   if (/^\d{9,11}$/.test(clean)) {
-    return `https://www.mydhl.express.dhl/ca/en/tracking.html#/tracking?trackingnumber=${clean}`
+    return `https://mydhl.express.dhl/ca/en/tracking.html#/results?id=${clean}`
   }
   return ''
 }

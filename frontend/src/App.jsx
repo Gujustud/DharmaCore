@@ -7,6 +7,7 @@ import { QuoteDetail } from './pages/QuoteDetail'
 import { JobsBoard } from './pages/JobsBoard'
 import { JobDetail } from './pages/JobDetail'
 import { Customers } from './pages/Customers'
+import { CustomerDetail } from './pages/CustomerDetail'
 import { Vendors } from './pages/Vendors'
 import { Settings } from './pages/Settings'
 
@@ -22,6 +23,7 @@ export default function App() {
         <Route path="/jobs" element={<JobsBoard />} />
         <Route path="/jobs/:id" element={<JobDetail />} />
         <Route path="/customers" element={<Customers />} />
+        <Route path="/customers/:id" element={<CustomerDetail />} />
         <Route path="/vendors" element={<Vendors />} />
         <Route path="/settings" element={<Settings />} />
       </Route>

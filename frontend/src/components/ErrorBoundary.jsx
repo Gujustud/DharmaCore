@@ -14,12 +14,12 @@ export class ErrorBoundary extends Component {
   render() {
     if (this.state.error) {
       return (
-        <div style={{ padding: 24, fontFamily: 'sans-serif', maxWidth: 600 }}>
-          <h1 style={{ color: '#dc2626' }}>Something went wrong</h1>
-          <pre style={{ background: '#f3f4f6', padding: 16, overflow: 'auto' }}>
+        <div className="max-w-[600px] p-6 font-sans text-gray-900 dark:text-gray-100">
+          <h1 className="text-red-600 dark:text-red-400">Something went wrong</h1>
+          <pre className="mt-2 overflow-auto rounded-lg bg-gray-100 p-4 text-sm dark:bg-gray-800 dark:text-gray-200">
             {this.state.error?.message ?? String(this.state.error)}
           </pre>
-          <p style={{ color: '#6b7280' }}>
+          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
             Open the browser console (F12) for more details.
           </p>
         </div>

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { startOfMonth, endOfMonth, isWithinInterval } from 'date-fns'
 import { Layout } from '../components/layout/Layout'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
@@ -26,8 +27,23 @@ function formatCurrency(n) {
   return new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(num)
 }
 
+function toDate(s) {
+  if (!s) return null
+  try {
+    let str = s
+    if (typeof str === 'string' && /^\d{4}-\d{2}-\d{2} \d/.test(str)) {
+      str = str.replace(' ', 'T') // PocketBase often uses space; ISO expects T
+    }
+    const d = typeof str === 'string' ? new Date(str) : str
+    return Number.isNaN(d?.getTime()) ? null : d
+  } catch {
+    return null
+  }
+}
+
 export function QuotesList() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [quotes, setQuotes] = useState([])
   const [lineItems, setLineItems] = useState([])
   const [loading, setLoading] = useState(true)
@@ -65,9 +81,14 @@ export function QuotesList() {
       .finally(() => setLoading(false))
   }
 
+  // Refetch when viewing the list and when user returns to this tab so stats (e.g. Revenue this month) stay current
   useEffect(() => {
+    if (location.pathname !== '/quotes') return
     load()
-  }, [])
+    const onFocus = () => load()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [location.pathname])
 
   const lineItemsByQuote = useMemo(() => {
     const m = {}
@@ -197,6 +218,7 @@ export function QuotesList() {
           setup_hours: item.setup_hours ?? 0,
           first_run_hours: item.first_run_hours ?? 0,
           production_hours_total: item.production_hours_total ?? 0,
+          labor_note: item.labor_note || undefined,
           subcontractor_1: item.subcontractor_1 || undefined,
           subcontractor_1_service: item.subcontractor_1_service,
           subcontractor_1_cost: item.subcontractor_1_cost ?? 0,
@@ -232,13 +254,82 @@ export function QuotesList() {
 
   const customerDisplay = (q) => q.expand?.customer?.company || q.customer_name || '—'
 
+  const now = new Date()
+  const monthStart = startOfMonth(now)
+  const monthEnd = endOfMonth(now)
+  const quotesThisMonth = quotes.filter((q) => {
+    const d = toDate(q.created)
+    return d && isWithinInterval(d, { start: monthStart, end: monthEnd })
+  })
+  const wonQuotes = quotes.filter((q) => q.status === 'won')
+  const currentYear = now.getFullYear()
+  const currentMonth = now.getMonth()
+  // Won quotes updated or created in the current calendar month (use local timezone, e.g. PST)
+  const wonThisMonth = wonQuotes.filter((q) => {
+    const updatedAt = toDate(q.updated)
+    const createdAt = toDate(q.created)
+    const updatedInMonth =
+      updatedAt &&
+      updatedAt.getFullYear() === currentYear &&
+      updatedAt.getMonth() === currentMonth
+    const createdInMonth =
+      createdAt &&
+      createdAt.getFullYear() === currentYear &&
+      createdAt.getMonth() === currentMonth
+    return updatedInMonth || createdInMonth
+  })
+  const pendingQuotes = quotes.filter((q) => q.status === 'sent')
+  const sumWonRevenue = (list) =>
+    list.reduce((sum, q) => {
+      const total = Number(q.final_total_cad)
+      const sub = Number(q.subtotal)
+      const value = !Number.isNaN(total) && total > 0 ? total : (!Number.isNaN(sub) && sub > 0 ? sub : 0)
+      return sum + value
+    }, 0)
+  // Revenue from won quotes this month only (no fallback to all won)
+  const revenueThisMonth = sumWonRevenue(wonThisMonth)
+  const winRate =
+    quotes.filter((q) => q.status === 'won' || q.status === 'lost').length > 0
+      ? Math.round(
+          (wonQuotes.length /
+            quotes.filter((q) => q.status === 'won' || q.status === 'lost').length) *
+            100
+        )
+      : 0
+
   return (
     <Layout>
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">All Quotes</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">All Quotes</h1>
         <Link to="/quotes/new">
           <Button>+ New Quote</Button>
         </Link>
+      </div>
+
+      <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Card>
+          <p className="text-sm text-gray-600 dark:text-gray-300">Quotes this month</p>
+          <p className="text-2xl font-bold">{quotesThisMonth.length}</p>
+        </Card>
+        <Card>
+          <p className="text-sm text-gray-600 dark:text-gray-300">Won</p>
+          <p className="text-2xl font-bold">
+            {wonQuotes.length}
+            {quotes.length > 0 && (
+              <span className="ml-1 text-sm font-normal text-gray-500 dark:text-gray-400">
+                ({winRate}% win rate)
+              </span>
+            )}
+          </p>
+        </Card>
+        <Card>
+          <p className="text-sm text-gray-600 dark:text-gray-300">Pending</p>
+          <p className="text-2xl font-bold">{pendingQuotes.length}</p>
+        </Card>
+        <Card>
+          <p className="text-sm text-gray-600 dark:text-gray-300">Revenue this month</p>
+          <p className="text-2xl font-bold">{formatCurrency(revenueThisMonth)}</p>
+        </Card>
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-4">
@@ -252,7 +343,7 @@ export function QuotesList() {
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-from focus:outline-none focus:ring-1 focus:ring-primary-from"
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-from focus:outline-none focus:ring-1 focus:ring-primary-from dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
         >
           {STATUS_OPTIONS.map((opt) => (
             <option key={opt.value || 'all'} value={opt.value}>
@@ -260,7 +351,7 @@ export function QuotesList() {
             </option>
           ))}
         </select>
-        <span className="ml-2 border-l border-gray-200 pl-4 text-sm font-medium text-gray-600">
+        <span className="ml-2 border-l border-gray-200 pl-4 text-sm font-medium text-gray-600 dark:border-gray-600 dark:text-gray-300">
           Sort by
         </span>
         <div className="flex gap-1">
@@ -285,7 +376,7 @@ export function QuotesList() {
             Customer
           </Button>
         </div>
-        <span className="text-sm font-medium text-gray-600">Order</span>
+        <span className="text-sm font-medium text-gray-600 dark:text-gray-300">Order</span>
         <div className="flex gap-1">
           <Button
             variant={sortDir === 'asc' ? 'primary' : 'secondary'}
@@ -306,9 +397,9 @@ export function QuotesList() {
 
       <Card>
         {loading ? (
-          <p className="py-8 text-center text-gray-500">Loading…</p>
+          <p className="py-8 text-center text-gray-500 dark:text-gray-400">Loading…</p>
         ) : filtered.length === 0 ? (
-          <p className="py-8 text-center text-gray-500">
+          <p className="py-8 text-center text-gray-500 dark:text-gray-400">
             {quotes.length === 0
               ? 'No quotes yet. Create one to get started.'
               : 'No quotes match your search or filter.'}
@@ -317,12 +408,12 @@ export function QuotesList() {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[600px]">
               <thead>
-                <tr className="border-b border-gray-200 text-left text-sm text-gray-600">
+                <tr className="border-b border-gray-200 text-left text-sm text-gray-600 dark:border-gray-600 dark:text-gray-300">
                   <th className="pb-2 pr-4 font-medium">
                     <button
                       type="button"
                       onClick={() => handleSort('job_number')}
-                      className="hover:text-gray-900 focus:outline-none"
+                      className="hover:text-gray-900 focus:outline-none dark:hover:text-white"
                     >
                       Job # {sortKey === 'job_number' && (sortDir === 'asc' ? '↑' : '↓')}
                     </button>
@@ -331,7 +422,7 @@ export function QuotesList() {
                     <button
                       type="button"
                       onClick={() => handleSort('customer')}
-                      className="hover:text-gray-900 focus:outline-none"
+                      className="hover:text-gray-900 focus:outline-none dark:hover:text-white"
                     >
                       Customer {sortKey === 'customer' && (sortDir === 'asc' ? '↑' : '↓')}
                     </button>
@@ -340,7 +431,7 @@ export function QuotesList() {
                     <button
                       type="button"
                       onClick={() => handleSort('status')}
-                      className="hover:text-gray-900 focus:outline-none"
+                      className="hover:text-gray-900 focus:outline-none dark:hover:text-white"
                     >
                       Status {sortKey === 'status' && (sortDir === 'asc' ? '↑' : '↓')}
                     </button>
@@ -349,7 +440,7 @@ export function QuotesList() {
                     <button
                       type="button"
                       onClick={() => handleSort('total')}
-                      className="hover:text-gray-900 focus:outline-none"
+                      className="hover:text-gray-900 focus:outline-none dark:hover:text-white"
                     >
                       Total (CAD) {sortKey === 'total' && (sortDir === 'asc' ? '↑' : '↓')}
                     </button>
@@ -359,13 +450,13 @@ export function QuotesList() {
               </thead>
               <tbody>
                 {filtered.map((q) => (
-                  <tr key={q.id} className="border-b border-gray-100 hover:bg-gray-50/50">
+                  <tr key={q.id} className="border-b border-gray-100 hover:bg-gray-50/50 dark:border-gray-700 dark:hover:bg-gray-700/50">
                     <td className="py-3 pr-4">
                       <Link to={`/quotes/${q.id}`} className="font-medium text-primary-from hover:underline">
                         {q.job_number || '—'}
                       </Link>
                     </td>
-                    <td className="py-3 pr-4 text-gray-700">{customerDisplay(q)}</td>
+                    <td className="py-3 pr-4 text-gray-700 dark:text-gray-300">{customerDisplay(q)}</td>
                     <td className="py-3 pr-4">
                       <Badge status={q.status}>{q.status || 'draft'}</Badge>
                     </td>
@@ -396,7 +487,7 @@ export function QuotesList() {
                         )}
                         <Button
                           variant="secondary"
-                          className="!py-1 !text-sm text-red-600 hover:bg-red-50"
+                          className="!py-1 !text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/40"
                           onClick={() => setDeleteConfirm(q)}
                         >
                           Delete

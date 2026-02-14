@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { Layout } from '../components/layout/Layout'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
@@ -52,19 +53,6 @@ export function Customers() {
     setModalOpen(true)
   }
 
-  function openEdit(customer) {
-    setEditing(customer)
-    setForm({
-      name: customer.name ?? '',
-      company: customer.company ?? '',
-      email: customer.email ?? '',
-      phone: customer.phone ?? '',
-      address: customer.address ?? '',
-      notes: customer.notes ?? '',
-    })
-    setModalOpen(true)
-  }
-
   function handleSave() {
     if (!form.name?.trim()) return
     setSaving(true)
@@ -98,7 +86,7 @@ export function Customers() {
   return (
     <Layout>
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Customers</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Customers</h1>
         <Button onClick={openNew}>+ New Customer</Button>
       </div>
 
@@ -112,9 +100,9 @@ export function Customers() {
 
       <Card>
         {loading ? (
-          <p className="py-8 text-center text-gray-500">Loading…</p>
+          <p className="py-8 text-center text-gray-500 dark:text-gray-400">Loading…</p>
         ) : filtered.length === 0 ? (
-          <p className="py-8 text-center text-gray-500">
+          <p className="py-8 text-center text-gray-500 dark:text-gray-400">
             {list.length === 0
               ? 'No customers yet. Add one with + New Customer.'
               : 'No customers match your search.'}
@@ -123,39 +111,53 @@ export function Customers() {
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-gray-200 text-left text-sm text-gray-600">
+                <tr className="border-b border-gray-200 text-left text-sm text-gray-600 dark:border-gray-600 dark:text-gray-300">
                   <th className="p-2 font-medium">Company</th>
                   <th className="p-2 font-medium">Name</th>
                   <th className="p-2 font-medium">Phone</th>
                   <th className="p-2 font-medium">Email</th>
-                  <th className="p-2 font-medium w-24">Actions</th>
+                  <th className="p-2 font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((c) => (
                   <tr
                     key={c.id}
-                    className="border-b border-gray-100 hover:bg-gray-50"
+                    className="border-b border-gray-100 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-700/50"
                   >
-                    <td className="p-2">{c.company || '—'}</td>
-                    <td className="p-2">{c.name}</td>
-                    <td className="p-2">{c.phone || '—'}</td>
-                    <td className="p-2">{c.email || '—'}</td>
                     <td className="p-2">
-                      <Button
-                        variant="ghost"
-                        className="mr-1 text-sm"
-                        onClick={() => openEdit(c)}
+                      <Link
+                        to={`/customers/${c.id}`}
+                        className="text-primary-from hover:underline"
                       >
-                        Edit
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        className="text-sm text-danger hover:bg-red-50"
-                        onClick={() => setDeleteConfirm(c)}
+                        {c.company || '—'}
+                      </Link>
+                    </td>
+                    <td className="p-2">
+                      <Link
+                        to={`/customers/${c.id}`}
+                        className="text-primary-from hover:underline"
                       >
-                        Delete
-                      </Button>
+                        {c.name}
+                      </Link>
+                    </td>
+                    <td className="p-2 text-gray-900 dark:text-gray-100">{c.phone || '—'}</td>
+                    <td className="p-2 text-gray-900 dark:text-gray-100">{c.email || '—'}</td>
+                    <td className="p-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Link to={`/customers/${c.id}`}>
+                          <Button variant="secondary" className="!py-1 !text-sm">
+                            View
+                          </Button>
+                        </Link>
+                        <Button
+                          variant="secondary"
+                          className="!py-1 !text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/40"
+                          onClick={() => setDeleteConfirm(c)}
+                        >
+                          Delete
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -199,11 +201,11 @@ export function Customers() {
             onChange={(e) => setForm((p) => ({ ...p, address: e.target.value }))}
           />
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
+            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
               Notes
             </label>
             <textarea
-              className="w-full rounded-input border-2 border-gray-300 px-3 py-2 focus:border-primary-from focus:outline-none"
+              className="w-full rounded-input border-2 border-gray-300 px-3 py-2 focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
               rows={3}
               value={form.notes}
               onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))}

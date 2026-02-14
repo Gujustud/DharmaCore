@@ -16,7 +16,7 @@ export function Input({
   return (
     <div className="w-full">
       {label && (
-        <label className="mb-1 block text-sm font-medium text-gray-700">
+        <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
           {label}
         </label>
       )}
@@ -24,7 +24,7 @@ export function Input({
         type={inputType}
         inputMode={isNumeric ? 'decimal' : undefined}
         className={
-          'w-full rounded-input border-2 border-gray-300 px-3 py-2 focus:border-primary-from focus:outline-none ' +
+          'w-full rounded-input border-2 border-gray-300 px-3 py-2 focus:border-primary-from focus:outline-none dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100 dark:placeholder-gray-400 ' +
           (error ? 'border-danger ' : '') +
           className
         }

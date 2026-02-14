@@ -7,9 +7,9 @@ export function Modal({ open, onClose, title, children }) {
         onClick={onClose}
         aria-hidden
       />
-      <div className="relative z-10 max-h-[90vh] w-full max-w-lg overflow-auto rounded-card bg-white p-6 shadow-lg">
+      <div className="relative z-10 max-h-[90vh] w-full max-w-lg overflow-auto rounded-card bg-white p-6 shadow-lg dark:bg-gray-800 dark:ring-1 dark:ring-gray-700">
         {title && (
-          <h2 className="mb-4 text-lg font-bold text-gray-900">{title}</h2>
+          <h2 className="mb-4 text-lg font-bold text-gray-900 dark:text-white">{title}</h2>
         )}
         {children}
       </div>

@@ -9,6 +9,103 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Dark mode: when html has .dark, force dark styling so it works even if Tailwind dark: isn't loaded */
+html.dark,
+html.dark body,
+html.dark #root {
+  background-color: #111827 !important;
+  color: #e5e7eb !important;
+}
+
+/* Layout uses theme from React; this backs it up when class is on html */
+.theme-dark {
+  background-color: #111827 !important;
+  color: #e5e7eb !important;
+}
+
+/* Dark mode: force card background so Settings and all pages match */
+.dark .rounded-card {
+  background-color: #1f2937 !important;
+  border: 1px solid #374151;
+  color: #e5e7eb;
+}
+
+/* Dark mode: make Card content and common text readable */
+.dark .rounded-card .text-gray-600,
+.dark .rounded-card .text-gray-500 {
+  color: #d1d5db;
+}
+.dark .rounded-card .text-2xl.font-bold,
+.dark .rounded-card .text-gray-900 {
+  color: #f3f4f6;
+}
+.dark .rounded-card table th {
+  color: #d1d5db;
+  border-color: #374151;
+}
+.dark .rounded-card table td {
+  border-color: #374151;
+  color: #e5e7eb;
+}
+.dark .rounded-card table tbody tr:hover {
+  background-color: rgba(55, 65, 81, 0.5);
+}
+.dark .rounded-card a.text-primary-from {
+  color: #a5b4fc;
+}
+.dark .rounded-card .text-gray-700 {
+  color: #d1d5db;
+}
+
+/* Dark mode: all form controls inside .dark */
+.dark select,
+.dark textarea,
+.dark input[type="text"],
+.dark input[type="number"],
+.dark input[type="email"],
+.dark input[type="password"],
+.dark .rounded-input {
+  background-color: #374151 !important;
+  border-color: #4b5563 !important;
+  color: #f3f4f6 !important;
+}
+.dark select:focus,
+.dark textarea:focus,
+.dark input:focus {
+  border-color: #6366f1;
+  outline: none;
+}
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #9ca3af;
+}
+
+/* Dark mode: action buttons (View, Edit, Cancel, etc.) – consistent with theme */
+.dark button[data-variant="secondary"] {
+  background-color: #6b7280 !important;
+  color: #fff !important;
+  border: 1px solid #9ca3af;
+}
+.dark button[data-variant="secondary"]:hover:not(:disabled) {
+  background-color: #9ca3af !important;
+  border-color: #d1d5db;
+}
+.dark button[data-variant="ghost"] {
+  color: #e5e7eb !important;
+}
+.dark button[data-variant="ghost"]:hover:not(:disabled) {
+  background-color: #4b5563 !important;
+}
+
+/* Dark mode: Project images placeholder and drop zone (no white box) */
+.dark .part-images-box {
+  background-color: #374151 !important;
+  border-color: #4b5563 !important;
+}
+.dark .part-images-box:hover {
+  background-color: #4b5563 !important;
+}
+
 /* Remove number input spin buttons so DELETE/typing works normally */
 input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button {

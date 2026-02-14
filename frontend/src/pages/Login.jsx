@@ -30,10 +30,10 @@ export function Login() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-100 px-4">
+    <div className="flex min-h-screen items-center justify-center bg-gray-100 px-4 dark:bg-gray-900">
       <Card className="w-full max-w-sm">
-        <h1 className="mb-2 text-xl font-bold text-gray-900">DharmaCore</h1>
-        <p className="mb-6 text-sm text-gray-500">Sign in to continue</p>
+        <h1 className="mb-2 text-xl font-bold text-gray-900 dark:text-white">DharmaCore</h1>
+        <p className="mb-6 text-sm text-gray-500 dark:text-gray-400">Sign in to continue</p>
         <form onSubmit={handleSubmit} className="space-y-4">
           <Input
             type="email"
@@ -52,7 +52,7 @@ export function Login() {
             required
           />
           {error && (
-            <p className="text-sm text-red-600">{error}</p>
+            <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
           )}
           <Button type="submit" className="w-full" disabled={loading}>
             {loading ? 'Signing in…' : 'Sign in'}

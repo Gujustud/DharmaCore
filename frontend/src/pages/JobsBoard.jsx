@@ -10,13 +10,16 @@ import { Layout } from '../components/layout/Layout'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
 import { getJobs, updateJob } from '../lib/api'
+import { generateTrackingLink } from '../lib/calculations'
 import { format } from 'date-fns'
 
+const JOBS_VIEW_KEY = 'dharmacore_jobs_view'
+
 const COLUMNS = [
-  { id: 'planning', label: 'Planning', color: 'bg-blue-50 border-blue-200' },
-  { id: 'in_progress', label: 'In Progress', color: 'bg-amber-50 border-amber-200' },
-  { id: 'done', label: 'Done', color: 'bg-green-50 border-green-200' },
-  { id: 'cancelled', label: 'Cancelled', color: 'bg-gray-100 border-gray-200' },
+  { id: 'planning', label: 'Planning', color: 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-600 dark:border-blue-500 dark:text-white' },
+  { id: 'in_progress', label: 'In Progress', color: 'bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-600 dark:border-amber-500 dark:text-white' },
+  { id: 'done', label: 'Done', color: 'bg-green-50 border-green-200 text-green-800 dark:bg-green-600 dark:border-green-500 dark:text-white' },
+  { id: 'cancelled', label: 'Cancelled', color: 'bg-gray-100 border-gray-200 text-gray-700 dark:bg-gray-600 dark:border-gray-500 dark:text-white' },
 ]
 
 function statusLabel(status) {
@@ -33,12 +36,12 @@ function JobCard({ job, isDragOverlay }) {
   return (
     <div
       className={
-        'cursor-grab rounded-lg border-2 bg-white p-3 shadow card transition hover:shadow-md ' +
+        'cursor-grab rounded-lg border-2 bg-white p-3 shadow card transition hover:shadow-md dark:bg-gray-800 dark:border-gray-600 ' +
         (isDragOverlay ? 'cursor-grabbing shadow-lg' : '')
       }
     >
-      <p className="font-medium text-gray-900">{job.job_number}</p>
-      <p className="text-sm text-gray-600">{job.customer_name || '—'}</p>
+      <p className="font-medium text-gray-900 dark:text-white">{job.job_number}</p>
+      <p className="text-sm text-gray-600 dark:text-gray-300">{job.expand?.customer?.company || job.customer_name || '—'}</p>
     </div>
   )
 }
@@ -51,20 +54,20 @@ function DraggableJobCard({ job }) {
   return (
     <div
       ref={setNodeRef}
-      className={`flex overflow-hidden rounded-lg border-2 bg-white shadow transition hover:shadow-md ${isDragging ? 'opacity-50' : ''}`}
+      className={`flex overflow-hidden rounded-lg border-2 bg-white shadow transition hover:shadow-md dark:bg-gray-800 dark:border-gray-600 ${isDragging ? 'opacity-50' : ''}`}
     >
       <div
         {...listeners}
         {...attributes}
-        className="w-2 shrink-0 cursor-grab bg-gray-200 hover:bg-gray-300 active:cursor-grabbing"
+        className="w-2 shrink-0 cursor-grab bg-gray-200 hover:bg-gray-300 active:cursor-grabbing dark:bg-gray-600 dark:hover:bg-gray-500"
         title="Drag to move"
       />
       <Link
         to={`/jobs/${job.id}`}
-        className="min-w-0 flex-1 p-3 text-inherit no-underline hover:bg-gray-50/50"
+        className="min-w-0 flex-1 p-3 text-inherit no-underline hover:bg-gray-50/50 dark:hover:bg-gray-700/50"
       >
-        <p className="font-medium text-gray-900">{job.job_number}</p>
-        <p className="text-sm text-gray-600">{job.customer_name || '—'}</p>
+        <p className="font-medium text-gray-900 dark:text-white">{job.job_number}</p>
+        <p className="text-sm text-gray-600 dark:text-gray-300">{job.expand?.customer?.company || job.customer_name || '—'}</p>
       </Link>
     </div>
   )
@@ -81,7 +84,7 @@ function DroppableColumn({ columnId, label, color, jobs }) {
         (isOver ? ' ring-2 ring-primary-from' : '')
       }
     >
-      <h3 className="mb-3 font-semibold text-gray-800">{label}</h3>
+      <h3 className="mb-3 font-semibold text-gray-800 dark:text-gray-200">{label}</h3>
       <div className="space-y-2">
         {jobs.map((job) => (
           <DraggableJobCard key={job.id} job={job} />
@@ -95,7 +98,11 @@ export function JobsBoard() {
   const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(true)
   const [activeJob, setActiveJob] = useState(null)
-  const [view, setView] = useState('board')
+  const [view, setView] = useState(() => localStorage.getItem(JOBS_VIEW_KEY) || 'board')
+  const setViewAndSave = (v) => {
+    setView(v)
+    localStorage.setItem(JOBS_VIEW_KEY, v)
+  }
   const [sortKey, setSortKey] = useState('job_number')
   const [sortDir, setSortDir] = useState('desc')
 
@@ -146,7 +153,7 @@ export function JobsBoard() {
   if (loading) {
     return (
       <Layout>
-        <div className="py-8 text-center text-gray-500">Loading jobs…</div>
+        <div className="py-8 text-center text-gray-500 dark:text-gray-400">Loading jobs…</div>
       </Layout>
     )
   }
@@ -168,8 +175,8 @@ export function JobsBoard() {
       return sortDir === 'desc' ? tb - ta : ta - tb
     }
     if (sortKey === 'customer') {
-      const ca = a.customer_name || ''
-      const cb = b.customer_name || ''
+      const ca = a.expand?.customer?.company || a.customer_name || ''
+      const cb = b.expand?.customer?.company || b.customer_name || ''
       return mult * String(ca).localeCompare(String(cb))
     }
     return 0
@@ -178,11 +185,11 @@ export function JobsBoard() {
   return (
     <Layout>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-bold text-gray-900">Jobs</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Jobs</h1>
         <div className="flex flex-wrap items-center gap-4">
           {view === 'list' && (
             <>
-              <span className="text-sm font-medium text-gray-600">Sort by</span>
+              <span className="text-sm font-medium text-gray-600 dark:text-gray-300">Sort by</span>
               <div className="flex gap-1">
                 <Button
                   variant={sortKey === 'job_number' ? 'primary' : 'secondary'}
@@ -205,7 +212,7 @@ export function JobsBoard() {
                   Customer
                 </Button>
               </div>
-              <span className="text-sm font-medium text-gray-600">Order</span>
+              <span className="text-sm font-medium text-gray-600 dark:text-gray-300">Order</span>
               <div className="flex gap-1">
                 <Button
                   variant={sortDir === 'asc' ? 'primary' : 'secondary'}
@@ -228,14 +235,14 @@ export function JobsBoard() {
             <Button
               variant={view === 'board' ? 'primary' : 'secondary'}
               className="!py-1 !text-sm"
-              onClick={() => setView('board')}
+              onClick={() => setViewAndSave('board')}
             >
               Board
             </Button>
             <Button
               variant={view === 'list' ? 'primary' : 'secondary'}
               className="!py-1 !text-sm"
-              onClick={() => setView('list')}
+              onClick={() => setViewAndSave('list')}
             >
               List
             </Button>
@@ -264,55 +271,73 @@ export function JobsBoard() {
       ) : (
         <Card>
           {sortedJobs.length === 0 ? (
-            <p className="py-8 text-center text-gray-500">No jobs yet.</p>
+            <p className="py-8 text-center text-gray-500 dark:text-gray-400">No jobs yet.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[500px]">
                 <thead>
-                  <tr className="border-b border-gray-200 text-left text-sm text-gray-600">
+                  <tr className="border-b border-gray-200 text-left text-sm text-gray-600 dark:border-gray-600 dark:text-gray-300">
                     <th className="pb-2 pr-4 font-medium">Job #</th>
                     <th className="pb-2 pr-4 font-medium">Customer</th>
                     <th className="pb-2 pr-4 font-medium">Status</th>
                     <th className="pb-2 pr-4 font-medium">Due date</th>
                     <th className="pb-2 pr-4 font-medium">Ship date</th>
+                    <th className="pb-2 pr-4 font-medium">Tracking</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedJobs.map((job) => (
-                    <tr
-                      key={job.id}
-                      className="border-b border-gray-100 hover:bg-gray-50/50"
-                    >
-                      <td className="py-3 pr-4">
-                        <Link
-                          to={`/jobs/${job.id}`}
-                          className="font-medium text-primary-from hover:underline"
-                        >
-                          {job.job_number || '—'}
-                        </Link>
-                      </td>
-                      <td className="py-3 pr-4 text-gray-700">
-                        {job.customer_name || '—'}
-                      </td>
-                      <td className="py-3 pr-4">
-                        <span
-                          className={
-                            'rounded-full border px-2 py-0.5 text-xs font-medium ' +
-                            (COLUMNS.find((c) => c.id === (job.status || 'planning'))
-                              ?.color ?? 'bg-gray-100 border-gray-200')
-                          }
-                        >
-                          {statusLabel(job.status)}
-                        </span>
-                      </td>
-                      <td className="py-3 pr-4 text-gray-700">
-                        {formatDate(job.due_date)}
-                      </td>
-                      <td className="py-3 pr-4 text-gray-700">
-                        {formatDate(job.ship_date)}
-                      </td>
-                    </tr>
-                  ))}
+                  {sortedJobs.map((job) => {
+                    const trackingUrl = generateTrackingLink(job.tracking_number_1)
+                    return (
+                      <tr
+                        key={job.id}
+                        className="border-b border-gray-100 hover:bg-gray-50/50 dark:border-gray-700 dark:hover:bg-gray-700/50"
+                      >
+                        <td className="py-3 pr-4">
+                          <Link
+                            to={`/jobs/${job.id}`}
+                            className="font-medium text-primary-from hover:underline"
+                          >
+                            {job.job_number || '—'}
+                          </Link>
+                        </td>
+                        <td className="py-3 pr-4 text-gray-700 dark:text-gray-300">
+                          {job.expand?.customer?.company || job.customer_name || '—'}
+                        </td>
+                        <td className="py-3 pr-4">
+                          <span
+                            className={
+                              'rounded-full border px-2 py-0.5 text-xs font-medium ' +
+                              (COLUMNS.find((c) => c.id === (job.status || 'planning'))
+                                ?.color ?? 'bg-gray-100 border-gray-200 text-gray-700 dark:bg-gray-600 dark:border-gray-500 dark:text-white')
+                            }
+                          >
+                            {statusLabel(job.status)}
+                          </span>
+                        </td>
+                        <td className="py-3 pr-4 text-gray-700 dark:text-gray-300">
+                          {formatDate(job.due_date)}
+                        </td>
+                        <td className="py-3 pr-4 text-gray-700 dark:text-gray-300">
+                          {formatDate(job.ship_date)}
+                        </td>
+                        <td className="py-3 pr-4">
+                          {trackingUrl ? (
+                            <a
+                              href={trackingUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary-from hover:underline"
+                            >
+                              Track
+                            </a>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

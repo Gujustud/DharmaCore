@@ -1,10 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { pb } from '../lib/pocketbase'
-import { Button } from './ui/Button'
 
 const isPdf = (name) => (name || '').toLowerCase().endsWith('.pdf')
 
-export function PartImages({ record, collectionName, onUpdate, title = 'About this project' }) {
+export function PartImages({ record, collectionName, onUpdate, title = 'About this project', fillHeight = false }) {
   const [images, setImages] = useState([])
   const [uploading, setUploading] = useState(false)
   const [hoveredImage, setHoveredImage] = useState(null)
@@ -165,62 +164,42 @@ export function PartImages({ record, collectionName, onUpdate, title = 'About th
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [pdfViewerUrl])
 
+  const handleDrop = useCallback((e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (record?.id && e.dataTransfer?.files?.length) handleFileSelect(e.dataTransfer.files)
+  }, [record?.id, handleFileSelect])
+
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
+
   return (
-    <div ref={containerRef} className="space-y-3">
-      {title ? (
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-gray-700">{title}</h3>
-          {record?.id && (
-          <div className="flex gap-2">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*,.pdf,application/pdf"
-              multiple
-              className="hidden"
-              onChange={handleFileInput}
-            />
-            <Button
-              type="button"
-              variant="secondary"
-              className="!py-1 !text-xs"
-              disabled={uploading}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              {uploading ? 'Uploading…' : '+ Upload images or PDF'}
-            </Button>
-          </div>
-          )}
-        </div>
-      ) : record?.id ? (
-        <div className="flex justify-end">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*,.pdf,application/pdf"
-            multiple
-            className="hidden"
-            onChange={handleFileInput}
-          />
-          <Button
-            type="button"
-            variant="secondary"
-            className="!py-1 !text-xs"
-            disabled={uploading}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            {uploading ? 'Uploading…' : '+ Upload images or PDF'}
-          </Button>
-        </div>
-      ) : null}
+    <div
+      ref={containerRef}
+      className={`${fillHeight ? 'flex min-h-0 flex-1 flex-col' : 'space-y-3'}`}
+    >
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*,.pdf,application/pdf"
+        multiple
+        className="hidden"
+        onChange={handleFileInput}
+        aria-hidden
+      />
+      {title ? <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">{title}</h3> : null}
 
       {!record?.id && (
-        <p className="text-sm text-gray-500">
-          Save this {collectionName === 'quotes' ? 'quote' : 'job'} first to upload images or PDFs.
-        </p>
+        <div className="part-images-box rounded-lg border-2 border-dashed border-gray-200 bg-gray-50 p-8 text-center dark:border-gray-600 dark:bg-gray-700 dark:bg-opacity-100">
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            Save this {collectionName === 'quotes' ? 'quote' : 'job'} first to upload images or PDFs.
+          </p>
+        </div>
       )}
 
-      {images.length > 0 && (
+      {images.length > 0 && record?.id && (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
             {images.map((filename, idx) => {
@@ -231,7 +210,7 @@ export function PartImages({ record, collectionName, onUpdate, title = 'About th
                 return (
                   <div
                     key={idx}
-                    className="group relative flex aspect-square flex-col overflow-hidden rounded-lg border border-gray-200 bg-gray-100"
+                    className="group relative flex aspect-square flex-col overflow-hidden rounded-lg border border-gray-200 bg-gray-100 dark:border-gray-600 dark:bg-gray-700"
                   >
                     <div
                       className="relative flex-1 min-h-0 w-full cursor-pointer overflow-hidden"
@@ -247,8 +226,8 @@ export function PartImages({ record, collectionName, onUpdate, title = 'About th
                         className="absolute left-0 top-0 h-[400%] w-[400%] origin-top-left scale-[0.25] pointer-events-none"
                       />
                     </div>
-                    <div className="flex shrink-0 items-center justify-between gap-1 border-t border-gray-200 bg-white px-2 py-1.5">
-                      <span className="min-w-0 truncate text-xs text-gray-600" title={filename}>
+                    <div className="flex shrink-0 items-center justify-between gap-1 border-t border-gray-200 bg-white px-2 py-1.5 dark:border-gray-600 dark:bg-gray-800">
+                      <span className="min-w-0 truncate text-xs text-gray-600 dark:text-gray-300" title={filename}>
                         {filename}
                       </span>
                       <button
@@ -269,7 +248,7 @@ export function PartImages({ record, collectionName, onUpdate, title = 'About th
               return (
                 <div
                   key={idx}
-                  className="group relative aspect-square overflow-hidden rounded-lg border border-gray-200 bg-gray-50 cursor-pointer"
+                  className="group relative aspect-square overflow-hidden rounded-lg border border-gray-200 bg-gray-50 cursor-pointer dark:border-gray-600 dark:bg-gray-700"
                   onMouseEnter={() => setHoveredImage({ url: fullUrl, alt: `Part ${idx + 1}` })}
                   onMouseLeave={() => setHoveredImage(null)}
                 >
@@ -308,13 +287,13 @@ export function PartImages({ record, collectionName, onUpdate, title = 'About th
 
           {/* PDF viewer popup - sits below app header, Esc to close */}
           {pdfViewerUrl && (
-            <div className="fixed top-14 left-0 right-0 bottom-0 z-50 flex flex-col bg-white border-t border-gray-200 shadow-lg">
-              <div className="flex shrink-0 items-center justify-between border-b border-gray-200 bg-gray-100 px-4 py-2">
-                <span className="text-sm text-gray-600">Press <kbd className="rounded border border-gray-400 bg-gray-200 px-1.5 py-0.5 font-mono text-xs">Esc</kbd> to close</span>
+            <div className="fixed top-14 left-0 right-0 bottom-0 z-50 flex flex-col bg-white border-t border-gray-200 shadow-lg dark:bg-gray-800 dark:border-gray-600">
+              <div className="flex shrink-0 items-center justify-between border-b border-gray-200 bg-gray-100 px-4 py-2 dark:border-gray-600 dark:bg-gray-700">
+                <span className="text-sm text-gray-600 dark:text-gray-300">Press <kbd className="rounded border border-gray-400 bg-gray-200 px-1.5 py-0.5 font-mono text-xs dark:border-gray-500 dark:bg-gray-600 dark:text-gray-200">Esc</kbd> to close</span>
                 <button
                   type="button"
                   onClick={() => setPdfViewerUrl(null)}
-                  className="rounded border border-gray-400 bg-white px-3 py-1.5 text-sm hover:bg-gray-100"
+                  className="rounded border border-gray-400 bg-white px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-500 dark:bg-gray-600 dark:text-gray-100 dark:hover:bg-gray-500"
                 >
                   Close
                 </button>
@@ -330,8 +309,23 @@ export function PartImages({ record, collectionName, onUpdate, title = 'About th
       )}
 
       {images.length === 0 && record?.id && (
-        <div className="rounded-lg border-2 border-dashed border-gray-300 p-8 text-center">
-          <p className="text-sm text-gray-500">No images or PDFs yet. Upload or paste to add them.</p>
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => fileInputRef.current?.click()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              fileInputRef.current?.click()
+            }
+          }}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          className={`part-images-box rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 p-8 text-center cursor-pointer transition-colors hover:border-primary-from hover:bg-primary-from/5 focus:outline-none focus:ring-2 focus:ring-primary-from focus:ring-offset-2 dark:border-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 ${fillHeight ? 'flex min-h-0 flex-1 flex-col items-center justify-center' : ''}`}
+        >
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            {uploading ? 'Uploading…' : 'Click, paste, or drop images or PDFs here.'}
+          </p>
         </div>
       )}
     </div>
