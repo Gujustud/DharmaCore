@@ -541,8 +541,8 @@ export function QuoteDetail() {
 
   return (
     <Layout>
-      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
-        <div className="min-w-0 flex-1">
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:pt-0">
+        <div className="min-w-0 flex-1 pt-0">
           <Card className="mb-6">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="grid gap-4 sm:col-span-2 sm:grid-cols-3">
@@ -685,8 +685,21 @@ export function QuoteDetail() {
             />
           ))}
         </div>
-        <aside className="lg:w-[500px] lg:shrink-0 lg:sticky lg:top-20 lg:self-start lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto">
+        <aside className="lg:w-[500px] lg:shrink-0 lg:sticky lg:top-20 lg:self-start lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto lg:pt-0">
           <QuoteTotals quote={calculatedQuote} />
+          {jobId && (
+            <Card className="mt-6">
+              <h3 className="mb-2 text-sm font-semibold text-gray-900 dark:text-white">
+                Actual time / machining notes
+              </h3>
+              <textarea
+                className="min-h-[80px] w-full rounded-input border-2 border-gray-300 px-3 py-2 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                rows={3}
+                value={quote?.actual_time_notes ?? ''}
+                onChange={(e) => handleQuoteChange({ actual_time_notes: e.target.value })}
+              />
+            </Card>
+          )}
           <Card className="mt-6">
             <button
               type="button"

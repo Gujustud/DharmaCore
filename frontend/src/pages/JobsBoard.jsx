@@ -9,6 +9,7 @@ import {
 import { Layout } from '../components/layout/Layout'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
+import { Input } from '../components/ui/Input'
 import { getJobs, updateJob } from '../lib/api'
 import { generateTrackingLink } from '../lib/calculations'
 import { format } from 'date-fns'
@@ -32,6 +33,10 @@ function formatDate(d) {
   return format(x, 'MMM d, yyyy')
 }
 
+function companyDisplay(job) {
+  return job.expand?.customer?.company || job.customer_name || '—'
+}
+
 function JobCard({ job, isDragOverlay }) {
   return (
     <div
@@ -41,16 +46,24 @@ function JobCard({ job, isDragOverlay }) {
       }
     >
       <p className="font-medium text-gray-900 dark:text-white">{job.job_number}</p>
-      <p className="text-sm text-gray-600 dark:text-gray-300">{job.expand?.customer?.company || job.customer_name || '—'}</p>
+      <p className="text-sm text-gray-600 dark:text-gray-300">{companyDisplay(job)}</p>
     </div>
   )
 }
 
-function DraggableJobCard({ job }) {
+function DraggableJobCard({
+  job,
+  editingCustomerJobId,
+  editingCustomerValue,
+  onStartEditCustomer,
+  onSaveCustomer,
+  onCustomerValueChange,
+}) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: job.id,
     data: { job },
   })
+  const isEditing = editingCustomerJobId === job.id
   return (
     <div
       ref={setNodeRef}
@@ -62,18 +75,63 @@ function DraggableJobCard({ job }) {
         className="w-2 shrink-0 cursor-grab bg-gray-200 hover:bg-gray-300 active:cursor-grabbing dark:bg-gray-600 dark:hover:bg-gray-500"
         title="Drag to move"
       />
-      <Link
-        to={`/jobs/${job.id}`}
-        className="min-w-0 flex-1 p-3 text-inherit no-underline hover:bg-gray-50/50 dark:hover:bg-gray-700/50"
-      >
-        <p className="font-medium text-gray-900 dark:text-white">{job.job_number}</p>
-        <p className="text-sm text-gray-600 dark:text-gray-300">{job.expand?.customer?.company || job.customer_name || '—'}</p>
-      </Link>
+      <div className="min-w-0 flex-1 p-3">
+        <Link
+          to={`/jobs/${job.id}`}
+          className="text-inherit no-underline hover:bg-gray-50/50 dark:hover:bg-gray-700/50"
+        >
+          <p className="font-medium text-gray-900 dark:text-white">{job.job_number}</p>
+        </Link>
+        {isEditing ? (
+          <input
+            type="text"
+            value={editingCustomerValue}
+            onChange={(e) => onCustomerValueChange(e.target.value)}
+            onBlur={onSaveCustomer}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') onSaveCustomer()
+              e.stopPropagation()
+            }}
+            autoFocus
+            onClick={(e) => e.stopPropagation()}
+            className="mt-1 w-full rounded border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+          />
+        ) : (
+          <p
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.preventDefault()
+              e.stopPropagation()
+              onStartEditCustomer(job)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                onStartEditCustomer(job)
+              }
+            }}
+            className="cursor-pointer text-sm text-gray-600 hover:underline dark:text-gray-300"
+          >
+            {companyDisplay(job)}
+          </p>
+        )}
+      </div>
     </div>
   )
 }
 
-function DroppableColumn({ columnId, label, color, jobs }) {
+function DroppableColumn({
+  columnId,
+  label,
+  color,
+  jobs,
+  editingCustomerJobId,
+  editingCustomerValue,
+  onStartEditCustomer,
+  onSaveCustomer,
+  onCustomerValueChange,
+}) {
   const { setNodeRef, isOver } = useDroppable({ id: columnId })
   return (
     <div
@@ -87,7 +145,15 @@ function DroppableColumn({ columnId, label, color, jobs }) {
       <h3 className="mb-3 font-semibold text-gray-800 dark:text-gray-200">{label}</h3>
       <div className="space-y-2">
         {jobs.map((job) => (
-          <DraggableJobCard key={job.id} job={job} />
+          <DraggableJobCard
+            key={job.id}
+            job={job}
+            editingCustomerJobId={editingCustomerJobId}
+            editingCustomerValue={editingCustomerValue}
+            onStartEditCustomer={onStartEditCustomer}
+            onSaveCustomer={onSaveCustomer}
+            onCustomerValueChange={onCustomerValueChange}
+          />
         ))}
       </div>
     </div>
@@ -98,6 +164,9 @@ export function JobsBoard() {
   const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(true)
   const [activeJob, setActiveJob] = useState(null)
+  const [editingCustomerJobId, setEditingCustomerJobId] = useState(null)
+  const [editingCustomerValue, setEditingCustomerValue] = useState('')
+  const [search, setSearch] = useState('')
   const [view, setView] = useState(() => localStorage.getItem(JOBS_VIEW_KEY) || 'board')
   const setViewAndSave = (v) => {
     setView(v)
@@ -123,11 +192,6 @@ export function JobsBoard() {
     return () => { cancelled = true }
   }, [])
 
-  const jobsByStatus = COLUMNS.reduce((acc, col) => {
-    acc[col.id] = jobs.filter((j) => (j.status || 'planning') === col.id)
-    return acc
-  }, {})
-
   const handleDragEnd = async (event) => {
     const { active, over } = event
     setActiveJob(null)
@@ -150,6 +214,27 @@ export function JobsBoard() {
     if (job) setActiveJob(job)
   }
 
+  const startEditingCustomer = (job) => {
+    setEditingCustomerJobId(job.id)
+    setEditingCustomerValue(companyDisplay(job) === '—' ? '' : companyDisplay(job))
+  }
+
+  const saveCustomerEdit = async () => {
+    if (!editingCustomerJobId) return
+    const value = (editingCustomerValue ?? '').trim()
+    try {
+      await updateJob(editingCustomerJobId, { customer_name: value || undefined })
+      setJobs((prev) =>
+        prev.map((j) =>
+          j.id === editingCustomerJobId ? { ...j, customer_name: value } : j
+        )
+      )
+    } catch (e) {
+      console.error(e)
+    }
+    setEditingCustomerJobId(null)
+  }
+
   if (loading) {
     return (
       <Layout>
@@ -157,6 +242,20 @@ export function JobsBoard() {
       </Layout>
     )
   }
+
+  const searchLower = search.trim().toLowerCase()
+  const filteredJobs = searchLower
+    ? jobs.filter((j) => {
+        const jobNum = String(j.job_number ?? '').toLowerCase()
+        const cust = String((j.expand?.customer?.company || j.customer_name) ?? '').toLowerCase()
+        return jobNum.includes(searchLower) || cust.includes(searchLower)
+      })
+    : jobs
+
+  const jobsByStatus = COLUMNS.reduce((acc, col) => {
+    acc[col.id] = filteredJobs.filter((j) => (j.status || 'planning') === col.id)
+    return acc
+  }, {})
 
   const mult = sortDir === 'asc' ? 1 : -1
   function jobNumberToDate(jobNumber) {
@@ -168,7 +267,7 @@ export function JobsBoard() {
     const d = new Date(yyyy, mm - 1, dd)
     return isNaN(d.getTime()) ? 0 : d.getTime()
   }
-  const sortedJobs = [...jobs].sort((a, b) => {
+  const sortedJobs = [...filteredJobs].sort((a, b) => {
     if (sortKey === 'job_number') {
       const ta = jobNumberToDate(a.job_number)
       const tb = jobNumberToDate(b.job_number)
@@ -186,14 +285,21 @@ export function JobsBoard() {
     <Layout>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Jobs</h1>
-        <div className="flex flex-wrap items-center gap-4">
+        <div className="flex flex-nowrap items-center gap-2">
+          <Input
+            type="search"
+            placeholder="Search by job #, customer…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="min-w-0 max-w-[200px] shrink-0"
+          />
           {view === 'list' && (
             <>
-              <span className="text-sm font-medium text-gray-600 dark:text-gray-300">Sort by</span>
-              <div className="flex gap-1">
+              <span className="shrink-0 text-sm text-gray-500 dark:text-gray-400">Sort</span>
+              <div className="flex shrink-0 gap-1">
                 <Button
                   variant={sortKey === 'job_number' ? 'primary' : 'secondary'}
-                  className="!py-1 !text-sm"
+                  className="!py-1 !text-xs"
                   onClick={() => {
                     setSortKey('job_number')
                     if (sortKey !== 'job_number') setSortDir('desc')
@@ -203,7 +309,7 @@ export function JobsBoard() {
                 </Button>
                 <Button
                   variant={sortKey === 'customer' ? 'primary' : 'secondary'}
-                  className="!py-1 !text-sm"
+                  className="!py-1 !text-xs"
                   onClick={() => {
                     setSortKey('customer')
                     if (sortKey !== 'customer') setSortDir('asc')
@@ -212,18 +318,18 @@ export function JobsBoard() {
                   Customer
                 </Button>
               </div>
-              <span className="text-sm font-medium text-gray-600 dark:text-gray-300">Order</span>
-              <div className="flex gap-1">
+              <span className="shrink-0 text-sm text-gray-500 dark:text-gray-400">Order</span>
+              <div className="flex shrink-0 gap-1">
                 <Button
                   variant={sortDir === 'asc' ? 'primary' : 'secondary'}
-                  className="!py-1 !text-sm"
+                  className="!py-1 !text-xs"
                   onClick={() => setSortDir('asc')}
                 >
                   A→Z
                 </Button>
                 <Button
                   variant={sortDir === 'desc' ? 'primary' : 'secondary'}
-                  className="!py-1 !text-sm"
+                  className="!py-1 !text-xs"
                   onClick={() => setSortDir('desc')}
                 >
                   Z→A
@@ -231,17 +337,17 @@ export function JobsBoard() {
               </div>
             </>
           )}
-          <div className="flex gap-2">
+          <div className="flex shrink-0 gap-1">
             <Button
               variant={view === 'board' ? 'primary' : 'secondary'}
-              className="!py-1 !text-sm"
+              className="!py-1 !text-xs"
               onClick={() => setViewAndSave('board')}
             >
               Board
             </Button>
             <Button
               variant={view === 'list' ? 'primary' : 'secondary'}
-              className="!py-1 !text-sm"
+              className="!py-1 !text-xs"
               onClick={() => setViewAndSave('list')}
             >
               List
@@ -260,6 +366,11 @@ export function JobsBoard() {
                 label={col.label}
                 color={col.color}
                 jobs={jobsByStatus[col.id] || []}
+                editingCustomerJobId={editingCustomerJobId}
+                editingCustomerValue={editingCustomerValue}
+                onStartEditCustomer={startEditingCustomer}
+                onSaveCustomer={saveCustomerEdit}
+                onCustomerValueChange={setEditingCustomerValue}
               />
             ))}
           </div>
@@ -271,7 +382,9 @@ export function JobsBoard() {
       ) : (
         <Card>
           {sortedJobs.length === 0 ? (
-            <p className="py-8 text-center text-gray-500 dark:text-gray-400">No jobs yet.</p>
+            <p className="py-8 text-center text-gray-500 dark:text-gray-400">
+              {jobs.length === 0 ? 'No jobs yet.' : 'No jobs match your search.'}
+            </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[500px]">
@@ -302,12 +415,17 @@ export function JobsBoard() {
                           </Link>
                         </td>
                         <td className="py-3 pr-4 text-gray-700 dark:text-gray-300">
-                          {job.expand?.customer?.company || job.customer_name || '—'}
+                          <Link
+                            to={`/jobs/${job.id}`}
+                            className="text-primary-from hover:underline"
+                          >
+                            {companyDisplay(job)}
+                          </Link>
                         </td>
                         <td className="py-3 pr-4">
                           <span
                             className={
-                              'rounded-full border px-2 py-0.5 text-xs font-medium ' +
+                              'rounded-md border px-2 py-0.5 text-sm font-medium ' +
                               (COLUMNS.find((c) => c.id === (job.status || 'planning'))
                                 ?.color ?? 'bg-gray-100 border-gray-200 text-gray-700 dark:bg-gray-600 dark:border-gray-500 dark:text-white')
                             }

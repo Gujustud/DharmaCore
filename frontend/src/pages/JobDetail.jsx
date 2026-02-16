@@ -24,16 +24,16 @@ const TRACKING_STATUS_OPTIONS = [
 ]
 
 const STATUS_PILL_CLASS = {
-  planning: 'bg-blue-100 text-blue-800 border-blue-200',
-  in_progress: 'bg-amber-100 text-amber-800 border-amber-200',
-  done: 'bg-green-100 text-green-800 border-green-200',
-  cancelled: 'bg-gray-100 text-gray-600 border-gray-200',
+  planning: 'bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-600 dark:border-blue-500 dark:text-white',
+  in_progress: 'bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-600 dark:border-amber-500 dark:text-white',
+  done: 'bg-green-50 border-green-200 text-green-800 dark:bg-green-600 dark:border-green-500 dark:text-white',
+  cancelled: 'bg-gray-100 border-gray-200 text-gray-700 dark:bg-gray-600 dark:border-gray-500 dark:text-white',
 }
 
 const TRACKING_PILL_CLASS = {
-  not_shipped: 'bg-gray-100 text-gray-600 border-gray-200',
-  in_transit: 'bg-amber-50 text-amber-800 border-amber-200',
-  delivered: 'bg-green-100 text-green-800 border-green-200',
+  not_shipped: 'bg-gray-100 border-gray-200 text-gray-700 dark:bg-gray-600 dark:border-gray-500 dark:text-white',
+  in_transit: 'bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-600 dark:border-amber-500 dark:text-white',
+  delivered: 'bg-green-50 border-green-200 text-green-800 dark:bg-green-600 dark:border-green-500 dark:text-white',
 }
 
 function dateInputValue(d) {
@@ -65,6 +65,7 @@ export function JobDetail() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState(false)
+  const [showTracking2, setShowTracking2] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -75,6 +76,7 @@ export function JobDetail() {
         if (!cancelled) {
           setJob(j)
           setVendors(vendorsRes?.items ?? [])
+          if (j?.tracking_number_2) setShowTracking2(true)
         }
       } catch (e) {
         if (!cancelled) console.error(e)
@@ -145,9 +147,6 @@ export function JobDetail() {
   }
 
   const quoteId = job.expand?.quote?.id || job.quote
-  const statusClass = STATUS_PILL_CLASS[job.status] || STATUS_PILL_CLASS.planning
-  const trackingClass = TRACKING_PILL_CLASS[job.tracking_status] || TRACKING_PILL_CLASS.not_shipped
-
   return (
     <Layout>
       <div className="mb-6 flex items-center justify-between">
@@ -187,17 +186,42 @@ export function JobDetail() {
           <Card>
             <div className="divide-y divide-gray-100 dark:divide-gray-700">
           <Row label="Status" value={job.status} emptyLabel="">
-            <select
-              className={`rounded-full border px-3 py-1 text-sm font-medium ${statusClass}`}
-              value={job.status ?? 'planning'}
-              onChange={(e) => handleChange({ status: e.target.value })}
-            >
-              {STATUS_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+            <div className="flex flex-wrap gap-2">
+              {STATUS_OPTIONS.map((o) => {
+                const isSelected = (job.status ?? 'planning') === o.value
+                const pillClass = STATUS_PILL_CLASS[o.value] || STATUS_PILL_CLASS.planning
+                return (
+                  <button
+                    key={o.value}
+                    type="button"
+                    onClick={() => handleChange({ status: o.value })}
+                    className={`rounded-md border px-3 py-1 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-primary-from focus:ring-offset-2 dark:focus:ring-offset-gray-800 ${pillClass} ${isSelected ? 'ring-2 ring-primary-from ring-offset-2 dark:ring-offset-gray-800' : ''}`}
+                  >
+                    {o.label}
+                  </button>
+                )
+              })}
+            </div>
+          </Row>
+
+          <Row label="Due Date" value={job.due_date} emptyLabel="Empty">
+            <input
+              type="date"
+              className="rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+              value={dateInputValue(job.due_date)}
+              onChange={(e) => handleChange({ due_date: e.target.value || null })}
+            />
+          </Row>
+
+          <Row label="Completion" value={job.completion_date} emptyLabel="Empty">
+            <input
+              type="date"
+              className="rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+              value={dateInputValue(job.completion_date)}
+              onChange={(e) =>
+                handleChange({ completion_date: e.target.value || null })
+              }
+            />
           </Row>
 
           <Row label="Ship Date" value={job.ship_date} emptyLabel="Empty">
@@ -210,17 +234,22 @@ export function JobDetail() {
           </Row>
 
           <Row label="Tracking Status" value={job.tracking_status} emptyLabel="">
-            <select
-              className={`rounded-full border px-3 py-1 text-sm font-medium ${trackingClass}`}
-              value={job.tracking_status ?? 'not_shipped'}
-              onChange={(e) => handleChange({ tracking_status: e.target.value })}
-            >
-              {TRACKING_STATUS_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
+            <div className="flex flex-wrap gap-2">
+              {TRACKING_STATUS_OPTIONS.map((o) => {
+                const isSelected = (job.tracking_status ?? 'not_shipped') === o.value
+                const pillClass = TRACKING_PILL_CLASS[o.value] || TRACKING_PILL_CLASS.not_shipped
+                return (
+                  <button
+                    key={o.value}
+                    type="button"
+                    onClick={() => handleChange({ tracking_status: o.value })}
+                    className={`rounded-md border px-3 py-1 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-primary-from focus:ring-offset-2 dark:focus:ring-offset-gray-800 ${pillClass} ${isSelected ? 'ring-2 ring-primary-from ring-offset-2 dark:ring-offset-gray-800' : ''}`}
+                  >
+                    {o.label}
+                  </button>
+                )
+              })}
+            </div>
           </Row>
 
           <Row label="# Tracking Number" value={job.tracking_number_1}>
@@ -233,30 +262,57 @@ export function JobDetail() {
           </Row>
 
           <Row label="Tracking Link" value={link1}>
-            {link1 ? (
-              <a
-                href={link1}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary-from underline hover:no-underline"
+            <div className="flex items-center gap-3">
+              <span className="min-w-0 flex-1">
+                {link1 ? (
+                  <a
+                    href={link1}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary-from underline hover:no-underline"
+                  >
+                    {link1.length > 45 ? link1.slice(0, 42) + '…' : link1}
+                  </a>
+                ) : (
+                  <span className="text-gray-400 dark:text-gray-500">Empty</span>
+                )}
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowTracking2((v) => !v)}
+                className="shrink-0 rounded border border-gray-300 px-2 py-0.5 text-xs font-medium text-gray-600 hover:bg-gray-100 focus:outline-none dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700"
+                title={showTracking2 ? 'Hide second tracking' : 'Add second tracking'}
               >
-                {link1.length > 45 ? link1.slice(0, 42) + '…' : link1}
-              </a>
-            ) : null}
+                {showTracking2 ? '− Hide 2nd' : '+ Add 2nd'}
+              </button>
+            </div>
           </Row>
 
-          <Row label="Due Date" value={job.due_date} emptyLabel="Empty">
-            <input
-              type="date"
-              className="rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-              value={dateInputValue(job.due_date)}
-              onChange={(e) => handleChange({ due_date: e.target.value || null })}
-            />
-          </Row>
+          {showTracking2 && (
+            <>
+              <Row label="Tracking 2" value={job.tracking_number_2}>
+                <input
+                  type="text"
+                  className="w-full max-w-sm rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                  value={job.tracking_number_2 ?? ''}
+                  onChange={(e) => handleChange({ tracking_number_2: e.target.value })}
+                />
+              </Row>
 
-          <Row label="Job" value={job.job_number}>
-            <span className="text-gray-900 dark:text-white">{job.job_number}</span>
-          </Row>
+              <Row label="Tracking Link 2" value={link2}>
+                {link2 ? (
+                  <a
+                    href={link2}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary-from underline hover:no-underline"
+                  >
+                    {link2.length > 45 ? link2.slice(0, 42) + '…' : link2}
+                  </a>
+                ) : null}
+              </Row>
+            </>
+          )}
 
           <Row label="Invoice" value={job.wave_invoice_number}>
             <input
@@ -273,17 +329,6 @@ export function JobDetail() {
               className="w-full max-w-[200px] rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
               value={job.po_number ?? ''}
               onChange={(e) => handleChange({ po_number: e.target.value })}
-            />
-          </Row>
-
-          <Row label="Completion" value={job.completion_date} emptyLabel="Empty">
-            <input
-              type="date"
-              className="rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-              value={dateInputValue(job.completion_date)}
-              onChange={(e) =>
-                handleChange({ completion_date: e.target.value || null })
-              }
             />
           </Row>
 
@@ -311,31 +356,6 @@ export function JobDetail() {
             </select>
           </Row>
 
-          <Row label="Tracking 2" value={job.tracking_number_2}>
-            <input
-              type="text"
-              className="w-full max-w-sm rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-              value={job.tracking_number_2 ?? ''}
-              onChange={(e) => handleChange({ tracking_number_2: e.target.value })}
-            />
-          </Row>
-
-          <Row label="Tracking Link 2" value={link2}>
-            {link2 ? (
-              <a
-                href={link2}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary-from underline hover:no-underline"
-              >
-                {link2.length > 45 ? link2.slice(0, 42) + '…' : link2}
-              </a>
-            ) : null}
-          </Row>
-
-          <Row label="Attachments" value="" emptyLabel="Empty">
-            <span className="text-gray-400 dark:text-gray-500">Empty</span>
-          </Row>
             </div>
           </Card>
         </div>
@@ -372,9 +392,9 @@ export function JobDetail() {
                   <p className="mb-1 text-sm font-medium text-gray-500 dark:text-gray-400">
                     Parts in this job
                   </p>
-                  <pre className="whitespace-pre-wrap rounded bg-gray-50 p-2 text-sm text-gray-800 dark:bg-gray-700 dark:text-gray-200">
+                  <div className="whitespace-pre-wrap rounded bg-gray-50 p-2 text-sm font-sans text-gray-800 dark:bg-gray-700 dark:text-gray-200">
                     {job.parts_description}
-                  </pre>
+                  </div>
                 </div>
               )}
             </div>

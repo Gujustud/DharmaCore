@@ -271,6 +271,18 @@ export function PartImages({ record, collectionName, onUpdate, title = 'About th
                 </div>
               )
             })}
+            {/* Add-more card: click to open file picker (only if under max) */}
+            {images.length < 10 && (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="flex aspect-square flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 text-gray-500 transition-colors hover:border-primary-from hover:bg-primary-from/5 hover:text-primary-from focus:outline-none focus:ring-2 focus:ring-primary-from focus:ring-offset-2 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-400 dark:hover:border-primary-from dark:hover:bg-primary-from/10"
+              >
+                <span className="text-2xl font-light">+</span>
+                <span className="text-xs font-medium">Add image or PDF</span>
+              </button>
+            )}
           </div>
 
           {/* Hover popup for images */}

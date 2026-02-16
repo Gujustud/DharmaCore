@@ -115,16 +115,16 @@ export function Vendors() {
       </div>
 
       <Card className="mb-4">
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <div className="flex-1">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="flex-1 min-w-0">
             <Input
               placeholder="Search by name, contact, email, services..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
           </div>
-          <div className="w-full sm:w-48">
-            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+          <div className="flex items-center gap-2 sm:w-48">
+            <label className="shrink-0 text-sm font-medium text-gray-700 dark:text-gray-300">
               Type
             </label>
             <select

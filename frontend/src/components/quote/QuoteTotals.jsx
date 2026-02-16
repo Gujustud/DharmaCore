@@ -27,7 +27,7 @@ export function QuoteTotals({ quote }) {
       : 0
 
   return (
-    <Card className="sticky top-4 w-[500px] shrink-0">
+    <Card>
       <h3 className="mb-4 font-semibold text-gray-900 dark:text-white">QUOTE TOTALS</h3>
       <div className="space-y-2 text-sm">
         <div className="flex justify-between">

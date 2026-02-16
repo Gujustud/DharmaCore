@@ -17,7 +17,7 @@ export function Badge({ children, status, className = '' }) {
   return (
     <span
       className={
-        'inline-flex rounded-full px-2 py-0.5 text-xs font-medium ' +
+        'inline-flex rounded-md px-2 py-0.5 text-sm font-medium ' +
         color +
         ' ' +
         className

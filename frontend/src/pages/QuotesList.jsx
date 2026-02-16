@@ -288,22 +288,22 @@ export function QuotesList() {
     }, 0)
   // Revenue from won quotes this month only (no fallback to all won)
   const revenueThisMonth = sumWonRevenue(wonThisMonth)
-  const winRate =
-    quotes.filter((q) => q.status === 'won' || q.status === 'lost').length > 0
-      ? Math.round(
-          (wonQuotes.length /
-            quotes.filter((q) => q.status === 'won' || q.status === 'lost').length) *
-            100
-        )
-      : 0
-
   return (
     <Layout>
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">All Quotes</h1>
-        <Link to="/quotes/new">
-          <Button>+ New Quote</Button>
-        </Link>
+        <div className="flex flex-nowrap items-center gap-3">
+          <Input
+            type="search"
+            placeholder="Search by job #, customer, part #…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="min-w-0 max-w-[220px] shrink-0"
+          />
+          <Link to="/quotes/new" className="shrink-0">
+            <Button>New Quote</Button>
+          </Link>
+        </div>
       </div>
 
       <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -313,14 +313,7 @@ export function QuotesList() {
         </Card>
         <Card>
           <p className="text-sm text-gray-600 dark:text-gray-300">Won</p>
-          <p className="text-2xl font-bold">
-            {wonQuotes.length}
-            {quotes.length > 0 && (
-              <span className="ml-1 text-sm font-normal text-gray-500 dark:text-gray-400">
-                ({winRate}% win rate)
-              </span>
-            )}
-          </p>
+          <p className="text-2xl font-bold">{wonQuotes.length}</p>
         </Card>
         <Card>
           <p className="text-sm text-gray-600 dark:text-gray-300">Pending</p>
@@ -333,13 +326,6 @@ export function QuotesList() {
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-4">
-        <Input
-          type="search"
-          placeholder="Search by job #, customer, part #…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="max-w-xs"
-        />
         <select
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}

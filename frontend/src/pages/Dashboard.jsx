@@ -4,6 +4,7 @@ import { startOfMonth, endOfMonth, isWithinInterval, parseISO, format } from 'da
 import { Layout } from '../components/layout/Layout'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
+import { Input } from '../components/ui/Input'
 import { Badge } from '../components/ui/Badge'
 import { getQuotes, getJobs } from '../lib/api'
 import { pb } from '../lib/pocketbase'
@@ -44,6 +45,7 @@ export function Dashboard() {
   const [quotes, setQuotes] = useState([])
   const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -76,7 +78,7 @@ export function Dashboard() {
   const monthStart = startOfMonth(now)
   const monthEnd = endOfMonth(now)
 
-  const activeJobs = jobs.filter(
+  const activeJobsAll = jobs.filter(
     (j) => j.status === 'planning' || j.status === 'in_progress'
   )
   const inProgressCount = jobs.filter((j) => j.status === 'in_progress').length
@@ -85,6 +87,15 @@ export function Dashboard() {
     const d = toDate(j.completion_date || j.updated)
     return d && isWithinInterval(d, { start: monthStart, end: monthEnd })
   }).length
+
+  const searchLower = search.trim().toLowerCase()
+  const activeJobs = searchLower
+    ? activeJobsAll.filter((j) => {
+        const jobNum = String(j.job_number ?? '').toLowerCase()
+        const cust = String((j.expand?.customer?.company || j.customer_name) ?? '').toLowerCase()
+        return jobNum.includes(searchLower) || cust.includes(searchLower)
+      })
+    : activeJobsAll
 
   function jobNumberToDate(jobNumber) {
     const s = String(jobNumber ?? '').replace(/\D/g, '')
@@ -96,26 +107,39 @@ export function Dashboard() {
     return isNaN(d.getTime()) ? 0 : d.getTime()
   }
 
-  const recentQuotes = [...quotes].sort((a, b) => {
+  const recentQuotesAll = [...quotes].sort((a, b) => {
     const ta = jobNumberToDate(a.job_number)
     const tb = jobNumberToDate(b.job_number)
     return tb - ta // newest date first (descending)
   }).slice(0, 6)
+  const recentQuotes = searchLower
+    ? recentQuotesAll.filter((q) => {
+        const jobNum = String(q.job_number ?? '').toLowerCase()
+        const cust = String((q.expand?.customer?.company || q.customer_name) ?? '').toLowerCase()
+        return jobNum.includes(searchLower) || cust.includes(searchLower)
+      })
+    : recentQuotesAll
 
   const customerDisplay = (q) => q.expand?.customer?.company || q.customer_name || '—'
 
   return (
     <Layout>
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">DharmaCore</h1>
-          <p className="text-gray-600 dark:text-gray-300">Manage your shop operations</p>
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">DharmaCore</h1>
+        <div className="flex flex-nowrap items-center gap-3">
+          <Input
+            type="search"
+            placeholder="Search jobs and quotes…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="min-w-0 max-w-[220px] shrink-0"
+          />
+          {!isJobsOnly && (
+            <Link to="/quotes/new" className="shrink-0">
+              <Button>New Quote</Button>
+            </Link>
+          )}
         </div>
-        {!isJobsOnly && (
-          <Link to="/quotes/new">
-            <Button>+ New Quote</Button>
-          </Link>
-        )}
       </div>
 
       {loading ? (
@@ -149,27 +173,38 @@ export function Dashboard() {
               </p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[400px]">
+                <table className="dashboard-table w-full min-w-[500px] table-fixed">
+                  <colgroup>
+                    <col style={{ width: '10%' }} />
+                    <col style={{ width: '42%' }} />
+                    <col style={{ width: '22%' }} />
+                    <col style={{ width: '26%' }} />
+                  </colgroup>
                   <thead>
                     <tr className="border-b border-gray-200 text-left text-sm text-gray-600 dark:border-gray-600 dark:text-gray-300">
                       <th className="pb-2 pr-4 font-medium">Job #</th>
                       <th className="pb-2 pr-4 font-medium">Customer</th>
                       <th className="pb-2 pr-4 font-medium">Status</th>
                       <th className="pb-2 font-medium">Ship date</th>
-                      <th className="pb-2 font-medium">Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {activeJobs.map((j) => (
-                      <tr key={j.id} className="border-b border-gray-100 dark:border-gray-700">
-                        <td className="py-2 pr-4 font-medium text-gray-900 dark:text-white">{j.job_number || '—'}</td>
-                        <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">
-                          {j.expand?.customer?.company || j.customer_name || '—'}
+                      <tr key={j.id} className="align-middle border-b border-gray-100 dark:border-gray-700">
+                        <td className="py-2 pr-4 font-medium text-gray-900 dark:text-white align-middle">
+                          <Link to={`/jobs/${j.id}`} className="text-primary-from hover:underline">
+                            {j.job_number || '—'}
+                          </Link>
                         </td>
-                        <td className="py-2 pr-4">
+                        <td className="py-2 pr-4 text-gray-700 dark:text-gray-300 align-middle">
+                          <Link to={`/jobs/${j.id}`} className="text-primary-from hover:underline">
+                            {j.expand?.customer?.company || j.customer_name || '—'}
+                          </Link>
+                        </td>
+                        <td className="whitespace-nowrap py-2 pr-4 align-middle">
                           <Badge status={j.status}>{jobStatusLabel(j.status)}</Badge>
                         </td>
-                        <td className="py-2 pr-4">
+                        <td className="py-2 pr-4 align-middle">
                           {j.ship_date
                             ? format(
                                 typeof j.ship_date === 'string'
@@ -178,13 +213,6 @@ export function Dashboard() {
                                 'MMM d'
                               )
                             : '—'}
-                        </td>
-                        <td className="py-2">
-                          <Link to={`/jobs/${j.id}`}>
-                            <Button variant="secondary" className="!py-1 !text-sm">
-                              View →
-                            </Button>
-                          </Link>
                         </td>
                       </tr>
                     ))}
@@ -204,20 +232,25 @@ export function Dashboard() {
                 <p className="text-sm text-gray-500 dark:text-gray-400">No quotes yet. Create one from Quotes.</p>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[400px]">
+                  <table className="dashboard-table w-full min-w-[500px] table-fixed">
+                    <colgroup>
+                      <col style={{ width: '10%' }} />
+                      <col style={{ width: '42%' }} />
+                      <col style={{ width: '22%' }} />
+                      <col style={{ width: '26%' }} />
+                    </colgroup>
                     <thead>
                       <tr className="border-b border-gray-200 text-left text-sm text-gray-600 dark:border-gray-600 dark:text-gray-300">
                         <th className="pb-2 pr-4 font-medium">Job #</th>
                         <th className="pb-2 pr-4 font-medium">Customer</th>
                         <th className="pb-2 pr-4 font-medium">Status</th>
-                        <th className="pb-2 pr-4 font-medium">Total</th>
-                        <th className="pb-2 font-medium">Action</th>
+                        <th className="pb-2 font-medium">Total</th>
                       </tr>
                     </thead>
                     <tbody>
                       {recentQuotes.map((q) => (
-                        <tr key={q.id} className="border-b border-gray-100 dark:border-gray-700">
-                          <td className="py-2 pr-4">
+                        <tr key={q.id} className="align-middle border-b border-gray-100 dark:border-gray-700">
+                          <td className="py-2 pr-4 align-middle">
                             <Link
                               to={`/quotes/${q.id}`}
                               className="font-medium text-primary-from hover:underline"
@@ -225,19 +258,16 @@ export function Dashboard() {
                               {q.job_number || '—'}
                             </Link>
                           </td>
-                          <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">{customerDisplay(q)}</td>
-                          <td className="py-2 pr-4">
+                          <td className="py-2 pr-4 text-gray-700 dark:text-gray-300 align-middle">
+                            <Link to={`/quotes/${q.id}`} className="text-primary-from hover:underline">
+                              {customerDisplay(q)}
+                            </Link>
+                          </td>
+                          <td className="whitespace-nowrap py-2 pr-4 align-middle">
                             <Badge status={q.status}>{q.status || 'draft'}</Badge>
                           </td>
-                          <td className="py-2 pr-4 tabular-nums">
+                          <td className="py-2 pr-4 tabular-nums align-middle">
                             {formatCurrency(q.final_total_cad)}
-                          </td>
-                          <td className="py-2">
-                            <Link to={`/quotes/${q.id}`}>
-                              <Button variant="secondary" className="!py-1 !text-sm">
-                                View →
-                              </Button>
-                            </Link>
                           </td>
                         </tr>
                       ))}
