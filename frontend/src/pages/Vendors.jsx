@@ -27,7 +27,6 @@ export function Vendors() {
   const [list, setList] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
-  const [typeFilter, setTypeFilter] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState(emptyVendor)
@@ -46,15 +45,12 @@ export function Vendors() {
     load()
   }, [])
 
-  const filtered = list.filter((v) => {
-    const matchSearch =
-      !search ||
-      [v.name, v.contact_person, v.email, v.phone, v.services].some(
-        (val) => val && String(val).toLowerCase().includes(search.toLowerCase())
-      )
-    const matchType = !typeFilter || v.vendor_type === typeFilter
-    return matchSearch && matchType
-  })
+  const filtered = list.filter((v) =>
+    !search ||
+    [v.name, v.contact_person, v.email, v.phone, v.services].some(
+      (val) => val && String(val).toLowerCase().includes(search.toLowerCase())
+    )
+  )
 
   function openNew() {
     setEditing(null)
@@ -109,39 +105,21 @@ export function Vendors() {
 
   return (
     <Layout>
-      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Vendors</h1>
-        <Button onClick={openNew}>+ New Vendor</Button>
-      </div>
-
-      <Card className="mb-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="flex-1 min-w-0">
-            <Input
-              placeholder="Search by name, contact, email, services..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </div>
-          <div className="flex items-center gap-2 sm:w-48">
-            <label className="shrink-0 text-sm font-medium text-gray-700 dark:text-gray-300">
-              Type
-            </label>
-            <select
-              className="w-full rounded-input border-2 border-gray-300 px-3 py-2 focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
-            >
-              <option value="">All</option>
-              {VENDOR_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="flex flex-nowrap items-center gap-3">
+          <Input
+            type="search"
+            placeholder="Search…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="min-w-0 max-w-[220px] shrink-0"
+          />
+          <Button onClick={openNew} className="whitespace-nowrap shrink-0">
+            New Vendor
+          </Button>
         </div>
-      </Card>
+      </div>
 
       <Card>
         {loading ? (
@@ -149,8 +127,8 @@ export function Vendors() {
         ) : filtered.length === 0 ? (
           <p className="py-8 text-center text-gray-500 dark:text-gray-400">
             {list.length === 0
-              ? 'No vendors yet. Add one with + New Vendor.'
-              : 'No vendors match your search or filter.'}
+              ? 'No vendors yet. Add one with New Vendor.'
+              : 'No vendors match your search.'}
           </p>
         ) : (
           <div className="overflow-x-auto">

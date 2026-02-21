@@ -26,6 +26,8 @@ import {
   createLineItem,
   updateLineItem,
   deleteLineItem,
+  getAlloys,
+  ensureAlloy,
   getCustomers,
   createCustomer,
   getVendors,
@@ -61,6 +63,7 @@ export function QuoteDetail() {
   const [lineItems, setLineItems] = useState([])
   const [customers, setCustomers] = useState([])
   const [vendors, setVendors] = useState([])
+  const [alloyOptions, setAlloyOptions] = useState([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(() => id === 'new' || !id)
@@ -124,6 +127,15 @@ export function QuoteDetail() {
     [quote, calculatedLineItems]
   )
 
+  const alloySuggestions = useMemo(() => {
+    const fromItems = (lineItems || [])
+      .map((i) => (i.alloy != null ? String(i.alloy).trim() : ''))
+      .filter(Boolean)
+    return [...new Set([...alloyOptions, ...fromItems])].sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: 'base' })
+    )
+  }, [alloyOptions, lineItems])
+
   useEffect(() => {
     let cancelled = false
     const LOAD_TIMEOUT_MS = 8000
@@ -170,6 +182,9 @@ export function QuoteDetail() {
               setQuote(defaults)
               setLineItems([{ line_number: 1, part_quantity: 1 }])
             }
+            getAlloys()
+              .then((alloys) => { if (!cancelled) setAlloyOptions(alloys ?? []) })
+              .catch(() => { if (!cancelled) setAlloyOptions([]) })
           } else {
             const [q, items] = await Promise.all([
               getQuote(id),
@@ -184,6 +199,13 @@ export function QuoteDetail() {
             )
             const job = await getJobByQuote(id)
             if (job) setJobId(job.id)
+            getAlloys()
+              .then((alloys) => { if (!cancelled) setAlloyOptions(alloys ?? []) })
+              .catch(() => { if (!cancelled) setAlloyOptions([]) })
+            ;(items || []).forEach((item) => {
+              const name = item.alloy != null ? String(item.alloy).trim() : ''
+              if (name) ensureAlloy(name).catch(() => {})
+            })
           }
         })()
 
@@ -329,6 +351,10 @@ export function QuoteDetail() {
           await deleteLineItem(old.id)
         }
       }
+      for (const item of calculatedLineItems) {
+        const name = item.alloy != null ? String(item.alloy).trim() : ''
+        if (name) await ensureAlloy(name).catch(() => {})
+      }
       for (let i = 0; i < calculatedLineItems.length; i++) {
         const item = calculatedLineItems[i]
         
@@ -424,7 +450,12 @@ export function QuoteDetail() {
       navigate('/quotes')
     } catch (e) {
       console.error(e)
-      const message = e?.response?.message ?? e?.message ?? 'Save failed. Check the console.'
+      const isDuplicateJob =
+        e?.status === 400 &&
+        (e?.data?.job_number || /unique|failed to .* record/i.test(String(e?.message ?? '')))
+      const message = isDuplicateJob
+        ? 'Duplicate job #'
+        : (e?.response?.message ?? e?.message ?? 'Save failed. Check the console.')
       setSaveError(message)
     } finally {
       setSaving(false)
@@ -678,6 +709,7 @@ export function QuoteDetail() {
               calculated={calculatedLineItems[index]}
               vendors={vendors}
               lineIndex={index}
+              alloySuggestions={alloySuggestions}
               onChange={(next) => handleLineItemChange(index, next)}
               onDelete={() => handleDeleteLineItem(index)}
               onDuplicate={() => handleDuplicateLineItem(index)}

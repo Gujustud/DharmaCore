@@ -42,6 +42,31 @@ export async function getAllLineItems() {
   return list.items ?? []
 }
 
+/** Fetch all alloys from the alloys collection (for Alloy dropdown suggestions). */
+export async function getAlloys() {
+  const list = await pb.collection('alloys').getList(1, 500, { sort: 'name' })
+  const items = list.items ?? []
+  return items.map((a) => (a.name != null ? String(a.name).trim() : '')).filter(Boolean).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+}
+
+/** Ensure an alloy name exists in the alloys collection; create if not. Returns the name. */
+export async function ensureAlloy(name) {
+  const trimmed = name != null ? String(name).trim() : ''
+  if (!trimmed) return
+  try {
+    const list = await pb.collection('alloys').getFullList({ filter: `name = "${String(trimmed).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` })
+    if (list?.length > 0) return trimmed
+  } catch (_) { /* ignore */ }
+  try {
+    await pb.collection('alloys').create({ name: trimmed })
+  } catch (e) {
+    if (e?.status === 400) return trimmed
+    console.error('[ensureAlloy]', trimmed, e)
+    throw e
+  }
+  return trimmed
+}
+
 export async function createLineItem(data) {
   return pb.collection('quote_line_items').create(data)
 }

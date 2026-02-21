@@ -85,18 +85,21 @@ export function Customers() {
 
   return (
     <Layout>
-      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Customers</h1>
-        <Button onClick={openNew}>+ New Customer</Button>
+        <div className="flex flex-nowrap items-center gap-3">
+          <Input
+            type="search"
+            placeholder="Search…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="min-w-0 max-w-[220px] shrink-0"
+          />
+          <Button onClick={openNew} className="whitespace-nowrap shrink-0">
+            New Customer
+          </Button>
+        </div>
       </div>
-
-      <Card className="mb-4">
-        <Input
-          placeholder="Search by name, company, email, phone..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-      </Card>
 
       <Card>
         {loading ? (
@@ -104,7 +107,7 @@ export function Customers() {
         ) : filtered.length === 0 ? (
           <p className="py-8 text-center text-gray-500 dark:text-gray-400">
             {list.length === 0
-              ? 'No customers yet. Add one with + New Customer.'
+              ? 'No customers yet. Add one with New Customer.'
               : 'No customers match your search.'}
           </p>
         ) : (

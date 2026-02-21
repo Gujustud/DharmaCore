@@ -12,7 +12,7 @@ import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { getJobs, updateJob } from '../lib/api'
 import { generateTrackingLink } from '../lib/calculations'
-import { format } from 'date-fns'
+import { format, parseISO, startOfMonth, endOfMonth, startOfYear, endOfYear, isWithinInterval } from 'date-fns'
 
 const JOBS_VIEW_KEY = 'dharmacore_jobs_view'
 
@@ -257,13 +257,39 @@ export function JobsBoard() {
     return acc
   }, {})
 
+  const now = new Date()
+  const monthStart = startOfMonth(now)
+  const monthEnd = endOfMonth(now)
+  const yearStart = startOfYear(now)
+  const yearEnd = endOfYear(now)
+  function toDate(s) {
+    if (!s) return null
+    try {
+      return typeof s === 'string' ? parseISO(s) : s
+    } catch {
+      return null
+    }
+  }
+  const planningCount = jobs.filter((j) => (j.status || 'planning') === 'planning').length
+  const inProgressCount = jobs.filter((j) => j.status === 'in_progress').length
+  const doneJobs = jobs.filter((j) => j.status === 'done')
+  const doneThisMonth = doneJobs.filter((j) => {
+    const d = toDate(j.completion_date || j.ship_date || j.updated)
+    return d && isWithinInterval(d, { start: monthStart, end: monthEnd })
+  }).length
+  const doneThisYear = doneJobs.filter((j) => {
+    const d = toDate(j.completion_date || j.ship_date || j.updated)
+    return d && isWithinInterval(d, { start: yearStart, end: yearEnd })
+  }).length
+
   const mult = sortDir === 'asc' ? 1 : -1
   function jobNumberToDate(jobNumber) {
     const s = String(jobNumber ?? '').replace(/\D/g, '')
-    if (s.length !== 8) return 0
-    const mm = parseInt(s.slice(0, 2), 10)
-    const dd = parseInt(s.slice(2, 4), 10)
-    const yyyy = parseInt(s.slice(4, 8), 10)
+    const eight = s.length >= 8 ? s.slice(0, 8) : s
+    if (eight.length !== 8) return 0
+    const mm = parseInt(eight.slice(0, 2), 10)
+    const dd = parseInt(eight.slice(2, 4), 10)
+    const yyyy = parseInt(eight.slice(4, 8), 10)
     const d = new Date(yyyy, mm - 1, dd)
     return isNaN(d.getTime()) ? 0 : d.getTime()
   }
@@ -271,7 +297,11 @@ export function JobsBoard() {
     if (sortKey === 'job_number') {
       const ta = jobNumberToDate(a.job_number)
       const tb = jobNumberToDate(b.job_number)
-      return sortDir === 'desc' ? tb - ta : ta - tb
+      const dateCmp = sortDir === 'desc' ? tb - ta : ta - tb
+      if (dateCmp !== 0) return dateCmp
+      const sa = String(a.job_number ?? '')
+      const sb = String(b.job_number ?? '')
+      return sortDir === 'desc' ? sb.localeCompare(sa) : sa.localeCompare(sb)
     }
     if (sortKey === 'customer') {
       const ca = a.expand?.customer?.company || a.customer_name || ''
@@ -285,74 +315,93 @@ export function JobsBoard() {
     <Layout>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Jobs</h1>
-        <div className="flex flex-nowrap items-center gap-2">
+        <div className="flex flex-nowrap items-center gap-3">
           <Input
             type="search"
-            placeholder="Search by job #, customer…"
+            placeholder="Search…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="min-w-0 max-w-[200px] shrink-0"
+            className="min-w-0 max-w-[220px] shrink-0"
           />
-          {view === 'list' && (
-            <>
-              <span className="shrink-0 text-sm text-gray-500 dark:text-gray-400">Sort</span>
-              <div className="flex shrink-0 gap-1">
-                <Button
-                  variant={sortKey === 'job_number' ? 'primary' : 'secondary'}
-                  className="!py-1 !text-xs"
-                  onClick={() => {
-                    setSortKey('job_number')
-                    if (sortKey !== 'job_number') setSortDir('desc')
-                  }}
-                >
-                  Job #
-                </Button>
-                <Button
-                  variant={sortKey === 'customer' ? 'primary' : 'secondary'}
-                  className="!py-1 !text-xs"
-                  onClick={() => {
-                    setSortKey('customer')
-                    if (sortKey !== 'customer') setSortDir('asc')
-                  }}
-                >
-                  Customer
-                </Button>
-              </div>
-              <span className="shrink-0 text-sm text-gray-500 dark:text-gray-400">Order</span>
-              <div className="flex shrink-0 gap-1">
-                <Button
-                  variant={sortDir === 'asc' ? 'primary' : 'secondary'}
-                  className="!py-1 !text-xs"
-                  onClick={() => setSortDir('asc')}
-                >
-                  A→Z
-                </Button>
-                <Button
-                  variant={sortDir === 'desc' ? 'primary' : 'secondary'}
-                  className="!py-1 !text-xs"
-                  onClick={() => setSortDir('desc')}
-                >
-                  Z→A
-                </Button>
-              </div>
-            </>
-          )}
-          <div className="flex shrink-0 gap-1">
-            <Button
-              variant={view === 'board' ? 'primary' : 'secondary'}
-              className="!py-1 !text-xs"
-              onClick={() => setViewAndSave('board')}
-            >
-              Board
-            </Button>
-            <Button
-              variant={view === 'list' ? 'primary' : 'secondary'}
-              className="!py-1 !text-xs"
-              onClick={() => setViewAndSave('list')}
-            >
-              List
-            </Button>
-          </div>
+        </div>
+      </div>
+
+      <div className="mb-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <Card>
+          <p className="text-sm text-gray-600 dark:text-gray-300">Planning</p>
+          <p className="text-2xl font-bold text-gray-900 dark:text-white">{planningCount}</p>
+        </Card>
+        <Card>
+          <p className="text-sm text-gray-600 dark:text-gray-300">In progress</p>
+          <p className="text-2xl font-bold text-gray-900 dark:text-white">{inProgressCount}</p>
+        </Card>
+        <Card>
+          <p className="text-sm text-gray-600 dark:text-gray-300">Done this month</p>
+          <p className="text-2xl font-bold text-gray-900 dark:text-white">{doneThisMonth}</p>
+        </Card>
+        <Card>
+          <p className="text-sm text-gray-600 dark:text-gray-300">Done this year</p>
+          <p className="text-2xl font-bold text-gray-900 dark:text-white">{doneThisYear}</p>
+        </Card>
+      </div>
+
+      <div className="mb-4 flex flex-wrap items-center gap-4">
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              setSortKey('job_number')
+              if (sortKey !== 'job_number') setSortDir('desc')
+            }}
+            className={`text-sm font-medium cursor-pointer focus:outline-none ${sortKey === 'job_number' ? 'text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}
+          >
+            Job #
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSortKey('customer')
+              if (sortKey !== 'customer') setSortDir('asc')
+            }}
+            className={`text-sm font-medium cursor-pointer focus:outline-none ${sortKey === 'customer' ? 'text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}
+          >
+            Customer
+          </button>
+        </div>
+        <span className="border-l border-gray-200 pl-4 text-sm font-medium text-gray-600 dark:border-gray-600 dark:text-gray-300">
+          Order
+        </span>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => setSortDir('asc')}
+            className={`text-sm font-medium cursor-pointer focus:outline-none ${sortDir === 'asc' ? 'text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}
+          >
+            A→Z
+          </button>
+          <button
+            type="button"
+            onClick={() => setSortDir('desc')}
+            className={`text-sm font-medium cursor-pointer focus:outline-none ${sortDir === 'desc' ? 'text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}
+          >
+            Z→A
+          </button>
+        </div>
+        <div className="ml-auto flex gap-3">
+          <button
+            type="button"
+            onClick={() => setViewAndSave('board')}
+            className={`text-sm font-medium cursor-pointer focus:outline-none ${view === 'board' ? 'text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}
+          >
+            Board
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewAndSave('list')}
+            className={`text-sm font-medium cursor-pointer focus:outline-none ${view === 'list' ? 'text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}
+          >
+            List
+          </button>
         </div>
       </div>
 
@@ -391,11 +440,11 @@ export function JobsBoard() {
                 <thead>
                   <tr className="border-b border-gray-200 text-left text-sm text-gray-600 dark:border-gray-600 dark:text-gray-300">
                     <th className="pb-2 pr-4 font-medium">Job #</th>
-                    <th className="pb-2 pr-4 font-medium">Customer</th>
-                    <th className="pb-2 pr-4 font-medium">Status</th>
-                    <th className="pb-2 pr-4 font-medium">Due date</th>
-                    <th className="pb-2 pr-4 font-medium">Ship date</th>
-                    <th className="pb-2 pr-4 font-medium">Tracking</th>
+                    <th className="min-w-[8rem] pb-2 pr-4 font-medium">Customer</th>
+                    <th className="pb-2 pr-4 font-medium whitespace-nowrap">Status</th>
+                    <th className="pb-2 pr-4 font-medium whitespace-nowrap">Due date</th>
+                    <th className="pb-2 pr-4 font-medium whitespace-nowrap">Ship date</th>
+                    <th className="pb-2 pr-4 font-medium whitespace-nowrap">Tracking</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -414,18 +463,19 @@ export function JobsBoard() {
                             {job.job_number || '—'}
                           </Link>
                         </td>
-                        <td className="py-3 pr-4 text-gray-700 dark:text-gray-300">
+                        <td className="min-w-[8rem] py-3 pr-4 text-gray-700 dark:text-gray-300 overflow-hidden">
                           <Link
                             to={`/jobs/${job.id}`}
-                            className="text-primary-from hover:underline"
+                            className="text-primary-from hover:underline block truncate"
+                            title={companyDisplay(job)}
                           >
                             {companyDisplay(job)}
                           </Link>
                         </td>
-                        <td className="py-3 pr-4">
+                        <td className="py-3 pr-4 whitespace-nowrap">
                           <span
                             className={
-                              'rounded-md border px-2 py-0.5 text-sm font-medium ' +
+                              'rounded-md border px-2 py-0.5 text-sm font-medium whitespace-nowrap ' +
                               (COLUMNS.find((c) => c.id === (job.status || 'planning'))
                                 ?.color ?? 'bg-gray-100 border-gray-200 text-gray-700 dark:bg-gray-600 dark:border-gray-500 dark:text-white')
                             }
@@ -433,13 +483,13 @@ export function JobsBoard() {
                             {statusLabel(job.status)}
                           </span>
                         </td>
-                        <td className="py-3 pr-4 text-gray-700 dark:text-gray-300">
+                        <td className="py-3 pr-4 text-gray-700 dark:text-gray-300 whitespace-nowrap">
                           {formatDate(job.due_date)}
                         </td>
-                        <td className="py-3 pr-4 text-gray-700 dark:text-gray-300">
+                        <td className="py-3 pr-4 text-gray-700 dark:text-gray-300 whitespace-nowrap">
                           {formatDate(job.ship_date)}
                         </td>
-                        <td className="py-3 pr-4">
+                        <td className="py-3 pr-4 whitespace-nowrap">
                           {trackingUrl ? (
                             <a
                               href={trackingUrl}

@@ -7,7 +7,6 @@ import { Button } from '../components/ui/Button'
 import { ConfirmDialog } from '../components/ui/ConfirmDialog'
 import { generateTrackingLink } from '../lib/calculations'
 import { getJob, updateJob, deleteJob, getVendors } from '../lib/api'
-import { format } from 'date-fns'
 import { PartImages } from '../components/PartImages'
 
 const STATUS_OPTIONS = [
@@ -39,7 +38,10 @@ const TRACKING_PILL_CLASS = {
 function dateInputValue(d) {
   if (!d) return ''
   const x = typeof d === 'string' ? new Date(d) : d
-  return format(x, 'yyyy-MM-dd')
+  const y = x.getUTCFullYear()
+  const m = String(x.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(x.getUTCDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
 /** Notion-style row: label left (fixed width), value right. */

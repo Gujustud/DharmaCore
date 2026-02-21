@@ -31,7 +31,7 @@ export function Header() {
     >
       <div className="mx-auto flex h-14 max-w-[1600px] items-center justify-between px-4">
         <Link to="/" className="text-lg font-bold bg-gradient-to-r from-primary-from to-primary-to bg-clip-text text-transparent">
-          DharmaCore
+          <span className="hidden sm:inline">DharmaCore</span>
         </Link>
         <nav className="flex items-center gap-4">
           {nav.map(({ to, label }) => (

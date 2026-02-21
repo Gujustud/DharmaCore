@@ -78,9 +78,26 @@ export function Dashboard() {
   const monthStart = startOfMonth(now)
   const monthEnd = endOfMonth(now)
 
-  const activeJobsAll = jobs.filter(
-    (j) => j.status === 'planning' || j.status === 'in_progress'
-  )
+  function jobNumberToDate(jobNumber) {
+    const s = String(jobNumber ?? '').replace(/\D/g, '')
+    const eight = s.length >= 8 ? s.slice(0, 8) : s
+    if (eight.length !== 8) return 0
+    const mm = parseInt(eight.slice(0, 2), 10)
+    const dd = parseInt(eight.slice(2, 4), 10)
+    const yyyy = parseInt(eight.slice(4, 8), 10)
+    const d = new Date(yyyy, mm - 1, dd)
+    return isNaN(d.getTime()) ? 0 : d.getTime()
+  }
+
+  const activeJobsAll = jobs
+    .filter((j) => j.status === 'planning' || j.status === 'in_progress')
+    .sort((a, b) => {
+      const ta = jobNumberToDate(a.job_number)
+      const tb = jobNumberToDate(b.job_number)
+      const dateCmp = tb - ta
+      if (dateCmp !== 0) return dateCmp
+      return String(b.job_number ?? '').localeCompare(String(a.job_number ?? ''))
+    })
   const inProgressCount = jobs.filter((j) => j.status === 'in_progress').length
   const doneJobs = jobs.filter((j) => j.status === 'done')
   const doneThisMonth = doneJobs.filter((j) => {
@@ -97,21 +114,15 @@ export function Dashboard() {
       })
     : activeJobsAll
 
-  function jobNumberToDate(jobNumber) {
-    const s = String(jobNumber ?? '').replace(/\D/g, '')
-    if (s.length !== 8) return 0
-    const mm = parseInt(s.slice(0, 2), 10)
-    const dd = parseInt(s.slice(2, 4), 10)
-    const yyyy = parseInt(s.slice(4, 8), 10)
-    const d = new Date(yyyy, mm - 1, dd)
-    return isNaN(d.getTime()) ? 0 : d.getTime()
-  }
-
-  const recentQuotesAll = [...quotes].sort((a, b) => {
-    const ta = jobNumberToDate(a.job_number)
-    const tb = jobNumberToDate(b.job_number)
-    return tb - ta // newest date first (descending)
-  }).slice(0, 6)
+  const recentQuotesAll = [...quotes]
+    .sort((a, b) => {
+      const ta = jobNumberToDate(a.job_number)
+      const tb = jobNumberToDate(b.job_number)
+      const dateCmp = tb - ta
+      if (dateCmp !== 0) return dateCmp
+      return String(b.job_number ?? '').localeCompare(String(a.job_number ?? ''))
+    })
+    .slice(0, 6)
   const recentQuotes = searchLower
     ? recentQuotesAll.filter((q) => {
         const jobNum = String(q.job_number ?? '').toLowerCase()
@@ -125,11 +136,11 @@ export function Dashboard() {
   return (
     <Layout>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">DharmaCore</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Dashboard</h1>
         <div className="flex flex-nowrap items-center gap-3">
           <Input
             type="search"
-            placeholder="Search jobs and quotes…"
+            placeholder="Search…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="min-w-0 max-w-[220px] shrink-0"
@@ -146,7 +157,7 @@ export function Dashboard() {
         <p className="py-4 text-center text-gray-500 dark:text-gray-400">Loading…</p>
       ) : (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-4 gap-3 sm:gap-4">
             <Card>
               <p className="text-sm text-gray-600 dark:text-gray-300">Active</p>
               <p className="text-2xl font-bold text-gray-900 dark:text-white">{activeJobs.length}</p>
@@ -160,7 +171,7 @@ export function Dashboard() {
               <p className="text-2xl font-bold text-gray-900 dark:text-white">{doneJobs.length}</p>
             </Card>
             <Card>
-              <p className="text-sm text-gray-600 dark:text-gray-300">Done this month</p>
+              <p className="text-sm text-gray-600 dark:text-gray-300">This Month</p>
               <p className="text-2xl font-bold text-gray-900 dark:text-white">{doneThisMonth}</p>
             </Card>
           </div>
@@ -173,17 +184,11 @@ export function Dashboard() {
               </p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="dashboard-table w-full min-w-[500px] table-fixed">
-                  <colgroup>
-                    <col style={{ width: '10%' }} />
-                    <col style={{ width: '42%' }} />
-                    <col style={{ width: '22%' }} />
-                    <col style={{ width: '26%' }} />
-                  </colgroup>
+                <table className="dashboard-table w-full min-w-[520px]">
                   <thead>
                     <tr className="border-b border-gray-200 text-left text-sm text-gray-600 dark:border-gray-600 dark:text-gray-300">
-                      <th className="pb-2 pr-4 font-medium">Job #</th>
-                      <th className="pb-2 pr-4 font-medium">Customer</th>
+                      <th className="min-w-[5rem] pb-2 pr-4 font-medium">Job #</th>
+                      <th className="min-w-[8rem] pb-2 pr-4 font-medium">Customer</th>
                       <th className="pb-2 pr-4 font-medium">Status</th>
                       <th className="pb-2 font-medium">Ship date</th>
                     </tr>
@@ -191,12 +196,12 @@ export function Dashboard() {
                   <tbody>
                     {activeJobs.map((j) => (
                       <tr key={j.id} className="align-middle border-b border-gray-100 dark:border-gray-700">
-                        <td className="py-2 pr-4 font-medium text-gray-900 dark:text-white align-middle">
+                        <td className="min-w-[5rem] py-2 pr-4 font-medium text-gray-900 dark:text-white align-middle">
                           <Link to={`/jobs/${j.id}`} className="text-primary-from hover:underline">
                             {j.job_number || '—'}
                           </Link>
                         </td>
-                        <td className="py-2 pr-4 text-gray-700 dark:text-gray-300 align-middle">
+                        <td className="min-w-[8rem] py-2 pr-4 text-gray-700 dark:text-gray-300 align-middle overflow-hidden">
                           <Link to={`/jobs/${j.id}`} className="text-primary-from hover:underline">
                             {j.expand?.customer?.company || j.customer_name || '—'}
                           </Link>
@@ -220,10 +225,7 @@ export function Dashboard() {
                 </table>
               </div>
             )}
-            <Link to="/jobs" className="mt-3 inline-block text-primary-from hover:underline">
-              Jobs Board →
-            </Link>
-          </Card>
+            </Card>
 
           {!isJobsOnly && (
             <Card className="mt-4">
@@ -232,17 +234,11 @@ export function Dashboard() {
                 <p className="text-sm text-gray-500 dark:text-gray-400">No quotes yet. Create one from Quotes.</p>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="dashboard-table w-full min-w-[500px] table-fixed">
-                    <colgroup>
-                      <col style={{ width: '10%' }} />
-                      <col style={{ width: '42%' }} />
-                      <col style={{ width: '22%' }} />
-                      <col style={{ width: '26%' }} />
-                    </colgroup>
+                  <table className="dashboard-table w-full min-w-[520px]">
                     <thead>
                       <tr className="border-b border-gray-200 text-left text-sm text-gray-600 dark:border-gray-600 dark:text-gray-300">
-                        <th className="pb-2 pr-4 font-medium">Job #</th>
-                        <th className="pb-2 pr-4 font-medium">Customer</th>
+                        <th className="min-w-[5rem] pb-2 pr-4 font-medium">Job #</th>
+                        <th className="min-w-[8rem] pb-2 pr-4 font-medium">Customer</th>
                         <th className="pb-2 pr-4 font-medium">Status</th>
                         <th className="pb-2 font-medium">Total</th>
                       </tr>
@@ -250,7 +246,7 @@ export function Dashboard() {
                     <tbody>
                       {recentQuotes.map((q) => (
                         <tr key={q.id} className="align-middle border-b border-gray-100 dark:border-gray-700">
-                          <td className="py-2 pr-4 align-middle">
+                          <td className="min-w-[5rem] py-2 pr-4 align-middle">
                             <Link
                               to={`/quotes/${q.id}`}
                               className="font-medium text-primary-from hover:underline"
@@ -258,7 +254,7 @@ export function Dashboard() {
                               {q.job_number || '—'}
                             </Link>
                           </td>
-                          <td className="py-2 pr-4 text-gray-700 dark:text-gray-300 align-middle">
+                          <td className="min-w-[8rem] py-2 pr-4 text-gray-700 dark:text-gray-300 align-middle overflow-hidden">
                             <Link to={`/quotes/${q.id}`} className="text-primary-from hover:underline">
                               {customerDisplay(q)}
                             </Link>
@@ -275,10 +271,7 @@ export function Dashboard() {
                   </table>
                 </div>
               )}
-              <Link to="/quotes" className="mt-3 inline-block text-primary-from hover:underline">
-                All Quotes →
-              </Link>
-            </Card>
+              </Card>
           )}
         </>
       )}

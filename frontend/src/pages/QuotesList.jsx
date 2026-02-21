@@ -54,6 +54,7 @@ export function QuotesList() {
   const [sortDir, setSortDir] = useState('desc')
   const [deleteConfirm, setDeleteConfirm] = useState(null)
   const [copyingId, setCopyingId] = useState(null)
+  const [showTotals, setShowTotals] = useState(true)
 
   // Debounce search input
   useEffect(() => {
@@ -118,10 +119,11 @@ export function QuotesList() {
     const mult = sortDir === 'asc' ? 1 : -1
     function jobNumberToDate(jobNumber) {
       const s = String(jobNumber ?? '').replace(/\D/g, '')
-      if (s.length !== 8) return 0
-      const mm = parseInt(s.slice(0, 2), 10)
-      const dd = parseInt(s.slice(2, 4), 10)
-      const yyyy = parseInt(s.slice(4, 8), 10)
+      const eight = s.length >= 8 ? s.slice(0, 8) : s
+      if (eight.length !== 8) return 0
+      const mm = parseInt(eight.slice(0, 2), 10)
+      const dd = parseInt(eight.slice(2, 4), 10)
+      const yyyy = parseInt(eight.slice(4, 8), 10)
       const d = new Date(yyyy, mm - 1, dd)
       return isNaN(d.getTime()) ? 0 : d.getTime()
     }
@@ -129,7 +131,11 @@ export function QuotesList() {
       if (sortKey === 'job_number') {
         const ta = jobNumberToDate(a.job_number)
         const tb = jobNumberToDate(b.job_number)
-        return sortDir === 'desc' ? tb - ta : ta - tb
+        const dateCmp = sortDir === 'desc' ? tb - ta : ta - tb
+        if (dateCmp !== 0) return dateCmp
+        const sa = String(a.job_number ?? '')
+        const sb = String(b.job_number ?? '')
+        return sortDir === 'desc' ? sb.localeCompare(sa) : sa.localeCompare(sb)
       }
       if (sortKey === 'customer') {
         const ca = a.expand?.customer?.company || a.customer_name || ''
@@ -257,27 +263,14 @@ export function QuotesList() {
   const now = new Date()
   const monthStart = startOfMonth(now)
   const monthEnd = endOfMonth(now)
+  const quoteCreatedDate = (q) => toDate(q.quote_created_date ?? q.created)
   const quotesThisMonth = quotes.filter((q) => {
-    const d = toDate(q.created)
+    const d = quoteCreatedDate(q)
     return d && isWithinInterval(d, { start: monthStart, end: monthEnd })
   })
   const wonQuotes = quotes.filter((q) => q.status === 'won')
   const currentYear = now.getFullYear()
   const currentMonth = now.getMonth()
-  // Won quotes updated or created in the current calendar month (use local timezone, e.g. PST)
-  const wonThisMonth = wonQuotes.filter((q) => {
-    const updatedAt = toDate(q.updated)
-    const createdAt = toDate(q.created)
-    const updatedInMonth =
-      updatedAt &&
-      updatedAt.getFullYear() === currentYear &&
-      updatedAt.getMonth() === currentMonth
-    const createdInMonth =
-      createdAt &&
-      createdAt.getFullYear() === currentYear &&
-      createdAt.getMonth() === currentMonth
-    return updatedInMonth || createdInMonth
-  })
   const pendingQuotes = quotes.filter((q) => q.status === 'sent')
   const sumWonRevenue = (list) =>
     list.reduce((sum, q) => {
@@ -286,7 +279,15 @@ export function QuotesList() {
       const value = !Number.isNaN(total) && total > 0 ? total : (!Number.isNaN(sub) && sub > 0 ? sub : 0)
       return sum + value
     }, 0)
-  // Revenue from won quotes this month only (no fallback to all won)
+  // Won quotes whose quote_created_date is in the current month
+  const wonThisMonth = wonQuotes.filter((q) => {
+    const d = quoteCreatedDate(q)
+    return (
+      d &&
+      d.getFullYear() === currentYear &&
+      d.getMonth() === currentMonth
+    )
+  })
   const revenueThisMonth = sumWonRevenue(wonThisMonth)
   return (
     <Layout>
@@ -295,7 +296,7 @@ export function QuotesList() {
         <div className="flex flex-nowrap items-center gap-3">
           <Input
             type="search"
-            placeholder="Search by job #, customer, part #…"
+            placeholder="Search…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="min-w-0 max-w-[220px] shrink-0"
@@ -306,7 +307,7 @@ export function QuotesList() {
         </div>
       </div>
 
-      <div className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Card>
           <p className="text-sm text-gray-600 dark:text-gray-300">Quotes this month</p>
           <p className="text-2xl font-bold">{quotesThisMonth.length}</p>
@@ -337,47 +338,45 @@ export function QuotesList() {
             </option>
           ))}
         </select>
-        <span className="ml-2 border-l border-gray-200 pl-4 text-sm font-medium text-gray-600 dark:border-gray-600 dark:text-gray-300">
-          Sort by
-        </span>
-        <div className="flex gap-1">
-          <Button
-            variant={sortKey === 'job_number' ? 'primary' : 'secondary'}
-            className="!py-1 !text-sm"
+        <span className="ml-2 border-l border-gray-200 pl-4 dark:border-gray-600" />
+        <div className="flex gap-3">
+          <button
+            type="button"
             onClick={() => {
               setSortKey('job_number')
               if (sortKey !== 'job_number') setSortDir('desc')
             }}
+            className={`text-sm font-medium cursor-pointer focus:outline-none ${sortKey === 'job_number' ? 'text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}
           >
             Job #
-          </Button>
-          <Button
-            variant={sortKey === 'customer' ? 'primary' : 'secondary'}
-            className="!py-1 !text-sm"
+          </button>
+          <button
+            type="button"
             onClick={() => {
               setSortKey('customer')
               if (sortKey !== 'customer') setSortDir('asc')
             }}
+            className={`text-sm font-medium cursor-pointer focus:outline-none ${sortKey === 'customer' ? 'text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}
           >
             Customer
-          </Button>
+          </button>
         </div>
         <span className="text-sm font-medium text-gray-600 dark:text-gray-300">Order</span>
-        <div className="flex gap-1">
-          <Button
-            variant={sortDir === 'asc' ? 'primary' : 'secondary'}
-            className="!py-1 !text-sm"
+        <div className="flex gap-3">
+          <button
+            type="button"
             onClick={() => setSortDir('asc')}
+            className={`text-sm font-medium cursor-pointer focus:outline-none ${sortDir === 'asc' ? 'text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}
           >
             A→Z
-          </Button>
-          <Button
-            variant={sortDir === 'desc' ? 'primary' : 'secondary'}
-            className="!py-1 !text-sm"
+          </button>
+          <button
+            type="button"
             onClick={() => setSortDir('desc')}
+            className={`text-sm font-medium cursor-pointer focus:outline-none ${sortDir === 'desc' ? 'text-gray-900 dark:text-white' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'}`}
           >
             Z→A
-          </Button>
+          </button>
         </div>
       </div>
 
@@ -395,43 +394,28 @@ export function QuotesList() {
             <table className="w-full min-w-[600px]">
               <thead>
                 <tr className="border-b border-gray-200 text-left text-sm text-gray-600 dark:border-gray-600 dark:text-gray-300">
+                  <th className="pb-2 pr-4 font-medium">Job #</th>
+                  <th className="min-w-[8rem] pb-2 pr-4 font-medium">Customer</th>
+                  <th className="pb-2 pr-4 font-medium">Status</th>
                   <th className="pb-2 pr-4 font-medium">
-                    <button
-                      type="button"
-                      onClick={() => handleSort('job_number')}
-                      className="hover:text-gray-900 focus:outline-none dark:hover:text-white"
-                    >
-                      Job # {sortKey === 'job_number' && (sortDir === 'asc' ? '↑' : '↓')}
-                    </button>
+                    <span className="inline-flex items-center gap-1.5">
+                      Total (CAD)
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setShowTotals((v) => !v) }}
+                        className="rounded p-0.5 text-gray-500 hover:text-gray-700 hover:bg-gray-200 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-600"
+                        title={showTotals ? 'Hide totals' : 'Show totals'}
+                        aria-label={showTotals ? 'Hide totals' : 'Show totals'}
+                      >
+                        {showTotals ? (
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                        ) : (
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                        )}
+                      </button>
+                    </span>
                   </th>
-                  <th className="pb-2 pr-4 font-medium">
-                    <button
-                      type="button"
-                      onClick={() => handleSort('customer')}
-                      className="hover:text-gray-900 focus:outline-none dark:hover:text-white"
-                    >
-                      Customer {sortKey === 'customer' && (sortDir === 'asc' ? '↑' : '↓')}
-                    </button>
-                  </th>
-                  <th className="pb-2 pr-4 font-medium">
-                    <button
-                      type="button"
-                      onClick={() => handleSort('status')}
-                      className="hover:text-gray-900 focus:outline-none dark:hover:text-white"
-                    >
-                      Status {sortKey === 'status' && (sortDir === 'asc' ? '↑' : '↓')}
-                    </button>
-                  </th>
-                  <th className="pb-2 pr-4 font-medium">
-                    <button
-                      type="button"
-                      onClick={() => handleSort('total')}
-                      className="hover:text-gray-900 focus:outline-none dark:hover:text-white"
-                    >
-                      Total (CAD) {sortKey === 'total' && (sortDir === 'asc' ? '↑' : '↓')}
-                    </button>
-                  </th>
-                  <th className="pb-2 font-medium">Actions</th>
+                  <th className="pb-2 font-medium whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -442,13 +426,15 @@ export function QuotesList() {
                         {q.job_number || '—'}
                       </Link>
                     </td>
-                    <td className="py-3 pr-4 text-gray-700 dark:text-gray-300">{customerDisplay(q)}</td>
+                    <td className="min-w-[8rem] py-3 pr-4 text-gray-700 dark:text-gray-300 overflow-hidden">
+                      <span className="block truncate" title={customerDisplay(q)}>{customerDisplay(q)}</span>
+                    </td>
                     <td className="py-3 pr-4">
                       <Badge status={q.status}>{q.status || 'draft'}</Badge>
                     </td>
-                    <td className="py-3 pr-4 tabular-nums">{formatCurrency(q.final_total_cad)}</td>
-                    <td className="py-3">
-                      <div className="flex flex-wrap items-center gap-2">
+                    <td className="py-3 pr-4 tabular-nums">{showTotals ? formatCurrency(q.final_total_cad) : '—'}</td>
+                    <td className="py-3 whitespace-nowrap">
+                      <div className="flex flex-nowrap items-center gap-2">
                         <Link to={`/quotes/${q.id}`}>
                           <Button variant="secondary" className="!py-1 !text-sm">
                             View

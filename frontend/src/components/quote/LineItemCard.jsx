@@ -39,6 +39,7 @@ export function LineItemCard({
   quoteSettings,
   calculated,
   vendors = [],
+  alloySuggestions = [],
   onChange,
   onDelete,
   onDuplicate,
@@ -46,6 +47,7 @@ export function LineItemCard({
   lineIndex,
 }) {
   const [detailsOpen, setDetailsOpen] = useState(true)
+  const [alloyDropdownOpen, setAlloyDropdownOpen] = useState(false)
   const handle = (field, value) => {
     onChange({ ...lineItem, [field]: value })
   }
@@ -135,7 +137,7 @@ export function LineItemCard({
 
       {detailsOpen && (
       <>
-      <Section title="Materials">
+      <Section title="Materials" open>
         <div className="grid gap-2 sm:grid-cols-2">
           <div>
             <Input
@@ -193,11 +195,58 @@ export function LineItemCard({
             value={lineItem.testing_cost ?? ''}
             onChange={(e) => handle('testing_cost', dollar(e.target.value) ?? '')}
           />
-          <Input
-            label="Alloy"
-            value={str(lineItem.alloy)}
-            onChange={(e) => handle('alloy', e.target.value)}
-          />
+          <div className="relative w-full">
+            <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Alloy
+            </label>
+            <input
+              type="text"
+              placeholder="Type or select"
+              value={str(lineItem.alloy)}
+              onChange={(e) => {
+                handle('alloy', e.target.value)
+                setAlloyDropdownOpen(true)
+              }}
+              onFocus={() => setAlloyDropdownOpen(true)}
+              onBlur={() => setTimeout(() => setAlloyDropdownOpen(false), 150)}
+              className="w-full rounded-input border-2 border-gray-300 px-3 py-2 focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:placeholder-gray-400"
+            />
+            {alloyDropdownOpen && (() => {
+              const current = str(lineItem.alloy).toLowerCase()
+              let options = [...new Set([...alloySuggestions, str(lineItem.alloy)].filter(Boolean))]
+                .filter((a) => !current || a.toLowerCase().includes(current))
+                .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
+              if (options.length === 0 && current) options = [str(lineItem.alloy)]
+              if (options.length === 0) options = ['']
+              return (
+                <ul
+                  className="absolute z-50 mt-1 max-h-48 w-full overflow-auto rounded-md border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-600 dark:bg-gray-700"
+                  onMouseDown={(e) => e.preventDefault()}
+                >
+                  {options.map((a) =>
+                    a === '' ? (
+                      <li key="__hint" className="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
+                        Type to add a new alloy
+                      </li>
+                    ) : (
+                      <li key={a}>
+                        <button
+                          type="button"
+                          className="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-600"
+                          onMouseDown={() => {
+                            handle('alloy', a)
+                            setAlloyDropdownOpen(false)
+                          }}
+                        >
+                          {a}
+                        </button>
+                      </li>
+                    )
+                  )}
+                </ul>
+              )
+            })()}
+          </div>
           <Input
             label="Stock size per part"
             value={str(lineItem.stock_size_per_part)}
