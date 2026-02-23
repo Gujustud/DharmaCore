@@ -367,7 +367,7 @@ export function Settings() {
             <div className="grid gap-3 sm:grid-cols-2">
               <Input
                 type="number"
-                label="Shipping markup (%)"
+                label="Material markup (%)"
                 value={settings.default_shipping_markup_percent ?? ''}
                 onChange={(e) =>
                   handleChange('default_shipping_markup_percent', num(e.target.value))

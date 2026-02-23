@@ -668,7 +668,7 @@ export function QuoteDetail() {
           </Card>
 
           <Card className="mb-6">
-            <div className="grid grid-cols-1 gap-x-6 gap-y-1 md:grid-cols-2 md:grid-rows-[auto_1fr] md:min-h-[220px]">
+            <div className="grid grid-cols-1 gap-x-6 gap-y-1 md:grid-cols-2 md:grid-rows-[auto_auto]">
               <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
                 Project notes
               </label>
@@ -677,8 +677,8 @@ export function QuoteDetail() {
               </label>
               <div className="min-h-0">
                 <textarea
-                  className="h-full min-h-[140px] w-full rounded-input border-2 border-gray-300 px-3 py-2 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-                  rows={6}
+                  className="min-h-[84px] w-full rounded-input border-2 border-gray-300 px-3 py-2 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                  rows={3}
                   placeholder="Notes about this project..."
                   value={quote?.notes ?? ''}
                   onChange={(e) => handleQuoteChange({ notes: e.target.value })}
@@ -745,21 +745,11 @@ export function QuoteDetail() {
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
                 <Input
                   type="number"
-                  label="Shipping markup %"
+                  label="Material markup %"
                   value={quote.shipping_markup_percent ?? ''}
                   onChange={(e) =>
                     handleQuoteChange({
                       shipping_markup_percent: Number(e.target.value) || 0,
-                    })
-                  }
-                />
-                <Input
-                  type="number"
-                  label="Final markup %"
-                  value={quote.final_markup_percent ?? ''}
-                  onChange={(e) =>
-                    handleQuoteChange({
-                      final_markup_percent: Number(e.target.value) || 0,
                     })
                   }
                 />
@@ -770,6 +760,16 @@ export function QuoteDetail() {
                   onChange={(e) =>
                     handleQuoteChange({
                       subcontractor_markup_percent: Number(e.target.value) || 0,
+                    })
+                  }
+                />
+                <Input
+                  type="number"
+                  label="Final markup %"
+                  value={quote.final_markup_percent ?? ''}
+                  onChange={(e) =>
+                    handleQuoteChange({
+                      final_markup_percent: Number(e.target.value) || 0,
                     })
                   }
                 />
@@ -863,13 +863,6 @@ export function QuoteDetail() {
               onClick={() => saveQuote()}
             >
               {saving ? 'Saving…' : 'Save'}
-            </Button>
-            <Button
-              variant="secondary"
-              disabled={saving}
-              onClick={() => saveQuote('sent')}
-            >
-              Sent
             </Button>
             <Button variant="secondary" disabled={saving} onClick={handleCopy}>
               Copy

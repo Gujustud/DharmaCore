@@ -142,7 +142,11 @@ export function LineItemCard({
           <div>
             <Input
               type="number"
-              label="Actual cost (CAD)"
+              label={
+                calculated?.material_with_markup != null
+                  ? `Actual cost (CAD) (Markup cost (CAD): $${fmt(calculated.material_with_markup)})`
+                  : 'Actual cost (CAD)'
+              }
               value={
                 // If USD is set and CAD is not explicitly set (null/undefined/empty/0), show calculated value
                 // Otherwise, if CAD is explicitly set (non-zero), show CAD
@@ -165,11 +169,6 @@ export function LineItemCard({
                 }
               }}
             />
-            {calculated?.material_with_markup != null && (
-              <p className="mt-1 text-sm font-medium text-gray-800">
-                Standard cost (CAD): ${fmt(calculated.material_with_markup)}
-              </p>
-            )}
           </div>
           <Input
             type="number"
@@ -185,7 +184,7 @@ export function LineItemCard({
           />
           <Input
             type="number"
-            label="Shipping cost (materials)"
+            label="Shipping cost"
             value={lineItem.material_shipping_cost ?? ''}
             onChange={(e) => handle('material_shipping_cost', dollar(e.target.value) ?? '')}
           />
@@ -263,44 +262,46 @@ export function LineItemCard({
             value={str(lineItem.ordered_length)}
             onChange={(e) => handle('ordered_length', e.target.value)}
           />
-          <div className="sm:col-span-2">
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Material vendor
-            </label>
-            <select
-              className="w-full rounded-input border-2 border-gray-300 px-3 py-2 focus:border-primary-from focus:outline-none"
-              value={lineItem.material_vendor ?? ''}
-              onChange={(e) => handle('material_vendor', e.target.value || null)}
-            >
-              <option value="">— Select —</option>
-              {vendors.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Vendor supplied
-            </label>
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                variant={str(lineItem.vendor_supplied).toLowerCase() === 'yes' ? 'primary' : 'secondary'}
-                className="!py-1"
-                onClick={() => handle('vendor_supplied', 'yes')}
+          <div className="flex flex-wrap items-end gap-4 sm:col-span-2">
+            <div className="min-w-0 flex-1">
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Material vendor
+              </label>
+              <select
+                className="w-full rounded-input border-2 border-gray-300 px-3 py-2 focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                value={lineItem.material_vendor ?? ''}
+                onChange={(e) => handle('material_vendor', e.target.value || null)}
               >
-                Yes
-              </Button>
-              <Button
-                type="button"
-                variant={str(lineItem.vendor_supplied).toLowerCase() === 'no' ? 'primary' : 'secondary'}
-                className="!py-1"
-                onClick={() => handle('vendor_supplied', 'no')}
-              >
-                No
-              </Button>
+                <option value="">— Select —</option>
+                {vendors.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Vendor supplied
+              </label>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant={str(lineItem.vendor_supplied).toLowerCase() === 'yes' ? 'primary' : 'secondary'}
+                  className="!py-2"
+                  onClick={() => handle('vendor_supplied', 'yes')}
+                >
+                  Yes
+                </Button>
+                <Button
+                  type="button"
+                  variant={str(lineItem.vendor_supplied).toLowerCase() === 'no' ? 'primary' : 'secondary'}
+                  className="!py-2"
+                  onClick={() => handle('vendor_supplied', 'no')}
+                >
+                  No
+                </Button>
+              </div>
             </div>
           </div>
           <div className="sm:col-span-2">
