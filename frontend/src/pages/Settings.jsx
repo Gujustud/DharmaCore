@@ -302,7 +302,12 @@ export function Settings() {
   return (
     <Layout>
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Settings</h1>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Settings</h1>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            Git commit: <code className="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-700">{import.meta.env.VITE_GIT_COMMIT || 'unknown'}</code>
+          </p>
+        </div>
         <Button disabled={saving} onClick={handleSave}>
           {saving ? 'Saving…' : 'Save'}
         </Button>
