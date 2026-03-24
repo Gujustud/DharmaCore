@@ -13,6 +13,10 @@ build/
 .env
 .env.local
 .env.*.local
+frontend/.env.production
+
+# Local deploy artifacts (zip uploads)
+deploy/*.zip
 
 # Logs
 *.log

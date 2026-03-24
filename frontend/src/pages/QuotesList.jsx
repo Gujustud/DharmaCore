@@ -322,7 +322,7 @@ export function QuotesList() {
         </Card>
         <Card>
           <p className="text-sm text-gray-600 dark:text-gray-300">Revenue this month</p>
-          <p className="text-2xl font-bold">{formatCurrency(revenueThisMonth)}</p>
+          <p className="text-2xl font-bold">{showTotals ? formatCurrency(revenueThisMonth) : '—'}</p>
         </Card>
       </div>
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { Layout } from '../components/layout/Layout'
 import { Card } from '../components/ui/Card'
@@ -39,13 +39,21 @@ export function Customers() {
     load()
   }, [])
 
-  const filtered = list.filter(
-    (c) =>
-      !search ||
-      [c.name, c.company, c.email, c.phone].some(
-        (v) => v && String(v).toLowerCase().includes(search.toLowerCase())
-      )
-  )
+  const filtered = useMemo(() => {
+    const term = search.toLowerCase()
+    const base = list.filter(
+      (c) =>
+        !term ||
+        [c.name, c.company, c.email, c.phone].some(
+          (v) => v && String(v).toLowerCase().includes(term)
+        )
+    )
+    return base.sort((a, b) =>
+      (a.company || a.name || '').localeCompare(b.company || b.name || '', undefined, {
+        sensitivity: 'base',
+      })
+    )
+  }, [list, search])
 
   function openNew() {
     setEditing(null)

@@ -196,33 +196,38 @@ export function CustomerDetail() {
               <p className="text-sm text-gray-500 dark:text-gray-400">No jobs for this customer.</p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[400px]">
+                <table className="customer-detail-table w-full min-w-[520px] table-fixed">
                   <thead>
                     <tr className="border-b border-gray-200 text-left text-sm text-gray-600 dark:border-gray-600 dark:text-gray-300">
-                      <th className="pb-2 pr-4 font-medium">Job #</th>
-                      <th className="pb-2 pr-4 font-medium">Status</th>
-                      <th className="pb-2 pr-4 font-medium">Ship date</th>
-                      <th className="pb-2 font-medium">Due date</th>
+                      <th className="w-[18%] pb-2 pr-4 font-medium">Job #</th>
+                      <th className="w-[22%] pb-2 pr-4 font-medium">Status</th>
+                      <th className="w-[30%] pb-2 pr-4 font-medium">Ship date</th>
+                      <th className="w-[30%] pb-2 font-medium">Delivered date</th>
                     </tr>
                   </thead>
                   <tbody>
                     {jobs.map((job) => (
                       <tr key={job.id} className="border-b border-gray-100 hover:bg-gray-50/50 dark:border-gray-700 dark:hover:bg-gray-700/50">
-                        <td className="py-2 pr-4">
+                        <td className="w-[18%] py-2 pr-4 align-middle overflow-hidden">
                           <Link
                             to={`/jobs/${job.id}`}
-                            className="font-medium text-primary-from hover:underline"
+                            className="block truncate font-medium text-primary-from hover:underline"
+                            title={job.job_number || ''}
                           >
                             {job.job_number || '—'}
                           </Link>
                         </td>
-                        <td className="py-2 pr-4">
+                        <td className="w-[22%] whitespace-nowrap py-2 pr-4 align-middle">
                           <Badge status={job.status}>
                             {JOB_STATUS_LABELS[job.status] ?? job.status ?? '—'}
                           </Badge>
                         </td>
-                        <td className="py-2 pr-4 text-gray-700 dark:text-gray-300">{formatDate(job.ship_date)}</td>
-                        <td className="py-2 text-gray-700 dark:text-gray-300">{formatDate(job.due_date)}</td>
+                        <td className="w-[30%] py-2 pr-4 align-middle text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                          {formatDate(job.ship_date)}
+                        </td>
+                        <td className="w-[30%] py-2 align-middle text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                          {formatDate(job.delivered_date)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -237,33 +242,36 @@ export function CustomerDetail() {
               <p className="text-sm text-gray-500 dark:text-gray-400">No quotes for this customer.</p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[400px]">
+                <table className="customer-detail-table w-full min-w-[520px] table-fixed">
                   <thead>
                     <tr className="border-b border-gray-200 text-left text-sm text-gray-600 dark:border-gray-600 dark:text-gray-300">
-                      <th className="pb-2 pr-4 font-medium">Job #</th>
-                      <th className="pb-2 pr-4 font-medium">Status</th>
-                      <th className="pb-2 pr-4 font-medium">Total</th>
-                      <th className="pb-2 font-medium">Updated</th>
+                      <th className="w-[18%] pb-2 pr-4 font-medium">Job #</th>
+                      <th className="w-[22%] pb-2 pr-4 font-medium">Status</th>
+                      <th className="w-[30%] pb-2 pr-4 font-medium">Total</th>
+                      <th className="w-[30%] pb-2 font-medium">Updated</th>
                     </tr>
                   </thead>
                   <tbody>
                     {quotes.map((q) => (
                       <tr key={q.id} className="border-b border-gray-100 hover:bg-gray-50/50 dark:border-gray-700 dark:hover:bg-gray-700/50">
-                        <td className="py-2 pr-4">
+                        <td className="w-[18%] py-2 pr-4 align-middle overflow-hidden">
                           <Link
                             to={`/quotes/${q.id}`}
-                            className="font-medium text-primary-from hover:underline"
+                            className="block truncate font-medium text-primary-from hover:underline"
+                            title={q.job_number || ''}
                           >
                             {q.job_number || '—'}
                           </Link>
                         </td>
-                        <td className="py-2 pr-4">
+                        <td className="w-[22%] whitespace-nowrap py-2 pr-4 align-middle">
                           <Badge status={q.status}>
                             {QUOTE_STATUS_LABELS[q.status] ?? q.status ?? '—'}
                           </Badge>
                         </td>
-                        <td className="py-2 pr-4 tabular-nums">{formatCurrency(q.final_total_cad)}</td>
-                        <td className="py-2 text-gray-700 dark:text-gray-300">{formatDate(q.updated)}</td>
+                        <td className="w-[30%] py-2 pr-4 align-middle tabular-nums">{formatCurrency(q.final_total_cad)}</td>
+                        <td className="w-[30%] py-2 align-middle text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                          {formatDate(q.updated)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

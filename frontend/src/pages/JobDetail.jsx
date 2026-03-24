@@ -110,6 +110,7 @@ export function JobDetail() {
         due_date: job.due_date || null,
         completion_date: job.completion_date || null,
         ship_date: job.ship_date || null,
+        delivered_date: job.delivered_date || null,
         tracking_status: job.tracking_status,
         tracking_number_1: job.tracking_number_1 || '',
         tracking_number_2: job.tracking_number_2 || '',
@@ -232,6 +233,15 @@ export function JobDetail() {
               className="rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
               value={dateInputValue(job.ship_date)}
               onChange={(e) => handleChange({ ship_date: e.target.value || null })}
+            />
+          </Row>
+
+          <Row label="Delivered Date" value={job.delivered_date} emptyLabel="Empty">
+            <input
+              type="date"
+              className="rounded-input border border-gray-300 px-2 py-1 text-sm focus:border-primary-from focus:outline-none dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+              value={dateInputValue(job.delivered_date)}
+              onChange={(e) => handleChange({ delivered_date: e.target.value || null })}
             />
           </Row>
 

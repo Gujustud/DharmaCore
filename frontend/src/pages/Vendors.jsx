@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Layout } from '../components/layout/Layout'
 import { Card } from '../components/ui/Card'
 import { Button } from '../components/ui/Button'
@@ -45,12 +45,19 @@ export function Vendors() {
     load()
   }, [])
 
-  const filtered = list.filter((v) =>
-    !search ||
-    [v.name, v.contact_person, v.email, v.phone, v.services].some(
-      (val) => val && String(val).toLowerCase().includes(search.toLowerCase())
+  const filtered = useMemo(() => {
+    const term = search.toLowerCase()
+    const base = list.filter(
+      (v) =>
+        !term ||
+        [v.name, v.contact_person, v.email, v.phone, v.services].some(
+          (val) => val && String(val).toLowerCase().includes(term)
+        )
     )
-  )
+    return base.sort((a, b) =>
+      (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })
+    )
+  }, [list, search])
 
   function openNew() {
     setEditing(null)

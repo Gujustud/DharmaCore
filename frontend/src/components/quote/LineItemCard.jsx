@@ -46,7 +46,7 @@ export function LineItemCard({
   onAddPart,
   lineIndex,
 }) {
-  const [detailsOpen, setDetailsOpen] = useState(true)
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const [alloyDropdownOpen, setAlloyDropdownOpen] = useState(false)
   const handle = (field, value) => {
     onChange({ ...lineItem, [field]: value })

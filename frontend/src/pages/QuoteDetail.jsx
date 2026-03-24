@@ -556,6 +556,24 @@ export function QuoteDetail() {
     }
   }
 
+  const sortedCustomers = useMemo(
+    () =>
+      [...(customers || [])].sort((a, b) =>
+        (a.company || a.name || '').localeCompare(b.company || b.name || '', undefined, {
+          sensitivity: 'base',
+        })
+      ),
+    [customers]
+  )
+
+  const selectedCustomer = quote?.customer
+    ? sortedCustomers.find((c) => c.id === quote.customer)
+    : null
+  const customerName =
+    quote?.customer_name ||
+    (selectedCustomer ? (selectedCustomer.company || selectedCustomer.name) : '') ||
+    ''
+
   if (loading || !quote) {
     return (
       <Layout>
@@ -563,12 +581,6 @@ export function QuoteDetail() {
       </Layout>
     )
   }
-
-  const selectedCustomer = quote.customer ? customers.find((c) => c.id === quote.customer) : null
-  const customerName =
-    quote.customer_name ||
-    (selectedCustomer ? (selectedCustomer.company || selectedCustomer.name) : '') ||
-    ''
 
   return (
     <Layout>
@@ -608,7 +620,7 @@ export function QuoteDetail() {
                       return
                     }
                     const cId = val || null
-                    const c = cId ? customers.find((x) => x.id === cId) : null
+                    const c = cId ? sortedCustomers.find((x) => x.id === cId) : null
                     handleQuoteChange({
                       customer: cId,
                       customer_name: (c?.company || c?.name) ?? '',
@@ -616,7 +628,7 @@ export function QuoteDetail() {
                   }}
                 >
                   <option value="">— Select —</option>
-                  {customers.map((c) => (
+                  {sortedCustomers.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.company || c.name}
                     </option>

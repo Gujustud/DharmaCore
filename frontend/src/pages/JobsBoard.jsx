@@ -442,9 +442,8 @@ export function JobsBoard() {
                     <th className="pb-2 pr-4 font-medium">Job #</th>
                     <th className="min-w-[8rem] pb-2 pr-4 font-medium">Customer</th>
                     <th className="pb-2 pr-4 font-medium whitespace-nowrap">Status</th>
-                    <th className="pb-2 pr-4 font-medium whitespace-nowrap">Due date</th>
                     <th className="pb-2 pr-4 font-medium whitespace-nowrap">Ship date</th>
-                    <th className="pb-2 pr-4 font-medium whitespace-nowrap">Tracking</th>
+                    <th className="pb-2 pr-4 font-medium whitespace-nowrap">Delivered</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -484,24 +483,21 @@ export function JobsBoard() {
                           </span>
                         </td>
                         <td className="py-3 pr-4 text-gray-700 dark:text-gray-300 whitespace-nowrap">
-                          {formatDate(job.due_date)}
-                        </td>
-                        <td className="py-3 pr-4 text-gray-700 dark:text-gray-300 whitespace-nowrap">
-                          {formatDate(job.ship_date)}
-                        </td>
-                        <td className="py-3 pr-4 whitespace-nowrap">
-                          {trackingUrl ? (
+                          {job.ship_date && trackingUrl ? (
                             <a
                               href={trackingUrl}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-primary-from hover:underline"
                             >
-                              Track
+                              {formatDate(job.ship_date)}
                             </a>
                           ) : (
-                            '—'
+                            formatDate(job.ship_date)
                           )}
+                        </td>
+                        <td className="py-3 pr-4 text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                          {formatDate(job.delivered_date)}
                         </td>
                       </tr>
                     )

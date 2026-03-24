@@ -7,6 +7,7 @@ import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Badge } from '../components/ui/Badge'
 import { getQuotes, getJobs } from '../lib/api'
+import { generateTrackingLink } from '../lib/calculations'
 import { pb } from '../lib/pocketbase'
 
 function formatCurrency(n) {
@@ -46,6 +47,7 @@ export function Dashboard() {
   const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [showTotals, setShowTotals] = useState(true)
 
   useEffect(() => {
     let cancelled = false
@@ -184,43 +186,61 @@ export function Dashboard() {
               </p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="dashboard-table w-full min-w-[520px]">
+                <table className="dashboard-table w-full min-w-[520px] table-fixed">
                   <thead>
                     <tr className="border-b border-gray-200 text-left text-sm text-gray-600 dark:border-gray-600 dark:text-gray-300">
-                      <th className="min-w-[5rem] pb-2 pr-4 font-medium">Job #</th>
-                      <th className="min-w-[8rem] pb-2 pr-4 font-medium">Customer</th>
-                      <th className="pb-2 pr-4 font-medium">Status</th>
-                      <th className="pb-2 font-medium">Ship date</th>
+                      <th className="w-[18%] pb-2 pr-4 font-medium">Job #</th>
+                      <th className="w-[48%] pb-2 pr-4 font-medium">Customer</th>
+                      <th className="w-[18%] pb-2 pr-4 font-medium">Status</th>
+                      <th className="w-[16%] pb-2 font-medium">Ship date</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {activeJobs.map((j) => (
+                    {activeJobs.map((j) => {
+                      const trackingUrl = generateTrackingLink(j.tracking_number_1)
+                      const shipDateLabel = j.ship_date
+                        ? format(
+                            typeof j.ship_date === 'string'
+                              ? parseISO(j.ship_date)
+                              : j.ship_date,
+                            'MMM d'
+                          )
+                        : '—'
+                      return (
                       <tr key={j.id} className="align-middle border-b border-gray-100 dark:border-gray-700">
-                        <td className="min-w-[5rem] py-2 pr-4 font-medium text-gray-900 dark:text-white align-middle">
+                        <td className="w-[18%] py-2 pr-4 font-medium text-gray-900 dark:text-white align-middle">
                           <Link to={`/jobs/${j.id}`} className="text-primary-from hover:underline">
                             {j.job_number || '—'}
                           </Link>
                         </td>
-                        <td className="min-w-[8rem] py-2 pr-4 text-gray-700 dark:text-gray-300 align-middle overflow-hidden">
-                          <Link to={`/jobs/${j.id}`} className="text-primary-from hover:underline">
+                        <td className="w-[48%] py-2 pr-4 text-gray-700 dark:text-gray-300 align-middle overflow-hidden">
+                          <Link
+                            to={`/jobs/${j.id}`}
+                            className="block truncate text-primary-from hover:underline"
+                            title={j.expand?.customer?.company || j.customer_name || '—'}
+                          >
                             {j.expand?.customer?.company || j.customer_name || '—'}
                           </Link>
                         </td>
-                        <td className="whitespace-nowrap py-2 pr-4 align-middle">
+                        <td className="w-[18%] whitespace-nowrap py-2 pr-4 align-middle">
                           <Badge status={j.status}>{jobStatusLabel(j.status)}</Badge>
                         </td>
-                        <td className="py-2 pr-4 align-middle">
-                          {j.ship_date
-                            ? format(
-                                typeof j.ship_date === 'string'
-                                  ? parseISO(j.ship_date)
-                                  : j.ship_date,
-                                'MMM d'
-                              )
-                            : '—'}
+                        <td className="w-[16%] py-2 pr-4 align-middle whitespace-nowrap">
+                          {j.ship_date && trackingUrl ? (
+                            <a
+                              href={trackingUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary-from hover:underline"
+                            >
+                              {shipDateLabel}
+                            </a>
+                          ) : (
+                            shipDateLabel
+                          )}
                         </td>
                       </tr>
-                    ))}
+                    )})}
                   </tbody>
                 </table>
               </div>
@@ -234,19 +254,36 @@ export function Dashboard() {
                 <p className="text-sm text-gray-500 dark:text-gray-400">No quotes yet. Create one from Quotes.</p>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="dashboard-table w-full min-w-[520px]">
+                  <table className="dashboard-table w-full min-w-[520px] table-fixed">
                     <thead>
                       <tr className="border-b border-gray-200 text-left text-sm text-gray-600 dark:border-gray-600 dark:text-gray-300">
-                        <th className="min-w-[5rem] pb-2 pr-4 font-medium">Job #</th>
-                        <th className="min-w-[8rem] pb-2 pr-4 font-medium">Customer</th>
-                        <th className="pb-2 pr-4 font-medium">Status</th>
-                        <th className="pb-2 font-medium">Total</th>
+                        <th className="w-[18%] pb-2 pr-4 font-medium">Job #</th>
+                        <th className="w-[48%] pb-2 pr-4 font-medium">Customer</th>
+                        <th className="w-[18%] pb-2 pr-4 font-medium">Status</th>
+                        <th className="w-[16%] pb-2 font-medium">
+                          <span className="inline-flex items-center gap-1.5">
+                            Total (CAD)
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setShowTotals((v) => !v) }}
+                              className="rounded p-0.5 text-gray-500 hover:text-gray-700 hover:bg-gray-200 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-600"
+                              title={showTotals ? 'Hide totals' : 'Show totals'}
+                              aria-label={showTotals ? 'Hide totals' : 'Show totals'}
+                            >
+                              {showTotals ? (
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                              ) : (
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                              )}
+                            </button>
+                          </span>
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
                       {recentQuotes.map((q) => (
                         <tr key={q.id} className="align-middle border-b border-gray-100 dark:border-gray-700">
-                          <td className="min-w-[5rem] py-2 pr-4 align-middle">
+                          <td className="w-[18%] py-2 pr-4 align-middle">
                             <Link
                               to={`/quotes/${q.id}`}
                               className="font-medium text-primary-from hover:underline"
@@ -254,16 +291,20 @@ export function Dashboard() {
                               {q.job_number || '—'}
                             </Link>
                           </td>
-                          <td className="min-w-[8rem] py-2 pr-4 text-gray-700 dark:text-gray-300 align-middle overflow-hidden">
-                            <Link to={`/quotes/${q.id}`} className="text-primary-from hover:underline">
+                          <td className="w-[48%] py-2 pr-4 text-gray-700 dark:text-gray-300 align-middle overflow-hidden">
+                            <Link
+                              to={`/quotes/${q.id}`}
+                              className="block truncate text-primary-from hover:underline"
+                              title={customerDisplay(q)}
+                            >
                               {customerDisplay(q)}
                             </Link>
                           </td>
-                          <td className="whitespace-nowrap py-2 pr-4 align-middle">
+                          <td className="w-[18%] whitespace-nowrap py-2 pr-4 align-middle">
                             <Badge status={q.status}>{q.status || 'draft'}</Badge>
                           </td>
-                          <td className="py-2 pr-4 tabular-nums align-middle">
-                            {formatCurrency(q.final_total_cad)}
+                          <td className="w-[16%] py-2 pr-4 tabular-nums align-middle">
+                            {showTotals ? formatCurrency(q.final_total_cad) : '—'}
                           </td>
                         </tr>
                       ))}
