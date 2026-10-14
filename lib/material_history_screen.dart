@@ -519,6 +519,135 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     );
   }
 
+  static final _money = NumberFormat.currency(symbol: '\$');
+
+  /// Parse numbers from a free-text size like `7×72`, `1.5" OD x 12"`, `0.5 x 4 x 12`.
+  List<double> _parseSizeNumbers(String sizeLabel) {
+    final cleaned = sizeLabel
+        .replaceAll(RegExp(r'[""″]'), '')
+        .replaceAll(RegExp(r'\b(od|id|in|inch|inches|mm)\b', caseSensitive: false), ' ');
+    final matches = RegExp(r'(\d+(?:\.\d+)?)').allMatches(cleaned);
+    return [
+      for (final m in matches) double.tryParse(m.group(1)!) ?? double.nan,
+    ].where((n) => n.isFinite && n > 0).toList();
+  }
+
+  /// Best-effort length in inches from size (last dimension for multi-part sizes).
+  double? _lengthInchesFromSize(String sizeLabel) {
+    final nums = _parseSizeNumbers(sizeLabel);
+    if (nums.isEmpty) return null;
+    return nums.last;
+  }
+
+  /// Round-bar / tube / hex cross-section diameter (first number when 2+ dims).
+  double? _diameterInchesFromSize(ShopMaterial m) {
+    final form = m.form.toLowerCase();
+    if (form != 'bar' && form != 'tube' && form != 'hex') return null;
+    final nums = _parseSizeNumbers(m.sizeLabel);
+    if (nums.length < 2) return null;
+    return nums.first;
+  }
+
+  double _densityLbPerCuIn(String grade) {
+    final g = grade.toLowerCase();
+    if (RegExp(r'6061|7075|2024|5052|5083|alumin|alum\b').hasMatch(g)) {
+      return 0.098;
+    }
+    if (RegExp(r'titanium|\bti[- ]?6').hasMatch(g)) return 0.163;
+    if (RegExp(r'brass|bronze|copper|\bcop\b').hasMatch(g)) return 0.307;
+    // Default: steel / stainless / unknown alloys
+    return 0.283;
+  }
+
+  double? _estimateWeightLbs(ShopMaterial m) {
+    final dia = _diameterInchesFromSize(m);
+    final len = _lengthInchesFromSize(m.sizeLabel);
+    if (dia == null || len == null || dia <= 0 || len <= 0) return null;
+    final r = dia / 2;
+    final volume = 3.141592653589793 * r * r * len;
+    return volume * _densityLbPerCuIn(m.grade);
+  }
+
+  double? _costPerInch({
+    required ShopMaterial m,
+    required double unitCost,
+  }) {
+    final unit = m.unit.trim().toLowerCase();
+    if (unit == 'in') return unitCost;
+    if (unit == 'ft') return unitCost / 12;
+    final len = _lengthInchesFromSize(m.sizeLabel);
+    if (len != null && len > 0 && (unit == 'ea' || unit.isEmpty)) {
+      return unitCost / len;
+    }
+    return null;
+  }
+
+  String _unitLabel(String unit) {
+    switch (unit.trim().toLowerCase()) {
+      case 'ea':
+        return 'each';
+      case 'ft':
+        return 'feet';
+      case 'in':
+        return 'inches';
+      case 'lb':
+        return 'pounds';
+      case 'kg':
+        return 'kilograms';
+      default:
+        return unit.isEmpty ? 'each' : unit;
+    }
+  }
+
+  List<String> _materialSummaryParts(ShopMaterial m) {
+    final parts = <String>[];
+    final grade = m.grade.trim();
+    if (grade.isNotEmpty) parts.add(grade);
+    parts.add(_unitLabel(m.unit));
+
+    final costs = <double>[];
+    for (final record in _historyRecords) {
+      final item = PurchaseItem.fromRecord(record);
+      if (item.unitCost != null && item.unitCost! > 0) {
+        costs.add(item.unitCost!);
+      }
+    }
+    if (costs.isNotEmpty) {
+      final last = costs.first; // history sorted newest-first
+      parts.add('last ${_money.format(last)}/${m.unit.trim().isEmpty ? 'ea' : m.unit}');
+      final perIn = _costPerInch(m: m, unitCost: last);
+      if (perIn != null) {
+        parts.add('${_money.format(perIn)}/"');
+      }
+      if (costs.length > 1) {
+        final avg = costs.reduce((a, b) => a + b) / costs.length;
+        if ((avg - last).abs() / last > 0.02) {
+          parts.add('avg ${_money.format(avg)}');
+        }
+      }
+    }
+
+    final weight = _estimateWeightLbs(m);
+    if (weight != null) {
+      final w = weight >= 100
+          ? weight.round().toString()
+          : weight.toStringAsFixed(weight >= 10 ? 0 : 1);
+      parts.add('~$w lb est.');
+    }
+
+    final n = _historyRecords.length;
+    if (n > 0) {
+      parts.add('$n purchase${n == 1 ? '' : 's'}');
+    }
+
+    final lots = _lotsFor(m);
+    if (lots.isNotEmpty) {
+      parts.add('${lots.length} lot${lots.length == 1 ? '' : 's'}');
+    }
+
+    return parts;
+  }
+
   Widget _buildHistoryPane(ColorScheme scheme) {
     if (_selected == null) {
       return Center(
@@ -533,34 +662,61 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     }
 
     final selected = _selected!;
+    final summaryParts = _materialSummaryParts(selected);
+    final notes = (selected.notes ?? '').trim();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-          child: Row(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(
-                child: Text(
-                  '${selected.form} · ${selected.sizeLabel}',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${selected.form} · ${selected.sizeLabel}',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => _editMaterial(selected),
+                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    label: const Text('Edit'),
+                  ),
+                  const SizedBox(width: 4),
+                  TextButton.icon(
+                    onPressed: () => _deleteMaterial(selected),
+                    style: TextButton.styleFrom(foregroundColor: scheme.error),
+                    icon: const Icon(Icons.delete_outline, size: 18),
+                    label: const Text('Delete'),
+                  ),
+                ],
+              ),
+              if (summaryParts.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  summaryParts.join(' · '),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
                       ),
                 ),
-              ),
-              TextButton.icon(
-                onPressed: () => _editMaterial(selected),
-                icon: const Icon(Icons.edit_outlined, size: 18),
-                label: const Text('Edit'),
-              ),
-              const SizedBox(width: 4),
-              TextButton.icon(
-                onPressed: () => _deleteMaterial(selected),
-                style: TextButton.styleFrom(foregroundColor: scheme.error),
-                icon: const Icon(Icons.delete_outline, size: 18),
-                label: const Text('Delete'),
-              ),
+              ],
+              if (notes.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  notes,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                        fontStyle: FontStyle.italic,
+                      ),
+                ),
+              ],
             ],
           ),
         ),

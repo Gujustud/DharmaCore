@@ -483,7 +483,6 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
               const SizedBox(height: 8),
               _QuoteSection(
                 title: 'Materials',
-                initiallyOpen: true,
                 child: Column(
                   children: [
                     Row(

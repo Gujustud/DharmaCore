@@ -95,16 +95,11 @@ class _LoginScreenState extends State<LoginScreen> {
                     children: [
                       Text(
                         'DharmaCore',
+                        textAlign: TextAlign.center,
                         style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                              fontFamily: 'Polaris',
                               fontWeight: FontWeight.bold,
                             ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Sign in to continue',
-                        style: TextStyle(
-                          color: isDark ? const Color(0xFF9CA3AF) : const Color(0xFF6B7280),
-                        ),
                       ),
                       const SizedBox(height: 24),
                       NativeLoginFields(

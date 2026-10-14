@@ -465,9 +465,53 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
     return t.isEmpty ? null : t;
   }
 
+  /// Parse flexible user input into a date, or null if empty/invalid.
+  /// Accepts `yyyy-MM-dd`, `yyyy-M-d`, `M/d/yyyy`, `MM/dd/yyyy`.
+  DateTime? _parseFlexibleDate(String raw) {
+    final t = raw.trim();
+    if (t.isEmpty) return null;
+
+    DateTime? tryFmt(String pattern) {
+      try {
+        return DateFormat(pattern).parseStrict(t);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    return tryFmt('yyyy-MM-dd') ??
+        tryFmt('yyyy-M-d') ??
+        tryFmt('M/d/yyyy') ??
+        tryFmt('MM/dd/yyyy') ??
+        (() {
+          try {
+            return DateTime.parse(t);
+          } catch (_) {
+            return null;
+          }
+        })();
+  }
+
+  /// Normalize controller text to `yyyy-MM-dd`. Returns false if non-empty but invalid.
+  bool _normalizeDateField(TextEditingController c) {
+    final t = c.text.trim();
+    if (t.isEmpty) {
+      if (c.text.isNotEmpty) c.text = '';
+      return true;
+    }
+    final d = _parseFlexibleDate(t);
+    if (d == null) return false;
+    final normalized = DateFormat('yyyy-MM-dd').format(d);
+    if (c.text != normalized) c.text = normalized;
+    return true;
+  }
+
   String? _optDate(TextEditingController c) {
     final t = c.text.trim();
-    return t.isEmpty ? null : t;
+    if (t.isEmpty) return null;
+    final d = _parseFlexibleDate(t);
+    if (d == null) return t; // leave as-is; save validates first
+    return DateFormat('yyyy-MM-dd').format(d);
   }
 
   Map<String, dynamic> _buildBody() {
@@ -503,6 +547,25 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
         const SnackBar(content: Text('Job number is required')),
       );
       return;
+    }
+
+    final dateFields = [
+      ('Due date', _dueDateController),
+      ('Completion date', _completionDateController),
+      ('Ship date', _shipDateController),
+      ('Delivered date', _deliveredDateController),
+    ];
+    for (final (label, c) in dateFields) {
+      if (!_normalizeDateField(c)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '$label must be a valid date (yyyy-mm-dd or m/d/yyyy)',
+            ),
+          ),
+        );
+        return;
+      }
     }
 
     setState(() => _isSaving = true);
@@ -789,12 +852,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
 
   Future<void> _pickJobDate(BuildContext context, TextEditingController c) async {
     var initial = DateTime.now();
-    final t = c.text.trim();
-    if (t.isNotEmpty) {
-      try {
-        initial = DateTime.parse(t);
-      } catch (_) {}
-    }
+    final parsed = _parseFlexibleDate(c.text);
+    if (parsed != null) initial = parsed;
     final picked = await showDatePicker(
       context: context,
       initialDate: initial,
@@ -806,7 +865,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
     }
   }
 
-  /// Date input + calendar button (DharmaCore `type="date"` / calendar icon).
+  /// Editable date + calendar button. Type `yyyy-mm-dd` / `m/d/yyyy`, or pick.
   Widget _jobDateField(BuildContext context, TextEditingController c) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final borderColor = isDark ? const Color(0xFF4B5563) : const Color(0xFFD1D5DB);
@@ -823,10 +882,15 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
           Expanded(
             child: TextField(
               controller: c,
-              readOnly: true,
+              enabled: !_isSaving,
               style: const TextStyle(fontSize: 14),
+              keyboardType: TextInputType.datetime,
               decoration: fieldDeco,
-              onTap: () => _pickJobDate(context, c),
+              onEditingComplete: () {
+                _normalizeDateField(c);
+                FocusScope.of(context).unfocus();
+              },
+              onTapOutside: (_) => _normalizeDateField(c),
             ),
           ),
           const SizedBox(width: 6),

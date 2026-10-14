@@ -147,7 +147,10 @@ class _WikiScreenState extends State<WikiScreen> with AutoOpenDrawerMixin {
     }
   }
 
-  Widget _buildToolbar({required bool stacked}) {
+  Widget _buildToolbar({
+    required bool stacked,
+    bool showHidePages = false,
+  }) {
     final search = InventoryListSearchField(
       controller: _searchController,
       hintText: 'Search titles and page text',
@@ -163,6 +166,13 @@ class _WikiScreenState extends State<WikiScreen> with AutoOpenDrawerMixin {
       }),
     );
     final actions = <Widget>[
+      if (showHidePages)
+        IconButton(
+          tooltip: 'Hide pages',
+          visualDensity: VisualDensity.compact,
+          onPressed: () => setState(() => _treeCollapsed = true),
+          icon: const Icon(Icons.view_sidebar_outlined, size: 22),
+        ),
       if (_canEdit) ...[
         InventoryListActionButton(
           label: 'New page',
@@ -224,6 +234,7 @@ class _WikiScreenState extends State<WikiScreen> with AutoOpenDrawerMixin {
             ),
             child: _buildToolbar(
               stacked: isNarrow || (usePanel && panelOpen),
+              showHidePages: usePanel && panelOpen && !_treeCollapsed,
             ),
           ),
           if (AuthService.instance.isWikiReadonly)
@@ -265,10 +276,21 @@ class _WikiScreenState extends State<WikiScreen> with AutoOpenDrawerMixin {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (!_treeCollapsed) Expanded(flex: 3, child: listColumn),
-          _treeCollapseRail(collapsed: _treeCollapsed, scheme: scheme),
           Expanded(
             flex: _treeCollapsed ? 1 : 7,
-            child: _readerPane(selected),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border: _treeCollapsed
+                    ? null
+                    : Border(
+                        left: BorderSide(color: scheme.outlineVariant),
+                      ),
+              ),
+              child: _readerPane(
+                selected,
+                showPagesButton: _treeCollapsed,
+              ),
+            ),
           ),
         ],
       );
@@ -297,36 +319,6 @@ class _WikiScreenState extends State<WikiScreen> with AutoOpenDrawerMixin {
         leading: workspaceMenuLeading(context),
       ),
       body: body,
-    );
-  }
-
-  Widget _treeCollapseRail({
-    required bool collapsed,
-    required ColorScheme scheme,
-  }) {
-    return Material(
-      color: scheme.surface,
-      child: InkWell(
-        onTap: () => setState(() => _treeCollapsed = !collapsed),
-        child: Tooltip(
-          message: collapsed ? 'Show pages' : 'Hide pages',
-          child: Container(
-            width: 28,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              border: Border(
-                left: BorderSide(color: scheme.outlineVariant),
-                right: BorderSide(color: scheme.outlineVariant),
-              ),
-            ),
-            child: Icon(
-              collapsed ? Icons.chevron_right : Icons.chevron_left,
-              size: 22,
-              color: scheme.onSurfaceVariant,
-            ),
-          ),
-        ),
-      ),
     );
   }
 
@@ -424,7 +416,10 @@ class _WikiScreenState extends State<WikiScreen> with AutoOpenDrawerMixin {
     ];
   }
 
-  Widget _readerPane(RecordModel? page) {
+  Widget _readerPane(
+    RecordModel? page, {
+    bool showPagesButton = false,
+  }) {
     if (page == null) {
       return const Center(child: Text('Select a page.'));
     }
@@ -439,6 +434,17 @@ class _WikiScreenState extends State<WikiScreen> with AutoOpenDrawerMixin {
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (showPagesButton) ...[
+              IconButton(
+                tooltip: 'Show pages',
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                onPressed: () => setState(() => _treeCollapsed = false),
+                icon: const Icon(Icons.view_sidebar_outlined, size: 22),
+              ),
+              const SizedBox(width: 4),
+            ],
             Expanded(
               child: Text(
                 wikiTitle(page),
