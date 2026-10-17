@@ -1,0 +1,18 @@
+[Unit]
+Description=DharmaCore Gmail purchase ingest
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/dharmacore/gmail_purchase_ingest
+Environment=PB_URL=http://127.0.0.1:8091
+Environment=PB_ADMIN_EMAIL=REPLACE
+Environment=PB_ADMIN_PASSWORD=REPLACE
+Environment=GMAIL_CREDENTIALS_PATH=/etc/dharmacore/gmail_credentials.json
+Environment=GMAIL_TOKEN_PATH=/etc/dharmacore/gmail_token.json
+ExecStart=/opt/dharmacore/gmail_purchase_ingest/.venv/bin/python main.py
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

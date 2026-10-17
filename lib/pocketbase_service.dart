@@ -1230,6 +1230,8 @@ class PocketBaseService {
         'exchange_rate_usd_to_cad': 1.3,
         'exchange_rate_auto_update': false,
         'auto_logout_minutes': 0,
+        'email_ingest_enabled': false,
+        'email_ingest_poll_minutes': 30,
       };
 
   Future<void> updateShopSettings(String id, Map<String, dynamic> body) async {
@@ -1239,6 +1241,216 @@ class PocketBaseService {
       print('Error updating shop settings: $e');
       rethrow;
     }
+  }
+
+  // ============================================================================
+  // EMAIL PURCHASE INGEST (drafts / vendors)
+  // ============================================================================
+
+  Future<List<dynamic>> getPendingPurchaseDrafts() async {
+    try {
+      return await pb.collection('purchase_drafts').getFullList(
+        filter: 'status = "pending"',
+        sort: '-created',
+        expand: 'supplier,email_ingest_vendor',
+      );
+    } catch (e) {
+      print('Error getting purchase drafts: $e');
+      rethrow;
+    }
+  }
+
+  Future<dynamic> getPurchaseDraft(String id) async {
+    try {
+      return await pb.collection('purchase_drafts').getOne(
+        id,
+        expand: 'supplier,email_ingest_vendor',
+      );
+    } catch (e) {
+      print('Error getting purchase draft: $e');
+      rethrow;
+    }
+  }
+
+  Future<List<dynamic>> getPurchaseDraftLines(String draftId) async {
+    try {
+      return await pb.collection('purchase_draft_lines').getFullList(
+        filter: 'draft = "$draftId"',
+        sort: 'sort_order,created',
+        expand: 'matched_material,material_proposal',
+      );
+    } catch (e) {
+      print('Error getting purchase draft lines: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> updatePurchaseDraft(
+    String id,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      await pb.collection('purchase_drafts').update(id, body: body);
+    } catch (e) {
+      print('Error updating purchase draft: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> updatePurchaseDraftLine(
+    String id,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      await pb.collection('purchase_draft_lines').update(id, body: body);
+    } catch (e) {
+      print('Error updating purchase draft line: $e');
+      rethrow;
+    }
+  }
+
+  Future<List<dynamic>> getEmailIngestVendors() async {
+    try {
+      return await pb.collection('email_ingest_vendors').getFullList(
+        sort: 'name',
+        expand: 'supplier',
+      );
+    } catch (e) {
+      print('Error getting email ingest vendors: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> updateEmailIngestVendor(
+    String id,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      await pb.collection('email_ingest_vendors').update(id, body: body);
+    } catch (e) {
+      print('Error updating email ingest vendor: $e');
+      rethrow;
+    }
+  }
+
+  Future<dynamic> createEmailIngestVendor(Map<String, dynamic> body) async {
+    try {
+      return await pb.collection('email_ingest_vendors').create(body: body);
+    } catch (e) {
+      print('Error creating email ingest vendor: $e');
+      rethrow;
+    }
+  }
+
+  Future<dynamic> getMaterialProposal(String id) async {
+    try {
+      return await pb.collection('material_proposals').getOne(id);
+    } catch (e) {
+      print('Error getting material proposal: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> updateMaterialProposal(
+    String id,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      await pb.collection('material_proposals').update(id, body: body);
+    } catch (e) {
+      print('Error updating material proposal: $e');
+      rethrow;
+    }
+  }
+
+  /// Approve a pending draft into a real purchase (+ items). Returns purchase id.
+  Future<String> approvePurchaseDraft(String draftId) async {
+    final draftRec = await getPurchaseDraft(draftId);
+    final draft = PurchaseDraft.fromRecord(draftRec);
+    if (draft.status != 'pending') {
+      throw StateError('Draft is not pending');
+    }
+
+    final lineRecs = await getPurchaseDraftLines(draftId);
+    final lines = lineRecs.map(PurchaseDraftLine.fromRecord).toList();
+
+    // Resolve material proposals → create catalog rows when needed.
+    for (final line in lines) {
+      if (line.lineType != 'material') continue;
+      if (line.matchedMaterialId != null && line.matchedMaterialId!.isNotEmpty) {
+        continue;
+      }
+      if (line.materialProposalId == null || line.materialProposalId!.isEmpty) {
+        continue;
+      }
+      final prop = await getMaterialProposal(line.materialProposalId!);
+      final pdata = prop.data as Map<String, dynamic>? ?? {};
+      if (pdata['status'] == 'approved' &&
+          pdata['created_material'] != null &&
+          pdata['created_material'].toString().isNotEmpty) {
+        await updatePurchaseDraftLine(line.id, {
+          'matched_material': pdata['created_material'].toString(),
+          'match_status': 'matched',
+        });
+        continue;
+      }
+      final created = await createMaterial(
+        grade: (pdata['grade'] ?? 'Unknown').toString(),
+        form: (pdata['form'] ?? 'other').toString(),
+        sizeLabel: (pdata['size_label'] ?? 'unknown').toString(),
+        unit: (pdata['unit'] ?? 'ea').toString(),
+        notes: pdata['notes']?.toString(),
+      );
+      await updateMaterialProposal(line.materialProposalId!, {
+        'status': 'approved',
+        'created_material': created.id,
+      });
+      await updatePurchaseDraftLine(line.id, {
+        'matched_material': created.id,
+        'match_status': 'matched',
+      });
+    }
+
+    // Reload lines after material resolution
+    final freshLineRecs = await getPurchaseDraftLines(draftId);
+    final freshLines = freshLineRecs.map(PurchaseDraftLine.fromRecord).toList();
+
+    final purchase = await createPurchase(
+      purchaseDate: draft.purchaseDate ?? DateTime.now(),
+      supplierId: draft.supplierId,
+      orderReference: draft.orderReference,
+      invoice: draft.invoice,
+      notes: [
+        if (draft.notes != null && draft.notes!.trim().isNotEmpty) draft.notes!.trim(),
+        if (draft.tracking != null && draft.tracking!.trim().isNotEmpty)
+          'Tracking: ${draft.tracking!.trim()}',
+      ].where((s) => s.isNotEmpty).join('\n'),
+      total: draft.total,
+      currency: draft.currency,
+    );
+
+    for (final line in freshLines) {
+      await createPurchaseItem(
+        purchaseId: purchase.id as String,
+        materialId: line.lineType == 'material' ? line.matchedMaterialId : null,
+        quantity: line.quantity,
+        unitCost: line.unitCost,
+        lineType: line.lineType,
+        description: line.description ?? line.partNumber,
+        heatLot: line.heatLot,
+      );
+    }
+
+    await updatePurchaseDraft(draftId, {
+      'status': 'approved',
+      'approved_purchase': purchase.id,
+    });
+
+    return purchase.id as String;
+  }
+
+  Future<void> rejectPurchaseDraft(String draftId) async {
+    await updatePurchaseDraft(draftId, {'status': 'rejected'});
   }
 
   // ============================================================================
