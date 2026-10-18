@@ -62,13 +62,20 @@ _INVOICE_RE = re.compile(
     r"(?:invoice|receipt)\s*(?:#|number|no\.?)?\s*[:#]?\s*([A-Z0-9-]+)",
     re.I,
 )
-_TRACKING_RE = re.compile(
-    r"(?:tracking\s*(?:#|number|no\.?)?|AWB\s*#?|Purolator|UPS|FedEx|DHL)"
-    r"[^\n]{0,40}?\b([A-Z0-9]{8,22})\b",
+# Prefer real carrier PINs / links — never the McMaster order number.
+_TRACK_URL_RE = re.compile(
+    r"https?://[^\s<>\"']+(?:purolator|ups\.com|fedex|dhl|canadapost)[^\s<>\"']*",
     re.I,
 )
-_TRACKING_SIMPLE_RE = re.compile(
-    r"(?:tracking\s*(?:#|number|no\.?)?)\s*[:#]?\s*([A-Z0-9]+)",
+_PUROLATOR_PIN_RE = re.compile(
+    r"(?:purolator[^.\n]{0,60}?(?:pin|tracking|track)[^0-9]{0,20}|tracking\s*(?:#|number|no\.?)?\s*[:#]?\s*)"
+    r"(\d{11,16})\b",
+    re.I,
+)
+_UPS_RE = re.compile(r"\b(1Z[0-9A-Z]{16})\b", re.I)
+_FEDEX_RE = re.compile(r"\b(\d{12,15})\b")  # only used near fedex keyword
+_TRACKING_LABEL_RE = re.compile(
+    r"(?:tracking\s*(?:#|number|no\.?)?|PIN)\s*[:#]?\s*([A-Z0-9]{10,22})\b",
     re.I,
 )
 _TOTAL_RE = re.compile(
@@ -163,7 +170,7 @@ class McMasterAdapter:
         order_ref = self._find_order(text, message.subject)
         customer_po = self._find_customer_po(text, message.subject)
         invoice = self._find_first(_INVOICE_RE, text) or ""
-        tracking = self._find_tracking(text)
+        tracking = self._find_tracking(text, order_ref=order_ref)
         total = self._find_money_total(text)
         purchase_date = self._normalize_date(self._find_first(_DATE_RE, text))
         subj_day = self._subject_order_day_iso(
@@ -251,13 +258,53 @@ class McMasterAdapter:
         m = _CUSTOMER_PO_RE.search(blob)
         return m.group(1).upper() if m else ""
 
-    def _find_tracking(self, text: str) -> str:
-        m = _TRACKING_SIMPLE_RE.search(text or "")
-        if m:
-            return m.group(1).strip()
-        m = _TRACKING_RE.search(text or "")
-        if m:
-            return m.group(1).strip()
+    def _find_tracking(self, text: str, order_ref: str = "") -> str:
+        """Extract carrier tracking PIN/URL — never the McMaster order number."""
+        blob = text or ""
+        order_ref = (order_ref or "").strip()
+
+        def _ok(candidate: str) -> bool:
+            c = candidate.strip()
+            if len(c) < 10:
+                return False
+            if order_ref and c.upper() == order_ref.upper():
+                return False
+            if _MCMASTER_NUMBER_RE.search(f"McMaster-Carr number {c}"):
+                # bare 6–10 digit McMaster ids are not Purolator PINs
+                if re.fullmatch(r"\d{6,10}", c):
+                    return False
+            # Reject obvious non-tracking tokens
+            if c.upper() in {"TRACKING", "NUMBER", "PUROLATOR", "SHIPPED"}:
+                return False
+            return True
+
+        # 1) Direct carrier track URLs in the body
+        um = _TRACK_URL_RE.search(blob)
+        if um:
+            return um.group(0).rstrip(").,;")
+
+        # 2) UPS
+        m = _UPS_RE.search(blob)
+        if m and _ok(m.group(1)):
+            return m.group(1).upper()
+
+        # 3) Purolator PIN (usually 12 digits) near purolator/tracking
+        m = _PUROLATOR_PIN_RE.search(blob)
+        if m and _ok(m.group(1)):
+            return m.group(1)
+
+        # 4) FedEx near keyword
+        if re.search(r"\bfedex\b", blob, re.I):
+            for m in _FEDEX_RE.finditer(blob):
+                if _ok(m.group(1)) and not re.fullmatch(r"\d{6,10}", m.group(1)):
+                    return m.group(1)
+
+        # 5) Generic "Tracking number: …" but reject McMaster-sized numbers
+        for m in _TRACKING_LABEL_RE.finditer(blob):
+            cand = m.group(1).strip()
+            if _ok(cand) and not re.fullmatch(r"\d{6,10}", cand):
+                return cand
+
         return ""
 
     def _subject_order_day_key(

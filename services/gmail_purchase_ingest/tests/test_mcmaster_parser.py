@@ -64,7 +64,7 @@ def test_cert_and_receipt_share_correlate_key():
         body_text=(
             "We shipped the plastic and steel on your October 13th order.\n"
             "McMaster-Carr number 7110963\n"
-            "Tracking number: 123456789012\n"
+            "Purolator tracking number: 329012345678\n"
         ),
         received_at="2026-10-14T12:00:00+00:00",
         attachments=[{"filename": "Certificate for 7110963.pdf", "data": b"%PDF", "mime_type": "application/pdf"}],
@@ -73,7 +73,7 @@ def test_cert_and_receipt_share_correlate_key():
         "r",
         from_address="sales@mcmaster.com",
         subject="Receipt for Your October 13th Order with McMaster-Carr",
-        body_text="Receipt\nMcMaster-Carr number 7110963\nTracking number: 123456789012\n",
+        body_text="Receipt\nMcMaster-Carr number 7110963\nPurolator PIN: 329012345678\n",
         received_at="2026-10-15T12:00:00+00:00",
     )
     conf = EmailMessage(

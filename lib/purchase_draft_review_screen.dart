@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'carrier_tracking.dart';
 import 'models.dart';
 import 'pocketbase_service.dart';
 import 'shop_material_editor.dart';
@@ -244,9 +246,12 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
                   ),
                 ],
               ),
-              if ((_draft.tracking ?? '').isNotEmpty) ...[
+              if ((_draft.tracking ?? '').trim().isNotEmpty) ...[
                 const SizedBox(height: 8),
-                Text('Tracking: ${_draft.tracking}'),
+                _TrackingRow(
+                  tracking: _draft.tracking!.trim(),
+                  hint: '${_draft.notes ?? ''} ${_draft.displayVendor}',
+                ),
               ],
               if ((_draft.notes ?? '').isNotEmpty) ...[
                 const SizedBox(height: 8),
@@ -355,6 +360,57 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
                 ],
               )
             : null,
+      ),
+    );
+  }
+}
+
+class _TrackingRow extends StatelessWidget {
+  const _TrackingRow({required this.tracking, this.hint});
+
+  final String tracking;
+  final String? hint;
+
+  @override
+  Widget build(BuildContext context) {
+    final uri = trackingUri(tracking, hint: hint);
+    final label = trackingDisplayLabel(tracking);
+    if (uri == null) {
+      return Text('Tracking: $label');
+    }
+    return InkWell(
+      onTap: () async {
+        final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+        if (!ok && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not open $uri')),
+          );
+        }
+      },
+      child: Row(
+        children: [
+          Icon(
+            Icons.local_shipping_outlined,
+            size: 18,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              'Tracking: $label',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
+                decoration: TextDecoration.underline,
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Icon(
+            Icons.open_in_new,
+            size: 14,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+        ],
       ),
     );
   }
