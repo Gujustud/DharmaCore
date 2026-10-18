@@ -177,7 +177,10 @@ class McMasterAdapter:
         order_ref = self._find_order(text, message.subject)
         customer_po = self._find_customer_po(text, message.subject)
         invoice = self._find_first(_INVOICE_RE, text) or ""
-        tracking = self._find_tracking(text, order_ref=order_ref)
+        # Prefer the real href from the email (PIN is often a Purolator link)
+        tracking = self._find_tracking_href(message.body_html or "")
+        if not tracking:
+            tracking = self._find_tracking(text, order_ref=order_ref)
         total = self._find_money_total(text)
         purchase_date = self._normalize_date(self._find_first(_DATE_RE, text))
         subj_day = self._subject_order_day_iso(
@@ -265,6 +268,40 @@ class McMasterAdapter:
         m = _CUSTOMER_PO_RE.search(blob)
         return m.group(1).upper() if m else ""
 
+    def _find_tracking_href(self, html: str) -> str:
+        """Pull the actual track URL when the PIN is a hyperlink in HTML."""
+        if not html:
+            return ""
+        try:
+            from bs4 import BeautifulSoup
+
+            soup = BeautifulSoup(html, "html.parser")
+            for a in soup.find_all("a", href=True):
+                href = (a.get("href") or "").strip()
+                if not href.startswith("http"):
+                    continue
+                href_l = href.lower()
+                label = a.get_text(" ", strip=True)
+                if any(
+                    k in href_l
+                    for k in ("purolator", "ups.com", "fedex", "dhl", "canadapost", "track")
+                ):
+                    return href.rstrip(").,;")
+                # Link text is the PIN itself, e.g. <a href="...">CPK004315941</a>
+                if re.fullmatch(r"[A-Z]{2,4}\d{8,14}|\d{11,16}|1Z[0-9A-Z]{16}", label, re.I):
+                    if "mcmaster" not in href_l:
+                        return href.rstrip(").,;")
+        except Exception:
+            pass
+        # Fallback: regex over raw HTML
+        for m in re.finditer(
+            r'href=["\'](https?://[^"\']+(?:purolator|ups\.com|fedex|dhl|canadapost|track)[^"\']*)["\']',
+            html,
+            re.I,
+        ):
+            return m.group(1).rstrip(").,;")
+        return ""
+
     def _find_tracking(self, text: str, order_ref: str = "") -> str:
         """Extract carrier tracking PIN/URL — never the McMaster order number."""
         blob = text or ""
@@ -285,7 +322,7 @@ class McMasterAdapter:
                 return False
             return True
 
-        # 1) Direct carrier track URLs in the body
+        # 1) Direct carrier track URLs in the body text
         um = _TRACK_URL_RE.search(blob)
         if um:
             return um.group(0).rstrip(").,;")

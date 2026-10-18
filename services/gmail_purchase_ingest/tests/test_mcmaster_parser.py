@@ -96,6 +96,26 @@ def test_cert_and_receipt_share_correlate_key():
     assert p_rcpt.email_type == "invoice"
 
 
+def test_tracking_href_from_html_link():
+    a = McMasterAdapter()
+    html = (
+        '<p>Track your shipment using Purolator '
+        '<a href="https://www.purolator.com/en/shipping/tracker?pin=CPK004315941">'
+        "CPK004315941</a>.</p>"
+        "<p>McMaster-Carr number 7110963</p>"
+    )
+    msg = EmailMessage(
+        "h",
+        from_address="orders@mcmaster.com",
+        subject="Certificate and Tracking for Your October 13th Order with McMaster-Carr",
+        body_html=html,
+        body_text="Track your shipment using Purolator CPK004315941.",
+    )
+    parsed = a.parse(msg)
+    assert "purolator.com" in parsed.tracking.lower()
+    assert "CPK004315941" in parsed.tracking
+
+
 def test_tracking_is_not_mcmaster_order_number():
     a = McMasterAdapter()
     msg = EmailMessage(
