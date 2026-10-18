@@ -133,6 +133,59 @@ def test_tracking_is_not_mcmaster_order_number():
     assert parsed.tracking == ""  # no real PIN present — don't fake it
 
 
+def test_cert_pdf_header_order_number_strips_suffix():
+    """Cert PDF shows 'McMaster-Carr Number 7110963-01'; correlate on 7110963."""
+    a = McMasterAdapter()
+    pdf_header = (
+        "McMASTER-CARR\n"
+        "Purchase Order 1013ASOLANKI\n"
+        "Order Date 10/13/2026\n"
+        "Placed By Amish Solanki\n"
+        "McMaster-Carr Number 7110963-01\n"
+        "Number of Certificates 1\n"
+        "Line 2 Product 8910K54 Low-Carbon Steel Bar\n"
+    )
+    orig = McMasterAdapter._pdf_bytes_to_text
+    McMasterAdapter._pdf_bytes_to_text = staticmethod(lambda _data: pdf_header)
+    try:
+        # Body intentionally has NO order number — only subject day phrase (old MC-DAY path)
+        msg = EmailMessage(
+            "cert-pdf",
+            from_address="orders@mcmaster.com",
+            subject="Certificate and Tracking for Your October 13th Order with McMaster-Carr",
+            body_text=(
+                "We shipped the plastic and steel on your October 13th order. "
+                "Track your shipment using Purolator CPK004315941. "
+                "The certificate for the steel is attached."
+            ),
+            received_at="2026-10-14T12:00:00+00:00",
+            attachments=[
+                {
+                    "filename": "Certificate.pdf",
+                    "data": b"%PDF-1.4 fake",
+                    "mime_type": "application/pdf",
+                }
+            ],
+        )
+        parsed = a.parse(msg)
+        assert parsed.order_reference == "7110963"
+        assert a.correlate_key(parsed, msg) == "7110963"
+        assert "1013ASOLANKI" in (parsed.notes or "")
+        assert "7110963-01" in (parsed.notes or "")
+        assert parsed.purchase_date == "2026-10-13"
+        assert parsed.tracking == "CPK004315941"
+        assert not parsed.order_reference.startswith("MC-DAY-")
+    finally:
+        McMasterAdapter._pdf_bytes_to_text = orig
+
+
+def test_find_order_normalizes_suffix_in_body():
+    a = McMasterAdapter()
+    base, suffix = a._find_order("McMaster-Carr Number: 7110963-01", "")
+    assert base == "7110963"
+    assert suffix == "01"
+
+
 def test_parse_lines_and_order():
     a = McMasterAdapter()
     body = """
@@ -188,6 +241,10 @@ if __name__ == "__main__":
     test_classify_real_subject_lines()
     test_does_not_use_for_as_order_ref()
     test_cert_and_receipt_share_correlate_key()
+    test_tracking_href_from_html_link()
+    test_tracking_is_not_mcmaster_order_number()
+    test_cert_pdf_header_order_number_strips_suffix()
+    test_find_order_normalizes_suffix_in_body()
     test_parse_lines_and_order()
     test_material_matcher_propose_and_match()
     print("ok")

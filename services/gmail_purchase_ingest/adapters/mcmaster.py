@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+import logging
 import re
 from typing import Optional
 
@@ -12,6 +14,8 @@ from .base import (
     from_domain_matches,
     strip_html_to_text,
 )
+
+log = logging.getLogger(__name__)
 
 DEFAULT_DOMAINS = ["mcmaster.com", "mcmastercarr.com"]
 
@@ -35,15 +39,22 @@ _FORM_HINTS = [
     (re.compile(r"\bflat\s+bar\b|\brectangular\b", re.I), "flat"),
 ]
 
-# Primary: "McMaster-Carr number 7110963" (body of confirmation / cert / receipt)
+# Primary: "McMaster-Carr Number: 7110963" or "7110963-01" on cert PDF header.
+# The -NN suffix is a packing-list / cert sequence, not a different order.
 _MCMASTER_NUMBER_RE = re.compile(
-    r"McMaster(?:-Carr)?\s+number\s*[:#]?\s*([0-9]{6,10})",
+    r"McMaster(?:-Carr)?\s+(?:Number|number|No\.?)\s*[:#]?\s*"
+    r"([0-9]{6,10})(?:-(\d{2}))?",
     re.I,
 )
 # Explicit order number labels (not "Confirmation for Your October…")
 _ORDER_NUMBER_RE = re.compile(
     r"(?:order\s*(?:#|number|no\.?)\s*[:#]?\s*|confirmation\s*(?:#|number)\s*[:#]?\s*)"
-    r"([0-9]{6,10})",
+    r"([0-9]{6,10})(?:-\d{2})?",
+    re.I,
+)
+# Cert PDF: "Purchase Order 1013ASOLANKI"
+_PURCHASE_ORDER_LABEL_RE = re.compile(
+    r"Purchase\s+Order\s*[:#]?\s*([A-Z0-9-]{4,})",
     re.I,
 )
 # Customer / job ref shown next to McMaster number, e.g. 1013ASOLANKI
@@ -174,15 +185,32 @@ class McMasterAdapter:
     def parse(self, message: EmailMessage) -> ParsedEmail:
         text = message.body_text or strip_html_to_text(message.body_html)
         email_type = self.classify(message)
-        order_ref = self._find_order(text, message.subject)
-        customer_po = self._find_customer_po(text, message.subject)
-        invoice = self._find_first(_INVOICE_RE, text) or ""
+        pdf_text = self._attachment_pdf_text(message)
+        # Cert emails often omit the order # in the body; it is on the PDF header.
+        search_blob = f"{text or ''}\n{pdf_text or ''}"
+        order_ref, order_suffix = self._find_order(search_blob, message.subject)
+        if not order_ref:
+            order_ref, order_suffix = self._find_order_in_filenames(message)
+        customer_po = self._find_customer_po(search_blob, message.subject)
+        invoice = self._find_first(_INVOICE_RE, search_blob) or ""
         # Prefer the real href from the email (PIN is often a Purolator link)
         tracking = self._find_tracking_href(message.body_html or "")
         if not tracking:
-            tracking = self._find_tracking(text, order_ref=order_ref)
+            tracking = self._find_tracking(search_blob, order_ref=order_ref)
         total = self._find_money_total(text)
-        purchase_date = self._normalize_date(self._find_first(_DATE_RE, text))
+        purchase_date = self._normalize_date(self._find_first(_DATE_RE, search_blob))
+        # Cert PDF header uses Order Date MM/DD/YYYY
+        if not purchase_date and pdf_text:
+            purchase_date = self._normalize_date(
+                self._find_first(
+                    re.compile(
+                        r"Order\s+Date\s*[:#]?\s*"
+                        r"(\d{1,2}/\d{1,2}/\d{2,4})",
+                        re.I,
+                    ),
+                    pdf_text,
+                )
+            )
         subj_day = self._subject_order_day_iso(
             message.subject or "", message.received_at
         )
@@ -193,6 +221,9 @@ class McMasterAdapter:
         parse_notes_parts: list[str] = []
         if customer_po:
             parse_notes_parts.append(f"Customer ref: {customer_po}")
+        if order_suffix:
+            # 7110963-01 → base order correlator; keep suffix for review context
+            parse_notes_parts.append(f"McMaster cert/shipment seq: {order_ref}-{order_suffix}")
         if email_type in ("order_confirmation", "invoice", "other"):
             lines = self._parse_lines(text)
             if not lines and email_type == "order_confirmation":
@@ -245,19 +276,69 @@ class McMasterAdapter:
             error=error,
         )
 
-    def _find_order(self, text: str, subject: str) -> str:
+    def _find_order(self, text: str, subject: str) -> tuple[str, str]:
+        """Return (base_order_number, optional_-NN_suffix)."""
         blob = f"{text or ''}\n{subject or ''}"
         m = _MCMASTER_NUMBER_RE.search(blob)
         if m:
-            return m.group(1).strip()
+            return m.group(1).strip(), (m.group(2) or "").strip()
         m = _ORDER_NUMBER_RE.search(blob)
         if m:
-            return m.group(1).strip()
+            return m.group(1).strip(), ""
         # Do NOT match "Confirmation for Your October…" — that produced Ref: FOR
-        return ""
+        return "", ""
+
+    def _find_order_in_filenames(self, message: EmailMessage) -> tuple[str, str]:
+        for att in message.attachments or []:
+            fn = att.get("filename") or ""
+            m = re.search(r"\b([0-9]{6,10})(?:-(\d{2}))?\b", fn)
+            if m:
+                return m.group(1), (m.group(2) or "")
+        return "", ""
+
+    def _attachment_pdf_text(self, message: EmailMessage) -> str:
+        """Extract text from PDF attachments (cert header has McMaster-Carr Number)."""
+        chunks: list[str] = []
+        for att in message.attachments or []:
+            fn = (att.get("filename") or "").lower()
+            mime = (att.get("mime_type") or "").lower()
+            data = att.get("data") or b""
+            if not data:
+                continue
+            is_pdf = fn.endswith(".pdf") or "pdf" in mime or data[:4] == b"%PDF"
+            if not is_pdf:
+                continue
+            extracted = self._pdf_bytes_to_text(data)
+            if extracted:
+                chunks.append(extracted)
+        return "\n".join(chunks)
+
+    @staticmethod
+    def _pdf_bytes_to_text(data: bytes) -> str:
+        try:
+            from pypdf import PdfReader
+        except ImportError:
+            log.warning("pypdf not installed; cannot read McMaster cert PDF text")
+            return ""
+        try:
+            reader = PdfReader(io.BytesIO(data))
+            parts: list[str] = []
+            for page in reader.pages[:5]:
+                try:
+                    parts.append(page.extract_text() or "")
+                except Exception:
+                    continue
+            return "\n".join(parts)
+        except Exception as e:
+            log.debug("PDF text extract failed: %s", e)
+            return ""
 
     def _find_customer_po(self, text: str, subject: str) -> str:
         blob = f"{text or ''}\n{subject or ''}"
+        # Cert PDF header: Purchase Order 1013ASOLANKI
+        m = _PURCHASE_ORDER_LABEL_RE.search(blob)
+        if m:
+            return m.group(1).upper()
         # Prefer PO near McMaster number
         m = _MCMASTER_NUMBER_RE.search(blob)
         if m:
