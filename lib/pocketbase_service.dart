@@ -1284,14 +1284,23 @@ class PocketBaseService {
 
   Future<List<dynamic>> getPurchaseDraftLines(String draftId) async {
     try {
+      // Live shop PB 400s on multi-field sorts that include `created`.
       return await pb.collection('purchase_draft_lines').getFullList(
         filter: 'draft = "$draftId"',
-        sort: 'sort_order,created',
+        sort: 'sort_order',
         expand: 'matched_material,material_proposal',
       );
     } catch (e) {
-      print('Error getting purchase draft lines: $e');
-      rethrow;
+      print('Error getting purchase draft lines (with expand): $e');
+      try {
+        return await pb.collection('purchase_draft_lines').getFullList(
+          filter: 'draft = "$draftId"',
+          sort: 'sort_order',
+        );
+      } catch (e2) {
+        print('Error getting purchase draft lines: $e2');
+        rethrow;
+      }
     }
   }
 
