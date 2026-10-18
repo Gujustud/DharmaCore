@@ -273,7 +273,13 @@ def _upsert_draft(
         else:
             body["notes"] = note
 
-    if email_type == "shipping" and parsed.tracking:
+    # Confirmation / cert+tracking / receipt all may carry tracking
+    if parsed.tracking and email_type in (
+        "shipping",
+        "certificate",
+        "invoice",
+        "order_confirmation",
+    ):
         prev = (existing or {}).get("tracking") or ""
         if parsed.tracking not in prev:
             body["tracking"] = f"{prev} {parsed.tracking}".strip()
@@ -281,7 +287,7 @@ def _upsert_draft(
     if existing:
         draft = pb.update("purchase_drafts", existing["id"], body)
         draft_id = draft["id"]
-        # Only add lines from order confirmation / invoice if draft has none
+        # Only add lines from order confirmation if draft has none yet
         if email_type in ("order_confirmation",) and parsed.lines:
             existing_lines = pb.list(
                 "purchase_draft_lines",
@@ -298,8 +304,8 @@ def _upsert_draft(
         if parsed.lines:
             _create_lines(pb, draft_id, parsed.lines, materials)
 
-    # Attach PDFs
-    _attach_files(pb, draft_id, parsed, msg)
+    # Attach PDFs (mill certs prefer material lines when present)
+    _attach_files(pb, draft_id, parsed, msg, email_type=email_type)
     return draft_id
 
 
@@ -354,8 +360,10 @@ def _attach_files(
     draft_id: str,
     parsed: ParsedEmail,
     msg: EmailMessage,
+    email_type: str = "",
 ) -> None:
-    purchase_files = []
+    mill_certs = []
+    other_files = []
     for att in msg.attachments:
         data = att.get("data") or b""
         filename = att.get("filename") or "attachment.pdf"
@@ -365,11 +373,43 @@ def _attach_files(
             filename.lower(), ""
         )
         mime = att.get("mime_type") or "application/pdf"
-        if role in ("mill_cert", "invoice") or filename.lower().endswith(".pdf"):
-            purchase_files.append((filename, data, mime))
-    if purchase_files:
+        item = (filename, data, mime)
+        if role == "mill_cert" or (
+            email_type == "certificate" and filename.lower().endswith(".pdf")
+        ):
+            mill_certs.append(item)
+        elif role in ("invoice", "confirmation") or filename.lower().endswith(".pdf"):
+            other_files.append(item)
+
+    # Prefer attaching mill certs onto material draft lines
+    if mill_certs:
+        attached_to_line = False
         try:
-            pb.upload_files("purchase_drafts", draft_id, "attachments", purchase_files[:12])
+            lines = pb.list(
+                "purchase_draft_lines",
+                filter=f'draft = "{draft_id}" && line_type = "material"',
+                sort="sort_order",
+                per_page=20,
+            )
+            if lines:
+                # Put cert on first material line (typical single-cert steel order)
+                pb.upload_files(
+                    "purchase_draft_lines",
+                    lines[0]["id"],
+                    "mill_certs",
+                    mill_certs[:8],
+                )
+                attached_to_line = True
+        except Exception:
+            log.exception("Failed to upload mill certs to draft line")
+        if not attached_to_line:
+            other_files = mill_certs + other_files
+
+    if other_files:
+        try:
+            pb.upload_files(
+                "purchase_drafts", draft_id, "attachments", other_files[:12]
+            )
         except Exception:
             log.exception("Failed to upload draft attachments")
 
