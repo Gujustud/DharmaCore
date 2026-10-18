@@ -42,6 +42,7 @@ class ParsedEmail:
     purchase_date: Optional[str] = None  # YYYY-MM-DD
     total: Optional[float] = None
     notes: str = ""
+    customer_po: str = ""  # e.g. McMaster "Purchase Order" / job ref 1013ASOLANKI
     lines: list[ParsedLine] = field(default_factory=list)
     # Attachment filenames that look like mill certs / invoices (matched later)
     attachment_roles: dict[str, str] = field(default_factory=dict)

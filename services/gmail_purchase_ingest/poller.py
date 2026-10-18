@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -12,7 +13,7 @@ from adapters import ALL_ADAPTERS
 from adapters.base import EmailMessage, ParsedEmail, ParsedLine
 from gmail_client import GmailClient, fetch_attachment_bytes
 from matchers.materials import match_material_line
-from pb_client import PocketBaseClient
+from pb_client import PocketBaseClient, _ref_quality
 
 log = logging.getLogger("gmail_purchase_ingest")
 
@@ -130,6 +131,14 @@ def run_once(
                 # Stop this cycle on rate limit; try again next poll
                 if "rateLimitExceeded" in err_s or "Quota exceeded" in err_s:
                     break
+
+        # Collapse pending McMaster drafts that share customer PO / tracking
+        try:
+            consolidated = pb.consolidate_pending_by_customer_po("mcmaster")
+            if consolidated:
+                log.info("Consolidated %s pending McMaster draft(s)", consolidated)
+        except Exception:
+            log.exception("Draft consolidate failed")
 
         pb.update_settings(
             {
@@ -254,10 +263,20 @@ def _upsert_draft(
     materials: list[dict[str, Any]],
     msg: EmailMessage,
 ) -> Optional[str]:
+    customer_po = (getattr(parsed, "customer_po", None) or "").strip()
+    if not customer_po and parsed.notes:
+        import re as _re
+
+        m = _re.search(r"\b([0-9]{3,4}A[A-Z0-9]{4,})\b", parsed.notes, _re.I)
+        if m:
+            customer_po = m.group(1).upper()
+
     existing = pb.find_pending_draft_for_merge(
         vendor.get("vendor_key") or "",
         order_ref,
         purchase_date=parsed.purchase_date,
+        customer_po=customer_po or None,
+        tracking=parsed.tracking or None,
     )
     supplier_id = _supplier_id(vendor)
     currency = (
@@ -266,7 +285,9 @@ def _upsert_draft(
         or "USD"
     )
 
-    # Don't overwrite a real McMaster # with an MC-DAY-… fallback key
+    # Don't overwrite a real McMaster # with an MC-DAY-… / invoice-sized fallback
+    from pb_client import _ref_quality
+
     merged_ref = order_ref
     if existing:
         existing_ref = str(existing.get("order_reference") or "")
@@ -276,6 +297,27 @@ def _upsert_draft(
             merged_ref = existing_ref
         elif order_ref.startswith("MC-DAY-") and existing_ref:
             merged_ref = existing_ref
+        elif (
+            order_ref.isdigit()
+            and existing_ref.isdigit()
+            and _ref_quality(order_ref) > _ref_quality(existing_ref)
+        ):
+            merged_ref = order_ref
+        elif (
+            order_ref.isdigit()
+            and existing_ref.isdigit()
+            and _ref_quality(existing_ref) >= _ref_quality(order_ref)
+        ):
+            merged_ref = existing_ref
+    # If this email carries an invoice # equal to order_ref, keep existing order #
+    if (
+        existing
+        and parsed.invoice
+        and order_ref
+        and order_ref == parsed.invoice
+        and str(existing.get("order_reference") or "")
+    ):
+        merged_ref = str(existing.get("order_reference"))
 
     body: dict[str, Any] = {
         "vendor_key": vendor.get("vendor_key"),

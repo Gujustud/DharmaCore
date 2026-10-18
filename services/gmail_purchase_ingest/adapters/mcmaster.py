@@ -39,18 +39,14 @@ _FORM_HINTS = [
     (re.compile(r"\bflat\s+bar\b|\brectangular\b", re.I), "flat"),
 ]
 
-# PDF text often uses Unicode minus (U+2212) instead of ASCII hyphen.
-_HY = r"[\u2010-\u2015\u2212\-]"
-
-# Primary: "McMaster-Carr Number: 7110963" or "7110963-01" / "7110963 − 01" on cert PDF.
-# The -NN suffix is a packing-list / cert sequence, not a different order.
+# Primary: same-line "McMaster-Carr Number: 7110963" or "7110963-01".
+# Use [ \t] only — \s allowed "McMaster-Carr … <many lines> … Number: <invoice#>".
 _MCMASTER_NUMBER_RE = re.compile(
-    rf"McMaster(?:{_HY}Carr)?\s+(?:Number|number|No\.?)\s*[:#]?\s*"
-    rf"([0-9]{{6,10}})(?:\s*{_HY}\s*(\d{{2}}))?",
+    r"McMaster(?:-Carr)?[ \t]+Number[ \t]*[:#]?[ \t]*"
+    r"([0-9]{6,10})(?:[ \t]*-[ \t]*(\d{2}))?",
     re.I,
 )
 # Tight order-number labels only — NEVER allow newlines between "order" and the digits.
-# (A loose \s* previously matched "…Order…Invoice Number: 73569330" as the order #.)
 _ORDER_NUMBER_RE = re.compile(
     r"(?:order|confirmation)[ \t]*(?:#|number|no\.?)[ \t]*[:#]?[ \t]*"
     r"([0-9]{6,10})(?:[ \t]*-[ \t]*\d{2})?",
@@ -58,9 +54,19 @@ _ORDER_NUMBER_RE = re.compile(
 )
 # Explicitly reject invoice / account numbers as order refs
 _INVOICE_NUMBER_RE = re.compile(
-    r"(?:invoice|account)\s*(?:#|number|no\.?)?\s*[:#]?\s*([0-9]{6,12})",
+    r"(?:invoice|account)[ \t]*(?:#|number|no\.?)?[ \t]*[:#]?[ \t]*([0-9]{6,12})",
     re.I,
 )
+
+
+def _normalize_extract_text(text: str) -> str:
+    """ASCII-ify PDF/email quirks before regex (Unicode minus, NBSP)."""
+    if not text:
+        return ""
+    out = text.replace("\u00a0", " ")
+    for ch in ("\u2010", "\u2011", "\u2012", "\u2013", "\u2014", "\u2015", "\u2212"):
+        out = out.replace(ch, "-")
+    return out
 # Cert PDF: "Purchase Order 1013ASOLANKI" — value must include a digit (not "ORDER"/"DATE")
 _PURCHASE_ORDER_LABEL_RE = re.compile(
     r"Purchase\s+Order\s*[:#]?\s*([A-Z0-9-]*\d[A-Z0-9-]*)",
@@ -195,16 +201,29 @@ class McMasterAdapter:
         return day_key or ""
 
     def parse(self, message: EmailMessage) -> ParsedEmail:
-        text = message.body_text or strip_html_to_text(message.body_html)
+        text = _normalize_extract_text(
+            message.body_text or strip_html_to_text(message.body_html)
+        )
         email_type = self.classify(message)
-        pdf_text = self._attachment_pdf_text(message)
+        pdf_text = _normalize_extract_text(self._attachment_pdf_text(message))
         # Cert emails often omit the order # in the body; it is on the PDF header.
         search_blob = f"{text or ''}\n{pdf_text or ''}"
         order_ref, order_suffix = self._find_order(search_blob, message.subject)
         if not order_ref:
             order_ref, order_suffix = self._find_order_in_filenames(message)
         customer_po = self._find_customer_po(search_blob, message.subject)
-        invoice = self._find_first(_INVOICE_RE, search_blob) or ""
+        invoice = ""
+        inv_m = _INVOICE_NUMBER_RE.search(search_blob)
+        if inv_m:
+            invoice = inv_m.group(1).strip()
+        if not invoice:
+            invoice = self._find_first(_INVOICE_RE, search_blob) or ""
+        # Never keep an invoice # as the order reference
+        if order_ref and invoice and order_ref == invoice:
+            order_ref, order_suffix = "", ""
+            order_ref, order_suffix = self._find_order_in_filenames(message)
+            if order_ref and invoice and order_ref == invoice:
+                order_ref, order_suffix = "", ""
         # Prefer the real href from the email (PIN is often a Purolator link)
         tracking = self._find_tracking_href(message.body_html or "")
         if not tracking:
@@ -281,6 +300,7 @@ class McMasterAdapter:
             purchase_date=purchase_date,
             total=total,
             notes="\n".join(parse_notes_parts),
+            customer_po=customer_po or "",
             lines=lines,
             attachment_roles=attachment_roles,
             parse_notes="\n".join(parse_notes_parts),
@@ -290,22 +310,23 @@ class McMasterAdapter:
 
     def _find_order(self, text: str, subject: str) -> tuple[str, str]:
         """Return (base_order_number, optional_-NN_suffix)."""
-        blob = f"{text or ''}\n{subject or ''}"
+        blob = _normalize_extract_text(f"{text or ''}\n{subject or ''}")
         invoice_nums = {m.group(1) for m in _INVOICE_NUMBER_RE.finditer(blob)}
 
-        m = _MCMASTER_NUMBER_RE.search(blob)
-        if m:
+        for m in _MCMASTER_NUMBER_RE.finditer(blob):
             base = m.group(1).strip()
-            # Prefer McMaster-Carr Number even if it also appears as an invoice row
+            if base in invoice_nums:
+                # Same digit string labeled as invoice elsewhere — skip this hit
+                continue
             return base, (m.group(2) or "").strip()
 
-        m = _ORDER_NUMBER_RE.search(blob)
-        if m:
+        for m in _ORDER_NUMBER_RE.finditer(blob):
             base = m.group(1).strip()
-            if base not in invoice_nums:
-                return base, ""
+            if base in invoice_nums:
+                continue
+            return base, ""
         # Do NOT match "Confirmation for Your October…" — that produced Ref: FOR
-        # Do NOT match "Invoice Number: 73569330" via loose order…number spanning.
+        # Do NOT match "Invoice Number: 73569330".
         return "", ""
 
     def _find_order_in_filenames(self, message: EmailMessage) -> tuple[str, str]:

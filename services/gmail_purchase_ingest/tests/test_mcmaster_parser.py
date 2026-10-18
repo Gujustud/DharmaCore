@@ -268,6 +268,37 @@ def test_customer_po_is_not_a_line_item():
     assert any(p.startswith("8741") for p in parts)
 
 
+def test_invoice_number_never_becomes_order_ref_even_near_mcmaster():
+    """Multiline 'McMaster-Carr … Number: 73569330' must not win over real order #."""
+    a = McMasterAdapter()
+    # Old buggy pattern: McMaster-Carr then many lines then a Number: invoice
+    blob = (
+        "McMaster-Carr Supply Company\n"
+        "cle.sales@mcmaster.com\n"
+        "Purchase Order 1013ASOLANKI\n"
+        "Invoice Number: 73569330\n"
+        "Order Date 10/13/2026\n"
+        "McMaster-Carr Number 7110963-01\n"
+    )
+    base, suffix = a._find_order(blob, "")
+    assert base == "7110963"
+    assert suffix == "01"
+
+
+def test_prefer_merge_keeps_order_over_invoice_ref():
+    from pb_client import prefer_merge_draft
+
+    keeper = prefer_merge_draft(
+        [
+            {"id": "inv", "order_reference": "73569330", "total": 0, "notes": "Customer ref: 1013ASOLANKI"},
+            {"id": "ord", "order_reference": "7110963", "total": 198.25, "notes": "Customer ref: 1013ASOLANKI", "tracking": "CPK004315941"},
+        ],
+        incoming_ref="7110963",
+    )
+    assert keeper is not None
+    assert keeper["id"] == "ord"
+
+
 def test_parse_lines_and_order():
     a = McMasterAdapter()
     body = """

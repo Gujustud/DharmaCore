@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any, Optional
 
 import httpx
@@ -175,12 +176,14 @@ class PocketBaseClient:
         vendor_key: str,
         order_reference: str,
         purchase_date: Optional[str] = None,
+        customer_po: Optional[str] = None,
+        tracking: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
-        """Exact ref match, or same-order-day merge for McMaster MC-DAY-… fallbacks.
+        """Exact ref match, or merge via customer PO / tracking / MC-DAY same-day.
 
-        Cert/receipt emails often only say "October 13th Order" → MC-DAY-2026-10-13.
-        Merge those onto a pending draft with the real order # (and the reverse: a
-        numeric confirmation absorbs a same-day MC-DAY orphan).
+        McMaster cert/receipt emails may key as MC-DAY-… or (historically) an
+        invoice number. Customer PO (1013ASOLANKI) and Purolator PIN are stable
+        across confirmation + cert + receipt.
         """
         exact = self.find_pending_draft(vendor_key, order_reference)
         if exact:
@@ -188,17 +191,118 @@ class PocketBaseClient:
 
         vk = vendor_key.replace('"', "")
         ref = (order_reference or "").strip()
-        day = _merge_day_key(ref, purchase_date)
-        if not day:
-            return None
-
         candidates = self.list(
             "purchase_drafts",
             filter=f'vendor_key = "{vk}" && status = "pending"',
             sort="-purchase_date",
             per_page=50,
         )
+        if not candidates:
+            return None
+
+        po = (customer_po or "").strip().upper()
+        if po:
+            po_hits = [
+                d
+                for d in candidates
+                if po in str(d.get("notes") or "").upper()
+                or po == str(d.get("order_reference") or "").upper()
+            ]
+            if po_hits:
+                return prefer_merge_draft(po_hits, incoming_ref=ref)
+
+        pin = _tracking_pin(tracking)
+        if pin:
+            track_hits = [
+                d for d in candidates if pin in str(d.get("tracking") or "").upper()
+            ]
+            if track_hits:
+                return prefer_merge_draft(track_hits, incoming_ref=ref)
+
+        day = _merge_day_key(ref, purchase_date)
+        if not day:
+            return None
         return pick_same_day_merge_draft(candidates, day=day, incoming_ref=ref)
+
+    def consolidate_pending_by_customer_po(self, vendor_key: str = "mcmaster") -> int:
+        """Merge pending drafts that share a customer PO / tracking PIN. Returns merges."""
+        vk = vendor_key.replace('"', "")
+        drafts = self.list(
+            "purchase_drafts",
+            filter=f'vendor_key = "{vk}" && status = "pending"',
+            per_page=100,
+        )
+        if len(drafts) < 2:
+            return 0
+
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for d in drafts:
+            keys: list[str] = []
+            notes = str(d.get("notes") or "")
+            for m in re.finditer(r"\b([0-9]{3,4}A[A-Z0-9]{4,})\b", notes, re.I):
+                keys.append(f"po:{m.group(1).upper()}")
+            pin = _tracking_pin(str(d.get("tracking") or ""))
+            if pin:
+                keys.append(f"pin:{pin}")
+            if not keys:
+                continue
+            # Use first stable key; attach draft to that group
+            k = keys[0]
+            groups.setdefault(k, []).append(d)
+
+        merged = 0
+        for _k, group in groups.items():
+            # Deduplicate by id
+            by_id = {d["id"]: d for d in group}
+            group = list(by_id.values())
+            if len(group) < 2:
+                continue
+            keeper = prefer_merge_draft(group, incoming_ref="")
+            if not keeper:
+                continue
+            for d in group:
+                if d["id"] == keeper["id"]:
+                    continue
+                self._absorb_draft(keeper, d)
+                merged += 1
+        return merged
+
+    def _absorb_draft(self, keeper: dict[str, Any], orphan: dict[str, Any]) -> None:
+        """Fold orphan pending draft into keeper, then delete orphan."""
+        kid, oid = keeper["id"], orphan["id"]
+        body: dict[str, Any] = {}
+        k_ref = str(keeper.get("order_reference") or "")
+        o_ref = str(orphan.get("order_reference") or "")
+        # Prefer non-invoice-looking shorter McMaster order # when one looks better
+        if o_ref.isdigit() and (not k_ref.isdigit() or _ref_quality(o_ref) > _ref_quality(k_ref)):
+            body["order_reference"] = o_ref
+        if orphan.get("total") and not keeper.get("total"):
+            body["total"] = orphan["total"]
+        if orphan.get("invoice") and not keeper.get("invoice"):
+            body["invoice"] = orphan["invoice"]
+        o_track = str(orphan.get("tracking") or "")
+        k_track = str(keeper.get("tracking") or "")
+        if o_track and o_track not in k_track:
+            body["tracking"] = f"{k_track} {o_track}".strip()
+        o_notes = str(orphan.get("notes") or "")
+        k_notes = str(keeper.get("notes") or "")
+        if o_notes and o_notes not in k_notes:
+            body["notes"] = f"{k_notes}\n{o_notes}".strip()
+        if body:
+            self.update("purchase_drafts", kid, body)
+
+        for line in self.list("purchase_draft_lines", filter=f'draft = "{oid}"', per_page=200):
+            # Re-point line to keeper if collection allows patch; else copy+delete
+            try:
+                self.update("purchase_draft_lines", line["id"], {"draft": kid})
+            except Exception:
+                self.delete("purchase_draft_lines", line["id"])
+        for m in self.list("email_ingest_messages", filter=f'purchase_draft = "{oid}"', per_page=200):
+            try:
+                self.update("email_ingest_messages", m["id"], {"purchase_draft": kid})
+            except Exception:
+                pass
+        self.delete("purchase_drafts", oid)
 
     def list_materials(self) -> list[dict[str, Any]]:
         return self.list("materials", sort="grade,form,size_label")
@@ -231,6 +335,55 @@ def _merge_day_key(order_reference: str, purchase_date: Optional[str] = None) ->
     return None
 
 
+def _tracking_pin(tracking: Optional[str]) -> str:
+    raw = (tracking or "").strip().upper()
+    if not raw:
+        return ""
+    m = re.search(r"\b([A-Z]{2,4}\d{8,14})\b", raw)
+    if m:
+        return m.group(1)
+    m = re.search(r"pin=([A-Z0-9]+)", raw, re.I)
+    return (m.group(1).upper() if m else "")
+
+
+def _ref_quality(ref: str) -> int:
+    """Higher is better. McMaster order #s are typically 7 digits; invoices often 8."""
+    r = (ref or "").strip()
+    if not r or r.startswith("MC-DAY-"):
+        return 0
+    if r.isdigit() and 6 <= len(r) <= 7:
+        return 3
+    if r.isdigit() and len(r) >= 8:
+        return 1  # likely invoice / account
+    if r.isdigit():
+        return 2
+    return 1
+
+
+def prefer_merge_draft(
+    candidates: list[dict[str, Any]], *, incoming_ref: str
+) -> Optional[dict[str, Any]]:
+    if not candidates:
+        return None
+    scored: list[tuple[int, dict[str, Any]]] = []
+    for d in candidates:
+        oref = str(d.get("order_reference") or "")
+        score = _ref_quality(oref) * 10
+        try:
+            total = float(d.get("total") or 0)
+        except (TypeError, ValueError):
+            total = 0.0
+        if total > 0:
+            score += 5
+        if d.get("tracking"):
+            score += 2
+        if incoming_ref and oref == incoming_ref:
+            score += 3
+        scored.append((score, d))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return scored[0][1]
+
+
 def pick_same_day_merge_draft(
     candidates: list[dict[str, Any]],
     *,
@@ -251,9 +404,4 @@ def pick_same_day_merge_draft(
             same_day.append(d)
     if not same_day:
         return None
-    # Prefer a real McMaster order number over another day-key draft
-    for d in same_day:
-        oref = str(d.get("order_reference") or "")
-        if oref.isdigit() and len(oref) >= 6:
-            return d
-    return same_day[0]
+    return prefer_merge_draft(same_day, incoming_ref=incoming_ref)
