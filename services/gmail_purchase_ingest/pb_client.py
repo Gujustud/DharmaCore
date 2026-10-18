@@ -280,21 +280,50 @@ class PocketBaseClient:
             body["total"] = orphan["total"]
         if orphan.get("invoice") and not keeper.get("invoice"):
             body["invoice"] = orphan["invoice"]
+        from note_utils import merge_note_lines, merge_tracking_field
+
         o_track = str(orphan.get("tracking") or "")
         k_track = str(keeper.get("tracking") or "")
-        if o_track and o_track not in k_track:
-            body["tracking"] = f"{k_track} {o_track}".strip()
+        merged_track = merge_tracking_field(k_track, o_track)
+        if merged_track and merged_track != k_track:
+            body["tracking"] = merged_track
         o_notes = str(orphan.get("notes") or "")
         k_notes = str(keeper.get("notes") or "")
-        if o_notes and o_notes not in k_notes:
-            body["notes"] = f"{k_notes}\n{o_notes}".strip()
+        merged_notes = merge_note_lines(k_notes, o_notes)
+        if merged_notes != k_notes:
+            body["notes"] = merged_notes
         if body:
-            self.update("purchase_drafts", kid, body)
+            updated = self.update("purchase_drafts", kid, body)
+            keeper.update(updated)
 
+        keeper_lines = self.list(
+            "purchase_draft_lines", filter=f'draft = "{kid}"', per_page=200
+        )
+        keeper_parts = {
+            str(l.get("part_number") or "").upper(): l for l in keeper_lines if l.get("part_number")
+        }
         for line in self.list("purchase_draft_lines", filter=f'draft = "{oid}"', per_page=200):
-            # Re-point line to keeper if collection allows patch; else copy+delete
+            pn = str(line.get("part_number") or "").upper()
+            if pn and pn in keeper_parts:
+                # Duplicate part — keep the richer description on keeper, drop orphan line
+                keep = keeper_parts[pn]
+                orphan_desc = str(line.get("description") or "")
+                keep_desc = str(keep.get("description") or "")
+                if len(orphan_desc) > len(keep_desc) + 5:
+                    try:
+                        self.update(
+                            "purchase_draft_lines",
+                            keep["id"],
+                            {"description": orphan_desc[:500]},
+                        )
+                    except Exception:
+                        pass
+                self.delete("purchase_draft_lines", line["id"])
+                continue
             try:
                 self.update("purchase_draft_lines", line["id"], {"draft": kid})
+                if pn:
+                    keeper_parts[pn] = line
             except Exception:
                 self.delete("purchase_draft_lines", line["id"])
         for m in self.list("email_ingest_messages", filter=f'purchase_draft = "{oid}"', per_page=200):
@@ -303,6 +332,61 @@ class PocketBaseClient:
             except Exception:
                 pass
         self.delete("purchase_drafts", oid)
+
+    def sanitize_pending_draft_display(self, vendor_key: str = "mcmaster") -> int:
+        """Clean duplicate notes/tracking on pending drafts. Returns count updated."""
+        from note_utils import merge_note_lines, merge_tracking_field, prefer_tracking
+
+        vk = vendor_key.replace('"', "")
+        drafts = self.list(
+            "purchase_drafts",
+            filter=f'vendor_key = "{vk}" && status = "pending"',
+            per_page=100,
+        )
+        n = 0
+        for d in drafts:
+            notes = merge_note_lines(str(d.get("notes") or ""))
+            track = str(d.get("tracking") or "").strip()
+            # Collapse "PIN URL" same-shipment pairs
+            parts = track.split()
+            if len(parts) >= 2:
+                merged = parts[0]
+                for p in parts[1:]:
+                    merged = prefer_tracking(merged, p)
+                track = merged
+            track = merge_tracking_field(track, "")
+            body: dict[str, Any] = {}
+            if notes != (d.get("notes") or ""):
+                body["notes"] = notes
+            if track != (d.get("tracking") or ""):
+                body["tracking"] = track
+            # Drop duplicate line items by part number (keep richest description)
+            lines = self.list(
+                "purchase_draft_lines",
+                filter=f'draft = "{d["id"]}"',
+                per_page=200,
+            )
+            seen: dict[str, dict[str, Any]] = {}
+            for line in lines:
+                pn = str(line.get("part_number") or "").upper()
+                if not pn:
+                    continue
+                if pn not in seen:
+                    seen[pn] = line
+                    continue
+                keep = seen[pn]
+                if len(str(line.get("description") or "")) > len(
+                    str(keep.get("description") or "")
+                ):
+                    self.delete("purchase_draft_lines", keep["id"])
+                    seen[pn] = line
+                else:
+                    self.delete("purchase_draft_lines", line["id"])
+                n += 1
+            if body:
+                self.update("purchase_drafts", d["id"], body)
+                n += 1
+        return n
 
     def list_materials(self) -> list[dict[str, Any]]:
         return self.list("materials", sort="grade,form,size_label")

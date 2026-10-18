@@ -13,6 +13,7 @@ from adapters import ALL_ADAPTERS
 from adapters.base import EmailMessage, ParsedEmail, ParsedLine
 from gmail_client import GmailClient, fetch_attachment_bytes
 from matchers.materials import match_material_line
+from note_utils import merge_note_lines, merge_tracking_field
 from pb_client import PocketBaseClient, _ref_quality
 
 log = logging.getLogger("gmail_purchase_ingest")
@@ -137,8 +138,11 @@ def run_once(
             consolidated = pb.consolidate_pending_by_customer_po("mcmaster")
             if consolidated:
                 log.info("Consolidated %s pending McMaster draft(s)", consolidated)
+            cleaned = pb.sanitize_pending_draft_display("mcmaster")
+            if cleaned:
+                log.info("Sanitized %s pending draft field(s)/dup lines", cleaned)
         except Exception:
-            log.exception("Draft consolidate failed")
+            log.exception("Draft consolidate/sanitize failed")
 
         pb.update_settings(
             {
@@ -265,9 +269,7 @@ def _upsert_draft(
 ) -> Optional[str]:
     customer_po = (getattr(parsed, "customer_po", None) or "").strip()
     if not customer_po and parsed.notes:
-        import re as _re
-
-        m = _re.search(r"\b([0-9]{3,4}A[A-Z0-9]{4,})\b", parsed.notes, _re.I)
+        m = re.search(r"\b([0-9]{3,4}A[A-Z0-9]{4,})\b", parsed.notes, re.I)
         if m:
             customer_po = m.group(1).upper()
 
@@ -286,8 +288,6 @@ def _upsert_draft(
     )
 
     # Don't overwrite a real McMaster # with an MC-DAY-… / invoice-sized fallback
-    from pb_client import _ref_quality
-
     merged_ref = order_ref
     if existing:
         existing_ref = str(existing.get("order_reference") or "")
@@ -334,16 +334,14 @@ def _upsert_draft(
         body["purchase_date"] = _now_iso()[:10]
     if parsed.invoice:
         body["invoice"] = parsed.invoice
-    if parsed.tracking:
-        body["tracking"] = parsed.tracking
     if parsed.total is not None:
         body["total"] = parsed.total
     if parsed.notes or parsed.parse_notes:
         note = parsed.notes or parsed.parse_notes
-        if existing and existing.get("notes"):
-            body["notes"] = f"{existing.get('notes')}\n{note}".strip()
-        else:
-            body["notes"] = note
+        body["notes"] = merge_note_lines(
+            (existing or {}).get("notes") or "",
+            note,
+        )
 
     # Confirmation / cert+tracking / receipt all may carry tracking
     if parsed.tracking and email_type in (
@@ -352,9 +350,12 @@ def _upsert_draft(
         "invoice",
         "order_confirmation",
     ):
-        prev = (existing or {}).get("tracking") or ""
-        if parsed.tracking not in prev:
-            body["tracking"] = f"{prev} {parsed.tracking}".strip()
+        body["tracking"] = merge_tracking_field(
+            (existing or {}).get("tracking"),
+            parsed.tracking,
+        )
+    elif parsed.tracking and not existing:
+        body["tracking"] = parsed.tracking
 
     if existing:
         draft = pb.update("purchase_drafts", existing["id"], body)

@@ -249,14 +249,35 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
               if ((_draft.tracking ?? '').trim().isNotEmpty) ...[
                 const SizedBox(height: 8),
                 _TrackingRow(
-                  tracking: _draft.tracking!.trim(),
+                  tracking: preferredTrackingValue(_draft.tracking),
                   hint: '${_draft.notes ?? ''} ${_draft.displayVendor}',
                 ),
               ],
-              if ((_draft.notes ?? '').isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(_draft.notes!, style: TextStyle(color: scheme.onSurfaceVariant)),
-              ],
+              Builder(
+                builder: (context) {
+                  final po = customerRefFromNotes(_draft.notes);
+                  final extraNotes = displayNotesWithoutDupes(_draft.notes);
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (po != null && po.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          'Customer ref: $po',
+                          style: TextStyle(color: scheme.onSurfaceVariant),
+                        ),
+                      ],
+                      if (extraNotes.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          extraNotes,
+                          style: TextStyle(color: scheme.onSurfaceVariant),
+                        ),
+                      ],
+                    ],
+                  );
+                },
+              ),
               const SizedBox(height: 16),
               Text('Lines', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
@@ -373,8 +394,9 @@ class _TrackingRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final uri = trackingUri(tracking, hint: hint);
-    final label = trackingDisplayLabel(tracking);
+    final value = preferredTrackingValue(tracking);
+    final uri = trackingUri(value, hint: hint);
+    final label = trackingDisplayLabel(value);
     if (uri == null) {
       return Text('Tracking: $label');
     }

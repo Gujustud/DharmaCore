@@ -260,8 +260,7 @@ class McMasterAdapter:
             if not lines and email_type == "order_confirmation":
                 parse_notes_parts.append("No line items extracted; review manually.")
 
-        if tracking and email_type in ("shipping", "certificate", "invoice"):
-            parse_notes_parts.append(f"Tracking: {tracking}")
+        # Tracking lives on draft.tracking — do not also stuff it into notes (UI dupes).
 
         attachment_roles: dict[str, str] = {}
         for att in message.attachments:
