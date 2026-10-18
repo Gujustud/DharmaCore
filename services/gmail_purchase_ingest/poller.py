@@ -73,9 +73,13 @@ def run_once(
         )
         return status
 
-    backfill_done = bool(settings.get("email_ingest_backfill_done"))
-    newer_than = None if backfill_done else 7
-    query = build_domain_query(vendors, newer_than_days=newer_than)
+    # Always constrain Gmail search — never scan the whole mailbox (quota blow-up).
+    lookback = int(settings.get("email_ingest_lookback_days") or 7)
+    if lookback < 1:
+        lookback = 1
+    if lookback > 30:
+        lookback = 30
+    query = build_domain_query(vendors, newer_than_days=lookback)
     if not query:
         return {"skipped": True, "reason": "no domains"}
 
@@ -85,12 +89,15 @@ def run_once(
 
     materials = pb.list_materials()
     processed = 0
+    skipped_known = 0
     errors: list[str] = []
 
     try:
-        ids = gmail.list_message_ids(query, max_results=100)
+        # Cap each cycle so we don't chew Gmail quota on big inboxes.
+        ids = gmail.list_message_ids(query, max_results=40)
         for mid in ids:
             if pb.find_message(mid):
+                skipped_known += 1
                 continue
             try:
                 msg = gmail.get_message(mid)
@@ -101,22 +108,28 @@ def run_once(
                         att["data"] = fetch_attachment_bytes(gmail, mid, aid)
                 _ingest_message(pb, msg, vendors, materials)
                 processed += 1
+                # Small pause between full message fetches (quota units)
+                time.sleep(0.4)
             except Exception as e:
                 log.exception("Failed message %s", mid)
                 errors.append(f"{mid}: {e}")
+                err_s = str(e)
                 try:
                     pb.create(
                         "email_ingest_messages",
                         {
                             "gmail_message_id": mid,
                             "parse_status": "parse_error",
-                            "parse_error": str(e)[:500],
+                            "parse_error": err_s[:500],
                             "subject": "",
                             "snippet": "",
                         },
                     )
                 except Exception:
                     pass
+                # Stop this cycle on rate limit; try again next poll
+                if "rateLimitExceeded" in err_s or "Quota exceeded" in err_s:
+                    break
 
         pb.update_settings(
             {
@@ -140,8 +153,10 @@ def run_once(
     return {
         "ok": True,
         "processed": processed,
+        "skipped_known": skipped_known,
         "errors": errors,
         "poll_minutes": poll_minutes,
+        "lookback_days": lookback,
         "query": query,
     }
 
