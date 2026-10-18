@@ -163,6 +163,44 @@ class PocketBaseClient:
             filter=f'vendor_key = "{vk}" && order_reference = "{ref}" && status = "pending"',
         )
 
+    def find_pending_draft_for_merge(
+        self, vendor_key: str, order_reference: str
+    ) -> Optional[dict[str, Any]]:
+        """Exact ref match, or for MC-DAY-YYYY-MM-DD keys merge onto same-day pending draft."""
+        exact = self.find_pending_draft(vendor_key, order_reference)
+        if exact:
+            return exact
+
+        vk = vendor_key.replace('"', "")
+        ref = (order_reference or "").strip()
+        # Certificate/receipt often only say "October 13th Order" → MC-DAY-2026-10-13
+        if not ref.startswith("MC-DAY-") or len(ref) < 16:
+            return None
+        day = ref[7:]  # YYYY-MM-DD
+        if len(day) != 10:
+            return None
+
+        candidates = self.list(
+            "purchase_drafts",
+            filter=f'vendor_key = "{vk}" && status = "pending"',
+            sort="-purchase_date",
+            per_page=50,
+        )
+        same_day: list[dict[str, Any]] = []
+        for d in candidates:
+            pd = str(d.get("purchase_date") or "")[:10]
+            oref = str(d.get("order_reference") or "")
+            if pd == day or oref == ref or oref.startswith(f"MC-DAY-{day}"):
+                same_day.append(d)
+        if not same_day:
+            return None
+        # Prefer a real McMaster order number over another day-key draft
+        for d in same_day:
+            oref = str(d.get("order_reference") or "")
+            if oref.isdigit() and len(oref) >= 6:
+                return d
+        return same_day[0]
+
     def list_materials(self) -> list[dict[str, Any]]:
         return self.list("materials", sort="grade,form,size_label")
 
