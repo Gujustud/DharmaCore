@@ -50,8 +50,21 @@ class GmailClient:
                 flow = InstalledAppFlow.from_client_secrets_file(
                     self.credentials_path, SCOPES
                 )
-                # Local/console OAuth for one-time setup
-                creds = flow.run_local_server(port=0)
+                # Headless CT: do not open a local browser. Print the URL and
+                # listen on a fixed port so the laptop can SSH-tunnel to it.
+                oauth_port = int(os.getenv("GMAIL_OAUTH_PORT", "8099"))
+                print(
+                    f"\nOpen the authorization URL in a browser on your laptop.\n"
+                    f"If this machine has no GUI, from your PC run:\n"
+                    f"  ssh -L {oauth_port}:127.0.0.1:{oauth_port} root@192.168.20.101\n"
+                    f"Then open the URL below (redirect uses localhost:{oauth_port}).\n",
+                    flush=True,
+                )
+                creds = flow.run_local_server(
+                    port=oauth_port,
+                    open_browser=False,
+                    bind_addr="127.0.0.1",
+                )
             token_file.parent.mkdir(parents=True, exist_ok=True)
             token_file.write_text(creds.to_json())
         self._service = build("gmail", "v1", credentials=creds, cache_discovery=False)
