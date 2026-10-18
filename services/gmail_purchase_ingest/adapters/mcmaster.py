@@ -63,13 +63,20 @@ _INVOICE_RE = re.compile(
     re.I,
 )
 # Prefer real carrier PINs / links — never the McMaster order number.
+# Real example: "Track your shipment using Purolator CPK004315941"
 _TRACK_URL_RE = re.compile(
     r"https?://[^\s<>\"']+(?:purolator|ups\.com|fedex|dhl|canadapost)[^\s<>\"']*",
     re.I,
 )
+_PUROLATOR_INLINE_RE = re.compile(
+    r"Purolator\s+([A-Z]{2,4}\d{8,14})\b",
+    re.I,
+)
 _PUROLATOR_PIN_RE = re.compile(
-    r"(?:purolator[^.\n]{0,60}?(?:pin|tracking|track)[^0-9]{0,20}|tracking\s*(?:#|number|no\.?)?\s*[:#]?\s*)"
-    r"(\d{11,16})\b",
+    r"(?:purolator[^.\n]{0,80}?(?:pin|tracking|track)[^A-Z0-9]{0,20}"
+    r"|tracking\s*(?:#|number|no\.?)?\s*[:#]?\s*"
+    r"|using\s+Purolator\s+)"
+    r"([A-Z]{2,4}\d{8,14}|\d{11,16})\b",
     re.I,
 )
 _UPS_RE = re.compile(r"\b(1Z[0-9A-Z]{16})\b", re.I)
@@ -283,27 +290,32 @@ class McMasterAdapter:
         if um:
             return um.group(0).rstrip(").,;")
 
-        # 2) UPS
+        # 2) "… using Purolator CPK004315941" (common McMaster CA phrasing)
+        m = _PUROLATOR_INLINE_RE.search(blob)
+        if m and _ok(m.group(1)):
+            return m.group(1).upper()
+
+        # 3) UPS
         m = _UPS_RE.search(blob)
         if m and _ok(m.group(1)):
             return m.group(1).upper()
 
-        # 3) Purolator PIN (usually 12 digits) near purolator/tracking
+        # 4) Purolator PIN near tracking/pin keywords (alphanumeric or numeric)
         m = _PUROLATOR_PIN_RE.search(blob)
         if m and _ok(m.group(1)):
-            return m.group(1)
+            return m.group(1).upper()
 
-        # 4) FedEx near keyword
+        # 5) FedEx near keyword
         if re.search(r"\bfedex\b", blob, re.I):
             for m in _FEDEX_RE.finditer(blob):
                 if _ok(m.group(1)) and not re.fullmatch(r"\d{6,10}", m.group(1)):
                     return m.group(1)
 
-        # 5) Generic "Tracking number: …" but reject McMaster-sized numbers
+        # 6) Generic "Tracking number: …" but reject McMaster-sized numbers
         for m in _TRACKING_LABEL_RE.finditer(blob):
             cand = m.group(1).strip()
             if _ok(cand) and not re.fullmatch(r"\d{6,10}", cand):
-                return cand
+                return cand.upper()
 
         return ""
 

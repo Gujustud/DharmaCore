@@ -62,9 +62,11 @@ def test_cert_and_receipt_share_correlate_key():
         from_address="orders@mcmaster.com",
         subject="Certificate and Tracking for Your October 13th Order with McMaster-Carr",
         body_text=(
-            "We shipped the plastic and steel on your October 13th order.\n"
+            "We shipped the plastic and steel on your October 13th order. "
+            "You will receive them tomorrow. "
+            "Track your shipment using Purolator CPK004315941.\n"
             "McMaster-Carr number 7110963\n"
-            "Purolator tracking number: 329012345678\n"
+            "The certificate for the steel is attached.\n"
         ),
         received_at="2026-10-14T12:00:00+00:00",
         attachments=[{"filename": "Certificate for 7110963.pdf", "data": b"%PDF", "mime_type": "application/pdf"}],
@@ -73,7 +75,7 @@ def test_cert_and_receipt_share_correlate_key():
         "r",
         from_address="sales@mcmaster.com",
         subject="Receipt for Your October 13th Order with McMaster-Carr",
-        body_text="Receipt\nMcMaster-Carr number 7110963\nPurolator PIN: 329012345678\n",
+        body_text="Receipt\nMcMaster-Carr number 7110963\nTrack your shipment using Purolator CPK004315941.\n",
         received_at="2026-10-15T12:00:00+00:00",
     )
     conf = EmailMessage(
@@ -88,9 +90,27 @@ def test_cert_and_receipt_share_correlate_key():
     p_rcpt = a.parse(receipt)
     assert a.correlate_key(p_conf, conf) == a.correlate_key(p_cert, cert) == a.correlate_key(p_rcpt, receipt)
     assert p_cert.email_type == "certificate"
-    assert p_cert.tracking
+    assert p_cert.tracking == "CPK004315941"
+    assert p_cert.tracking != "7110963"
     assert p_cert.attachment_roles.get("Certificate for 7110963.pdf") == "mill_cert"
     assert p_rcpt.email_type == "invoice"
+
+
+def test_tracking_is_not_mcmaster_order_number():
+    a = McMasterAdapter()
+    msg = EmailMessage(
+        "x",
+        from_address="orders@mcmaster.com",
+        subject="Certificate and Tracking for Your October 13th Order with McMaster-Carr",
+        body_text=(
+            "Track your shipment.\n"
+            "McMaster-Carr number 7110963\n"
+            "We shipped the plastic and steel.\n"
+        ),
+    )
+    parsed = a.parse(msg)
+    assert parsed.order_reference == "7110963"
+    assert parsed.tracking == ""  # no real PIN present — don't fake it
 
 
 def test_parse_lines_and_order():

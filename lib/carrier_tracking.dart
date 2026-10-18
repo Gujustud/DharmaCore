@@ -31,8 +31,10 @@ Uri? trackingUri(String? raw, {String? hint}) {
     );
   }
 
-  // Purolator (default for McMaster CA shipments / numeric PINs)
-  if (h.contains('purolator') || RegExp(r'^\d{11,16}$').hasMatch(t)) {
+  // Purolator — numeric PINs or alphanumeric like CPK004315941
+  if (h.contains('purolator') ||
+      RegExp(r'^\d{11,16}$').hasMatch(t) ||
+      RegExp(r'^[A-Za-z]{2,4}\d{8,14}$').hasMatch(t)) {
     return Uri.parse(
       'https://www.purolator.com/en/shipping/tracker?pin=${Uri.encodeComponent(t)}',
     );
