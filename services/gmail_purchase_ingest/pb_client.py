@@ -110,6 +110,13 @@ class PocketBaseClient:
         r.raise_for_status()
         return r.json()
 
+    def delete(self, collection: str, record_id: str) -> None:
+        r = self._client.delete(
+            f"{self.base_url}/api/collections/{collection}/records/{record_id}",
+            headers=self._headers(),
+        )
+        r.raise_for_status()
+
     def upload_files(
         self,
         collection: str,
@@ -164,20 +171,25 @@ class PocketBaseClient:
         )
 
     def find_pending_draft_for_merge(
-        self, vendor_key: str, order_reference: str
+        self,
+        vendor_key: str,
+        order_reference: str,
+        purchase_date: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
-        """Exact ref match, or for MC-DAY-YYYY-MM-DD keys merge onto same-day pending draft."""
+        """Exact ref match, or same-order-day merge for McMaster MC-DAY-… fallbacks.
+
+        Cert/receipt emails often only say "October 13th Order" → MC-DAY-2026-10-13.
+        Merge those onto a pending draft with the real order # (and the reverse: a
+        numeric confirmation absorbs a same-day MC-DAY orphan).
+        """
         exact = self.find_pending_draft(vendor_key, order_reference)
         if exact:
             return exact
 
         vk = vendor_key.replace('"', "")
         ref = (order_reference or "").strip()
-        # Certificate/receipt often only say "October 13th Order" → MC-DAY-2026-10-13
-        if not ref.startswith("MC-DAY-") or len(ref) < 16:
-            return None
-        day = ref[7:]  # YYYY-MM-DD
-        if len(day) != 10:
+        day = _merge_day_key(ref, purchase_date)
+        if not day:
             return None
 
         candidates = self.list(
@@ -186,20 +198,7 @@ class PocketBaseClient:
             sort="-purchase_date",
             per_page=50,
         )
-        same_day: list[dict[str, Any]] = []
-        for d in candidates:
-            pd = str(d.get("purchase_date") or "")[:10]
-            oref = str(d.get("order_reference") or "")
-            if pd == day or oref == ref or oref.startswith(f"MC-DAY-{day}"):
-                same_day.append(d)
-        if not same_day:
-            return None
-        # Prefer a real McMaster order number over another day-key draft
-        for d in same_day:
-            oref = str(d.get("order_reference") or "")
-            if oref.isdigit() and len(oref) >= 6:
-                return d
-        return same_day[0]
+        return pick_same_day_merge_draft(candidates, day=day, incoming_ref=ref)
 
     def list_materials(self) -> list[dict[str, Any]]:
         return self.list("materials", sort="grade,form,size_label")
@@ -217,3 +216,44 @@ class PocketBaseClient:
 
     def dumps_json(self, obj: Any) -> str:
         return json.dumps(obj, ensure_ascii=False)
+
+
+def _merge_day_key(order_reference: str, purchase_date: Optional[str] = None) -> Optional[str]:
+    """YYYY-MM-DD used to correlate MC-DAY fallbacks with real order drafts."""
+    ref = (order_reference or "").strip()
+    if ref.startswith("MC-DAY-") and len(ref) >= 17:
+        day = ref[7:17]
+        if len(day) == 10 and day[4] == "-" and day[7] == "-":
+            return day
+    pd = (purchase_date or "").strip()[:10]
+    if len(pd) == 10 and pd[4] == "-" and pd[7] == "-":
+        return pd
+    return None
+
+
+def pick_same_day_merge_draft(
+    candidates: list[dict[str, Any]],
+    *,
+    day: str,
+    incoming_ref: str,
+) -> Optional[dict[str, Any]]:
+    """Choose a pending draft to merge onto for the given order-day key."""
+    same_day: list[dict[str, Any]] = []
+    for d in candidates:
+        pd = str(d.get("purchase_date") or "")[:10]
+        oref = str(d.get("order_reference") or "")
+        if (
+            pd == day
+            or oref == incoming_ref
+            or oref == f"MC-DAY-{day}"
+            or oref.startswith(f"MC-DAY-{day}")
+        ):
+            same_day.append(d)
+    if not same_day:
+        return None
+    # Prefer a real McMaster order number over another day-key draft
+    for d in same_day:
+        oref = str(d.get("order_reference") or "")
+        if oref.isdigit() and len(oref) >= 6:
+            return d
+    return same_day[0]

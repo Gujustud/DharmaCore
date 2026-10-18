@@ -254,7 +254,11 @@ def _upsert_draft(
     materials: list[dict[str, Any]],
     msg: EmailMessage,
 ) -> Optional[str]:
-    existing = pb.find_pending_draft(vendor.get("vendor_key") or "", order_ref)
+    existing = pb.find_pending_draft_for_merge(
+        vendor.get("vendor_key") or "",
+        order_ref,
+        purchase_date=parsed.purchase_date,
+    )
     supplier_id = _supplier_id(vendor)
     currency = (
         parsed.currency
@@ -262,10 +266,21 @@ def _upsert_draft(
         or "USD"
     )
 
+    # Don't overwrite a real McMaster # with an MC-DAY-… fallback key
+    merged_ref = order_ref
+    if existing:
+        existing_ref = str(existing.get("order_reference") or "")
+        if existing_ref.isdigit() and (
+            order_ref.startswith("MC-DAY-") or not order_ref.isdigit()
+        ):
+            merged_ref = existing_ref
+        elif order_ref.startswith("MC-DAY-") and existing_ref:
+            merged_ref = existing_ref
+
     body: dict[str, Any] = {
         "vendor_key": vendor.get("vendor_key"),
         "email_ingest_vendor": vendor.get("id"),
-        "order_reference": order_ref,
+        "order_reference": merged_ref,
         "status": "pending",
         "currency": currency if currency in ("CAD", "USD") else "USD",
     }
