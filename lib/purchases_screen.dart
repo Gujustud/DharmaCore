@@ -71,10 +71,11 @@ class _PurchasesScreenState extends State<PurchasesScreen> with AutoOpenDrawerMi
       final pbService = PocketBaseService();
       final records = await pbService.getPurchases();
       List<dynamic> draftRecords = [];
+      Object? draftLoadError;
       try {
         draftRecords = await pbService.getPendingPurchaseDrafts();
-      } catch (_) {
-        // Collection may not exist until migration is applied.
+      } catch (e) {
+        draftLoadError = e;
         draftRecords = [];
       }
       setState(() {
@@ -107,6 +108,14 @@ class _PurchasesScreenState extends State<PurchasesScreen> with AutoOpenDrawerMi
         }
         _isLoading = false;
       });
+      if (draftLoadError != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not load email drafts: $draftLoadError'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
     } catch (e) {
       setState(() => _isLoading = false);
       if (mounted) {

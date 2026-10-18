@@ -1249,14 +1249,24 @@ class PocketBaseService {
 
   Future<List<dynamic>> getPendingPurchaseDrafts() async {
     try {
+      // Avoid sort '-created' — live shop PB has returned 400 on that before.
       return await pb.collection('purchase_drafts').getFullList(
         filter: 'status = "pending"',
-        sort: '-created',
+        sort: '-purchase_date',
         expand: 'supplier,email_ingest_vendor',
       );
     } catch (e) {
-      print('Error getting purchase drafts: $e');
-      rethrow;
+      print('Error getting purchase drafts (with expand): $e');
+      // Retry without expand so the review queue still shows.
+      try {
+        return await pb.collection('purchase_drafts').getFullList(
+          filter: 'status = "pending"',
+          sort: '-purchase_date',
+        );
+      } catch (e2) {
+        print('Error getting purchase drafts: $e2');
+        rethrow;
+      }
     }
   }
 
