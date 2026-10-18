@@ -186,6 +186,88 @@ def test_find_order_normalizes_suffix_in_body():
     assert suffix == "01"
 
 
+def test_unicode_hyphen_mcmaster_number_and_suffix():
+    """Cert/invoice PDFs use U+2212 minus: McMaster−Carr Number 7110963 − 01."""
+    a = McMasterAdapter()
+    blob = (
+        "McMaster\u2212Carr Number: 7110963 \u2212 01\n"
+        "Purchase Order 1013ASOLANKI\n"
+        "Invoice Number: 73569330\n"
+    )
+    base, suffix = a._find_order(blob, "")
+    assert base == "7110963"
+    assert suffix == "01"
+    assert a._find_customer_po(blob, "") == "1013ASOLANKI"
+
+
+def test_does_not_treat_invoice_number_as_order():
+    """Regression: loose order…number matched Invoice Number 73569330."""
+    a = McMasterAdapter()
+    body = (
+        "Certificate and Tracking for Your October 13th Order with McMaster-Carr.\n"
+        "We shipped the plastic and steel.\n"
+        "Invoice Number: 73569330\n"
+        "Invoice Date: 10/14/2026\n"
+        "Track your shipment using Purolator CPK004315941.\n"
+    )
+    msg = EmailMessage(
+        "inv-trap",
+        from_address="orders@mcmaster.com",
+        subject="Certificate and Tracking for Your October 13th Order with McMaster-Carr",
+        body_text=body,
+        received_at="2026-10-14T12:00:00+00:00",
+    )
+    # Without PDF McMaster number, fall back to day key — never invoice #
+    pdf_header = (
+        "McMaster\u2212Carr Number 7110963 \u2212 01\n"
+        "Purchase Order 1013ASOLANKI\n"
+        "Order Date 10/13/2026\n"
+        "Invoice Number: 73569330\n"
+    )
+    orig = McMasterAdapter._pdf_bytes_to_text
+    McMasterAdapter._pdf_bytes_to_text = staticmethod(lambda _data: pdf_header)
+    try:
+        msg.attachments = [
+            {"filename": "Certificate.pdf", "data": b"%PDF-1.4", "mime_type": "application/pdf"}
+        ]
+        parsed = a.parse(msg)
+        assert parsed.order_reference == "7110963"
+        assert parsed.order_reference != "73569330"
+        assert "Customer ref: ORDER" not in (parsed.notes or "")
+        assert "1013ASOLANKI" in (parsed.notes or "")
+    finally:
+        McMasterAdapter._pdf_bytes_to_text = orig
+
+
+def test_purchase_order_label_skips_order_date_header():
+    a = McMasterAdapter()
+    # Column headers smashed together by PDF extract
+    blob = "Purchase Order Order Date Placed By\n1013ASOLANKI 10/13/2026 Amish"
+    # Label regex requires a digit in the captured token — "Order" alone is rejected
+    assert a._find_customer_po(blob, "") == "1013ASOLANKI"
+
+
+def test_customer_po_is_not_a_line_item():
+    a = McMasterAdapter()
+    body = (
+        "McMaster-Carr number 7110963 1013ASOLANKI\n"
+        "Delivers Oct 15, 9-11 am\n"
+        "1013ASOLANKI something\n"
+        "8741K53 White Delrin Acetal Resin Bar 1 $50.00\n"
+        "Order Total: $198.25\n"
+    )
+    msg = EmailMessage(
+        "po-part",
+        from_address="orders@mcmaster.com",
+        subject="Confirmation for Your October 13th Order with McMaster-Carr",
+        body_text=body,
+    )
+    parsed = a.parse(msg)
+    parts = [l.part_number for l in parsed.lines]
+    assert "1013ASOLANKI" not in parts
+    assert any(p.startswith("8741") for p in parts)
+
+
 def test_parse_lines_and_order():
     a = McMasterAdapter()
     body = """

@@ -39,28 +39,40 @@ _FORM_HINTS = [
     (re.compile(r"\bflat\s+bar\b|\brectangular\b", re.I), "flat"),
 ]
 
-# Primary: "McMaster-Carr Number: 7110963" or "7110963-01" on cert PDF header.
+# PDF text often uses Unicode minus (U+2212) instead of ASCII hyphen.
+_HY = r"[\u2010-\u2015\u2212\-]"
+
+# Primary: "McMaster-Carr Number: 7110963" or "7110963-01" / "7110963 − 01" on cert PDF.
 # The -NN suffix is a packing-list / cert sequence, not a different order.
 _MCMASTER_NUMBER_RE = re.compile(
-    r"McMaster(?:-Carr)?\s+(?:Number|number|No\.?)\s*[:#]?\s*"
-    r"([0-9]{6,10})(?:-(\d{2}))?",
+    rf"McMaster(?:{_HY}Carr)?\s+(?:Number|number|No\.?)\s*[:#]?\s*"
+    rf"([0-9]{{6,10}})(?:\s*{_HY}\s*(\d{{2}}))?",
     re.I,
 )
-# Explicit order number labels (not "Confirmation for Your October…")
+# Tight order-number labels only — NEVER allow newlines between "order" and the digits.
+# (A loose \s* previously matched "…Order…Invoice Number: 73569330" as the order #.)
 _ORDER_NUMBER_RE = re.compile(
-    r"(?:order\s*(?:#|number|no\.?)\s*[:#]?\s*|confirmation\s*(?:#|number)\s*[:#]?\s*)"
-    r"([0-9]{6,10})(?:-\d{2})?",
+    r"(?:order|confirmation)[ \t]*(?:#|number|no\.?)[ \t]*[:#]?[ \t]*"
+    r"([0-9]{6,10})(?:[ \t]*-[ \t]*\d{2})?",
     re.I,
 )
-# Cert PDF: "Purchase Order 1013ASOLANKI"
+# Explicitly reject invoice / account numbers as order refs
+_INVOICE_NUMBER_RE = re.compile(
+    r"(?:invoice|account)\s*(?:#|number|no\.?)?\s*[:#]?\s*([0-9]{6,12})",
+    re.I,
+)
+# Cert PDF: "Purchase Order 1013ASOLANKI" — value must include a digit (not "ORDER"/"DATE")
 _PURCHASE_ORDER_LABEL_RE = re.compile(
-    r"Purchase\s+Order\s*[:#]?\s*([A-Z0-9-]{4,})",
+    r"Purchase\s+Order\s*[:#]?\s*([A-Z0-9-]*\d[A-Z0-9-]*)",
     re.I,
 )
 # Customer / job ref shown next to McMaster number, e.g. 1013ASOLANKI
 _CUSTOMER_PO_RE = re.compile(
     r"\b([0-9]{3,4}A[A-Z0-9]{4,})\b",
     re.I,
+)
+_PO_STOPWORDS = frozenset(
+    {"ORDER", "DATE", "NUMBER", "TOTAL", "PAGE", "SHIPPED", "PLACED", "CERTIFICATES"}
 )
 # Subject date fallback: "October 13th Order" → merge same calendar order day
 _SUBJECT_ORDER_DAY_RE = re.compile(
@@ -279,13 +291,21 @@ class McMasterAdapter:
     def _find_order(self, text: str, subject: str) -> tuple[str, str]:
         """Return (base_order_number, optional_-NN_suffix)."""
         blob = f"{text or ''}\n{subject or ''}"
+        invoice_nums = {m.group(1) for m in _INVOICE_NUMBER_RE.finditer(blob)}
+
         m = _MCMASTER_NUMBER_RE.search(blob)
         if m:
-            return m.group(1).strip(), (m.group(2) or "").strip()
+            base = m.group(1).strip()
+            # Prefer McMaster-Carr Number even if it also appears as an invoice row
+            return base, (m.group(2) or "").strip()
+
         m = _ORDER_NUMBER_RE.search(blob)
         if m:
-            return m.group(1).strip(), ""
+            base = m.group(1).strip()
+            if base not in invoice_nums:
+                return base, ""
         # Do NOT match "Confirmation for Your October…" — that produced Ref: FOR
+        # Do NOT match "Invoice Number: 73569330" via loose order…number spanning.
         return "", ""
 
     def _find_order_in_filenames(self, message: EmailMessage) -> tuple[str, str]:
@@ -335,19 +355,32 @@ class McMasterAdapter:
 
     def _find_customer_po(self, text: str, subject: str) -> str:
         blob = f"{text or ''}\n{subject or ''}"
+
+        def _ok_po(raw: str) -> str:
+            po = (raw or "").strip().upper()
+            if not po or po in _PO_STOPWORDS or not re.search(r"\d", po):
+                return ""
+            if len(po) < 4 or len(po) > 24:
+                return ""
+            return po
+
         # Cert PDF header: Purchase Order 1013ASOLANKI
         m = _PURCHASE_ORDER_LABEL_RE.search(blob)
         if m:
-            return m.group(1).upper()
+            po = _ok_po(m.group(1))
+            if po:
+                return po
         # Prefer PO near McMaster number
         m = _MCMASTER_NUMBER_RE.search(blob)
         if m:
             window = blob[m.end() : m.end() + 80]
             pm = _CUSTOMER_PO_RE.search(window)
             if pm:
-                return pm.group(1).upper()
+                po = _ok_po(pm.group(1))
+                if po:
+                    return po
         m = _CUSTOMER_PO_RE.search(blob)
-        return m.group(1).upper() if m else ""
+        return _ok_po(m.group(1)) if m else ""
 
     def _find_tracking_href(self, html: str) -> str:
         """Pull the actual track URL when the PIN is a hyperlink in HTML."""
@@ -505,13 +538,22 @@ class McMasterAdapter:
             return f"{y:04d}-{int(m.group(1)):02d}-{int(m.group(2)):02d}"
         return None
 
+    @staticmethod
+    def _looks_like_part_number(part: str) -> bool:
+        """McMaster parts are like 8741K53 — not customer POs like 1013ASOLANKI."""
+        p = (part or "").upper()
+        if not p or _CUSTOMER_PO_RE.fullmatch(p):
+            return False
+        # Real parts: digits + single letter family + short numeric tail
+        return bool(re.fullmatch(r"[0-9]{3,5}[A-Z][0-9]{1,6}[A-Z0-9]{0,4}", p))
+
     def _parse_lines(self, text: str) -> list[ParsedLine]:
         lines: list[ParsedLine] = []
         seen_parts: set[str] = set()
 
         for m in _PART_LINE_RE.finditer(text or ""):
             part = m.group("part").upper()
-            if part in seen_parts:
+            if part in seen_parts or not self._looks_like_part_number(part):
                 continue
             seen_parts.add(part)
             desc = (m.group("desc") or "").strip()
@@ -536,7 +578,7 @@ class McMasterAdapter:
             if not pm:
                 continue
             part = pm.group(1).upper()
-            if part in seen_parts:
+            if part in seen_parts or not self._looks_like_part_number(part):
                 continue
             money = _MONEY_RE.findall(raw_line)
             each = float(money[0].replace(",", "")) if money else None
