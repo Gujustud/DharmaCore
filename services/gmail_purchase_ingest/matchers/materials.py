@@ -165,9 +165,14 @@ def match_material_line(
 
 
 _GRADE_RE = re.compile(
-    r"\b(6061(?:-T6)?|7075(?:-T6)?|4140|4340|A36|1018|1045|304(?:L)?|316(?:L)?)\b",
+    r"\b(6061(?:-T6)?|7075(?:-T6)?|4140|4340|A36|1018|1045|304(?:L)?|316(?:L)?|"
+    r"Delrin|Acetal)\b",
     re.I,
 )
+_GRADE_ALIASES = [
+    (re.compile(r"\blow[-\s]?carbon\s+steel\b", re.I), "1018"),
+    (re.compile(r"\bmild\s+steel\b", re.I), "1018"),
+]
 _FORM_HINTS = [
     (re.compile(r"\bflat\s+bar\b|\bflat\b", re.I), "flat"),
     (re.compile(r"\brod\b|\bround\s+bar\b|\bdia\b|\bdiameter\b", re.I), "bar"),
@@ -185,8 +190,14 @@ _SIZE_RE = re.compile(
 
 
 def _guess_grade(description: str) -> str:
-    m = _GRADE_RE.search(description or "")
-    return m.group(1).strip() if m else ""
+    d = description or ""
+    m = _GRADE_RE.search(d)
+    if m:
+        return m.group(1).strip()
+    for rx, alias in _GRADE_ALIASES:
+        if rx.search(d):
+            return alias
+    return ""
 
 
 def _guess_form(description: str) -> str:

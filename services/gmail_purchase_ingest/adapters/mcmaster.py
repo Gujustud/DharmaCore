@@ -30,6 +30,21 @@ _GRADE_RE = re.compile(
     r")\b",
     re.I,
 )
+# McMaster catalog titles that imply a shop grade (not spelled as 1018 in the email)
+_GRADE_ALIASES = [
+    (re.compile(r"\blow[-\s]?carbon\s+steel\b", re.I), "1018"),
+    (re.compile(r"\bmild\s+steel\b", re.I), "1018"),
+    (re.compile(r"\bmultipurpose\s+aluminum\b.*\b6061\b", re.I), "6061-T6"),
+]
+_PRODUCT_START_RE = re.compile(
+    r"\b(?:"
+    r"White|Black|Clear|Gray|Grey|Red|Blue|Natural|Low-Carbon|Multipurpose|"
+    r"Ultra-Machinable|Easy-to-Weld|High-Strength|Oil-Hardening|"
+    r"Delrin|Acetal|Nylon|UHMW|PTFE|Aluminum|Aluminium|Stainless|Brass|Bronze|"
+    r"Copper|Steel|Titanium|Type\s+\d+|Grade\s+\d+"
+    r")\b",
+    re.I,
+)
 # Shop catalog: `bar` key = round stock (UI label "Rod"). McMaster calls round "Rod"
 # and rectangular stock "Bar" (Thick/Wide) — map that to `flat`.
 _FORM_HINTS = [
@@ -691,28 +706,46 @@ class McMasterAdapter:
                     each = float(pe.group(1).replace(",", ""))
                 except ValueError:
                     pass
-            # Description window: after previous part's match end, before this part
-            prev_end = matches[i - 1].end() if i > 0 else max(0, m.start() - 220)
-            window = text[prev_end : m.end() + 20]
-            desc = re.sub(r"\s+", " ", window).strip()
-            # Drop leading price/qty leftovers from the prior line
-            desc = re.sub(
-                r"^(?:\$?\s*[0-9,]+\.[0-9]{2}\s*)+(?:each\s*)?",
-                "",
-                desc,
-                flags=re.I,
-            ).strip()
-            desc = re.sub(
-                r"^.*?(?=\b(?:White|Black|Low-Carbon|Aluminum|Steel|Delrin|Acetal|"
-                r"Nylon|Stainless|Brass|Copper|UHMW|PTFE|Multipurpose|[A-Z][a-z]+))",
-                "",
-                desc,
-                count=1,
-            )
-            if part not in desc:
-                desc = f"{desc} {part}".strip()
+            # Text immediately before this part (after previous line's priced block)
+            prev_end = matches[i - 1].end() if i > 0 else 0
+            before = text[prev_end : m.start()]
+            desc = self._clean_line_description(before, part)
             lines.append(self._line_from_desc(part, desc, qty, each))
         return lines
+
+    def _clean_line_description(self, before: str, part: str) -> str:
+        """Keep product title + dims; drop payment method / order header noise."""
+        raw = re.sub(r"\s+", " ", (before or "")).strip()
+        # Cut from the product-title keyword. Prefer the earliest match in the
+        # trailing window so "Low-Carbon Steel" keeps "Low-Carbon", not just "Steel".
+        starts = list(_PRODUCT_START_RE.finditer(raw))
+        if starts:
+            tail_from = max(0, len(raw) - 180)
+            in_tail = [m for m in starts if m.start() >= tail_from]
+            pick = in_tail[0] if in_tail else starts[-1]
+            raw = raw[pick.start() :].strip()
+        # Drop leading line index ("1 ", "2 ")
+        raw = re.sub(r"^\d+\s+", "", raw).strip()
+        # Drop any leftover payment / deliver crumbs if still present
+        raw = re.sub(
+            r"^(?:Payment\s+method|Placed\s+by|McMaster(?:-Carr)?\s+number|"
+            r"Delivers?|Visa)\b.*?(?=\b(?:White|Black|Low-Carbon|Delrin|Acetal|"
+            r"Aluminum|Steel|Nylon|Multipurpose)\b)",
+            "",
+            raw,
+            flags=re.I | re.S,
+        ).strip()
+        # Drop trailing crumbs that belong to qty/price (shouldn't be in `before`, but)
+        raw = re.sub(
+            r"\s+\d+(?:\.\d+)?\s*each(?:\s+\$?[0-9,]+\.[0-9]{2}.*)?$",
+            "",
+            raw,
+            flags=re.I,
+        ).strip()
+        raw = re.sub(r"\s+Merchandise.*$", "", raw, flags=re.I).strip()
+        if part and part.upper() not in raw.upper():
+            raw = f"{raw} {part}".strip()
+        return raw[:500]
 
     @staticmethod
     def _price_near(text: str, start: int, end: int) -> Optional[float]:
@@ -829,11 +862,9 @@ class McMasterAdapter:
             return "flat"
         return ""
 
-    def _line_from_desc(
-        self, part: str, desc: str, qty: float, each: Optional[float]
-    ) -> ParsedLine:
-        grade = ""
-        gm = _GRADE_RE.search(desc)
+    def _guess_grade(self, desc: str) -> str:
+        d = desc or ""
+        gm = _GRADE_RE.search(d)
         if gm:
             grade = gm.group(1).strip()
             if not grade.lower().startswith("grade"):
@@ -842,7 +873,16 @@ class McMasterAdapter:
                     r"[a-z]{3,}", grade
                 ):
                     grade = grade.upper().replace(" ", "")
+            return grade
+        for rx, alias in _GRADE_ALIASES:
+            if rx.search(d):
+                return alias
+        return ""
 
+    def _line_from_desc(
+        self, part: str, desc: str, qty: float, each: Optional[float]
+    ) -> ParsedLine:
+        grade = self._guess_grade(desc)
         form = self._guess_form(desc)
         size_label = self._normalize_size_label(desc)
 
