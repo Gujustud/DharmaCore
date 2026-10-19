@@ -11,13 +11,12 @@ const List<String> kMaterialForms = [
 ];
 
 String materialFormLabel(String form) {
-  switch (form) {
+  // Round stock: DB key is still `bar`, but the chip must say Rod (not Bar).
+  final key = form.trim().toLowerCase();
+  if (key == 'bar' || key == 'rod') return 'Rod';
+  switch (key) {
     case 'flat':
       return 'Flat';
-    case 'bar':
-    case 'rod':
-      // Stored key stays `bar` for round stock; UI says Rod (McMaster wording).
-      return 'Rod';
     case 'plate':
       return 'Plate';
     case 'sheet':
