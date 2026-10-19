@@ -49,7 +49,7 @@ def test_confirmation_block_prices_and_flat_size():
     assert delrin.form == "flat"
     assert steel.form == "flat"
     assert delrin.size_label == "3x3x12"
-    assert steel.size_label in ("1x2-1/2x12", "1x2.5x12")
+    assert steel.size_label == "1x2.5x12"
 
 
 def test_rod_not_flat():

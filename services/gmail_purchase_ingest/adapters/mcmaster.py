@@ -765,25 +765,39 @@ class McMasterAdapter:
         return None
 
     @staticmethod
-    def _dim_to_number(raw: str) -> Optional[str]:
-        """Normalize a dimension token to shop style (e.g. 2-1/2, 3, 1.5)."""
+    def _format_inch_number(v: float) -> str:
+        """Shop sizes use decimals, not fractions (2.5 not 2-1/2)."""
+        if abs(v - round(v)) < 1e-9:
+            return str(int(round(v)))
+        s = f"{v:.4f}".rstrip("0").rstrip(".")
+        return s
+
+    @classmethod
+    def _dim_to_number(cls, raw: str) -> Optional[str]:
+        """Normalize a dimension token to shop style (e.g. 2.5, 3, 1.5)."""
         s = (raw or "").strip().replace('"', "").replace("in", "").strip()
         if not s:
             return None
         m = _MIXED_HYPHEN_FRAC_RE.match(s)
         if m:
-            return f"{m.group(1)}-{m.group(2)}/{m.group(3)}"
+            whole, num, den = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if den == 0:
+                return s
+            return cls._format_inch_number(whole + (num / den))
         m = _FRAC_RE.match(s)
         if m:
             whole, num, den = int(m.group(1)), int(m.group(2)), int(m.group(3))
-            return f"{whole}-{num}/{den}"
-        if re.match(r"^\d+/\d+$", s):
-            return s
+            if den == 0:
+                return s
+            return cls._format_inch_number(whole + (num / den))
+        m = re.match(r"^(\d+)/(\d+)$", s)
+        if m:
+            num, den = int(m.group(1)), int(m.group(2))
+            if den == 0:
+                return s
+            return cls._format_inch_number(num / den)
         try:
-            v = float(s)
-            if v == int(v):
-                return str(int(v))
-            return f"{v:g}"
+            return cls._format_inch_number(float(s))
         except ValueError:
             return s
 
