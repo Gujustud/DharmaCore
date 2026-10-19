@@ -360,15 +360,16 @@ def _upsert_draft(
     if existing:
         draft = pb.update("purchase_drafts", existing["id"], body)
         draft_id = draft["id"]
-        # Only add lines from order confirmation if draft has none yet
         if email_type in ("order_confirmation",) and parsed.lines:
             existing_lines = pb.list(
                 "purchase_draft_lines",
                 filter=f'draft = "{draft_id}"',
-                per_page=5,
+                per_page=100,
             )
             if not existing_lines:
                 _create_lines(pb, draft_id, parsed.lines, materials)
+            else:
+                _enrich_lines_from_confirmation(pb, existing_lines, parsed.lines, materials)
     else:
         if not body.get("purchase_date"):
             body["purchase_date"] = _now_iso()[:10]
@@ -380,6 +381,58 @@ def _upsert_draft(
     # Attach PDFs (mill certs prefer material lines when present)
     _attach_files(pb, draft_id, parsed, msg, email_type=email_type)
     return draft_id
+
+
+def _enrich_lines_from_confirmation(
+    pb: PocketBaseClient,
+    existing_lines: list[dict[str, Any]],
+    parsed_lines: list[ParsedLine],
+    materials: list[dict[str, Any]],
+) -> None:
+    """Backfill unit_cost / richer description / form size when confirmation arrives late."""
+    by_part = {
+        str(l.get("part_number") or "").upper(): l
+        for l in existing_lines
+        if l.get("part_number")
+    }
+    for pl in parsed_lines:
+        pn = (pl.part_number or "").upper()
+        if not pn:
+            continue
+        existing = by_part.get(pn)
+        if not existing:
+            continue
+        patch: dict[str, Any] = {}
+        try:
+            cur_cost = float(existing.get("unit_cost") or 0)
+        except (TypeError, ValueError):
+            cur_cost = 0.0
+        if pl.unit_cost is not None and cur_cost <= 0:
+            patch["unit_cost"] = pl.unit_cost
+        cur_desc = str(existing.get("description") or "")
+        if pl.description and len(pl.description) > len(cur_desc) + 5:
+            patch["description"] = pl.description[:500]
+        # Refresh material proposal hints when we now have better form/size
+        if pl.form or pl.size_label or pl.grade:
+            match = match_material_line(
+                materials=materials,
+                grade=pl.grade,
+                form=pl.form,
+                size_label=pl.size_label,
+                description=pl.description,
+                line_type=pl.line_type or "material",
+            )
+            if match.status != "n_a":
+                patch["match_status"] = match.status
+            if match.proposed:
+                patch["proposed_material_json"] = json.dumps(match.proposed)
+            if match.matched_material_id and not existing.get("matched_material"):
+                patch["matched_material"] = match.matched_material_id
+        if patch:
+            try:
+                pb.update("purchase_draft_lines", existing["id"], patch)
+            except Exception:
+                log.exception("Failed to enrich draft line %s", existing.get("id"))
 
 
 def _create_lines(
@@ -398,8 +451,11 @@ def _create_lines(
             line_type=line.line_type,
         )
         proposal_id = None
-        if match.status == "propose_new" and match.proposed:
-            prop = pb.create_material_proposal(match.proposed, line.description)
+        proposed = dict(match.proposed) if match.proposed else None
+        if proposed and line.part_number:
+            proposed["notes"] = f"McMaster {line.part_number.upper()}"
+        if match.status == "propose_new" and proposed:
+            prop = pb.create_material_proposal(proposed, line.description)
             proposal_id = prop["id"]
 
         body: dict[str, Any] = {
@@ -421,8 +477,8 @@ def _create_lines(
             body["matched_material"] = match.matched_material_id
         if proposal_id:
             body["material_proposal"] = proposal_id
-        if match.proposed:
-            body["proposed_material_json"] = json.dumps(match.proposed)
+        if proposed:
+            body["proposed_material_json"] = json.dumps(proposed)
         if match.candidate_ids:
             body["candidate_material_ids"] = ",".join(match.candidate_ids)
         pb.create("purchase_draft_lines", body)

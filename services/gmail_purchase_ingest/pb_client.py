@@ -400,6 +400,9 @@ class PocketBaseClient:
             "source_description": source[:500] if source else "",
             "status": "pending",
         }
+        notes = (proposed.get("notes") or "").strip()
+        if notes:
+            body["notes"] = notes[:500]
         return self.create("material_proposals", body)
 
     def dumps_json(self, obj: Any) -> str:

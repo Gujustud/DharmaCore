@@ -5,10 +5,12 @@ import 'package:url_launcher/url_launcher.dart';
 import 'add_purchase_screen.dart';
 import 'drawer_behavior.dart';
 import 'list_toolbar_widgets.dart';
+import 'material_form_icons.dart';
 import 'models.dart';
 import 'pocketbase_service.dart';
 import 'shop_material_editor.dart';
 import 'ui_breakpoints.dart';
+import 'vendor_part_links.dart';
 import 'workspace_layout.dart';
 import 'workspace_scaffold.dart';
 
@@ -542,11 +544,37 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
           child: Row(
             children: [
               Expanded(
-                child: Text(
-                  '${selected.form} · ${selected.sizeLabel}',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${materialFormLabel(selected.form)} · ${selected.sizeLabel}',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                    if (mcmasterProductUrl(selected.notes) != null) ...[
+                      const SizedBox(height: 4),
+                      InkWell(
+                        onTap: () {
+                          final url = mcmasterProductUrl(selected.notes);
+                          if (url != null) {
+                            launchUrl(
+                              Uri.parse(url),
+                              mode: LaunchMode.externalApplication,
+                            );
+                          }
+                        },
+                        child: Text(
+                          'Order on McMaster: ${mcmasterPartNumberFromText(selected.notes)}',
+                          style: TextStyle(
+                            color: scheme.primary,
+                            decoration: TextDecoration.underline,
+                          ),
+                        ),
                       ),
+                    ],
+                  ],
                 ),
               ),
               TextButton.icon(

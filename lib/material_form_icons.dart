@@ -15,7 +15,9 @@ String materialFormLabel(String form) {
     case 'flat':
       return 'Flat';
     case 'bar':
-      return 'Bar';
+    case 'rod':
+      // Stored key stays `bar` for round stock; UI says Rod (McMaster wording).
+      return 'Rod';
     case 'plate':
       return 'Plate';
     case 'sheet':
@@ -27,6 +29,13 @@ String materialFormLabel(String form) {
     default:
       return form;
   }
+}
+
+/// Normalize UI/alias form keys to the catalog value stored in PocketBase.
+String canonicalMaterialForm(String form) {
+  final f = form.trim().toLowerCase();
+  if (f == 'rod') return 'bar';
+  return f;
 }
 
 /// Compact row of flat 2D form icons for picking [value].
@@ -174,7 +183,7 @@ class MaterialFormIconPainter extends CustomPainter {
     final c = Offset(size.width / 2, size.height / 2);
     final s = size.shortestSide;
 
-    switch (form) {
+    switch (canonicalMaterialForm(form)) {
       case 'flat':
         canvas.drawRect(
           Rect.fromCenter(center: c, width: s * 0.72, height: s * 0.28),

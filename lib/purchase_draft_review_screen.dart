@@ -5,6 +5,7 @@ import 'carrier_tracking.dart';
 import 'models.dart';
 import 'pocketbase_service.dart';
 import 'shop_material_editor.dart';
+import 'vendor_part_links.dart';
 
 /// Review / approve / reject an email-ingest purchase draft.
 class PurchaseDraftReviewScreen extends StatefulWidget {
@@ -169,18 +170,24 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
       } catch (_) {}
     }
     if (!mounted) return;
+    final part = (line.partNumber ?? '').trim();
+    var notes = (seed?['notes'] ?? '').toString().trim();
+    if (notes.isEmpty && part.isNotEmpty) {
+      notes = mcmasterNotesSeed(part);
+    } else if (part.isNotEmpty &&
+        mcmasterPartNumberFromText(notes) == null) {
+      notes = '$notes\n${mcmasterNotesSeed(part)}'.trim();
+    }
     final created = await showShopMaterialEditor(
       context,
-      existing: seed == null
-          ? null
-          : ShopMaterial(
-              id: '',
-              grade: (seed['grade'] ?? '').toString(),
-              form: (seed['form'] ?? 'other').toString(),
-              sizeLabel: (seed['size_label'] ?? '').toString(),
-              unit: (seed['unit'] ?? 'ea').toString(),
-              notes: seed['notes']?.toString(),
-            ),
+      existing: ShopMaterial(
+        id: '',
+        grade: (seed?['grade'] ?? '').toString(),
+        form: (seed?['form'] ?? 'other').toString(),
+        sizeLabel: (seed?['size_label'] ?? '').toString(),
+        unit: (seed?['unit'] ?? 'ea').toString(),
+        notes: notes.isEmpty ? null : notes,
+      ),
     );
     if (created == null) return;
     // Editor already created the material when saving without id — but our

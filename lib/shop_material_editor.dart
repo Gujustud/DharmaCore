@@ -46,7 +46,7 @@ class _ShopMaterialEditorDialogState extends State<_ShopMaterialEditorDialog> {
     _gradeCtrl = TextEditingController(text: existing?.grade ?? '');
     _sizeCtrl = TextEditingController(text: existing?.sizeLabel ?? '');
     _notesCtrl = TextEditingController(text: existing?.notes ?? '');
-    _form = existing?.form ?? 'flat';
+    _form = canonicalMaterialForm(existing?.form ?? 'flat');
     _unit = existing?.unit ?? 'ea';
     _loadGradeSuggestions();
   }
@@ -102,14 +102,14 @@ class _ShopMaterialEditorDialogState extends State<_ShopMaterialEditorDialog> {
           ? await pb.updateMaterial(
               existing.id,
               grade: grade,
-              form: _form,
+              form: canonicalMaterialForm(_form),
               sizeLabel: size,
               unit: _unit,
               notes: _notesCtrl.text,
             )
           : await pb.createMaterial(
               grade: grade,
-              form: _form,
+              form: canonicalMaterialForm(_form),
               sizeLabel: size,
               unit: _unit,
               notes: _notesCtrl.text,

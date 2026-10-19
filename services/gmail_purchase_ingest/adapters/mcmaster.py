@@ -30,14 +30,46 @@ _GRADE_RE = re.compile(
     r")\b",
     re.I,
 )
+# Shop catalog: `bar` key = round stock (UI label "Rod"). McMaster calls round "Rod"
+# and rectangular stock "Bar" (Thick/Wide) — map that to `flat`.
 _FORM_HINTS = [
-    (re.compile(r"\b(round\s+)?bar\b|\brod\b|\bdia\.?\b|\bdiameter\b", re.I), "bar"),
+    (re.compile(r"\bflat\s+bar\b|\brectangular\b", re.I), "flat"),
+    (re.compile(r"\brod\b|\bround\s+bar\b|\bdia\.?\b|\bdiameter\b", re.I), "bar"),
     (re.compile(r"\bplate\b", re.I), "plate"),
     (re.compile(r"\bsheet\b", re.I), "sheet"),
     (re.compile(r"\btube\b|\btubing\b|\bpipe\b", re.I), "tube"),
     (re.compile(r"\bhex\b", re.I), "hex"),
-    (re.compile(r"\bflat\s+bar\b|\brectangular\b", re.I), "flat"),
+    # Bare "bar" alone is ambiguous — resolved in _guess_form via Thick/Wide.
+    (re.compile(r"\bbar\b", re.I), "bar"),
 ]
+_FLAT_DIM_RE = re.compile(
+    r"\bthick\b|\bwide\b|\bwidth\b|\bthickness\b",
+    re.I,
+)
+_THICK_RE = re.compile(
+    r"(\d+(?:\s+\d+/\d+)?|\d+/\d+|\d+(?:\.\d+)?)\s*(?:\"|in(?:ch(?:es)?)?)?\s*Thick",
+    re.I,
+)
+_WIDE_RE = re.compile(
+    r"(\d+(?:\s+\d+/\d+)?|\d+/\d+|\d+(?:\.\d+)?(?:-\d+/\d+)?)\s*(?:\"|in(?:ch(?:es)?)?)?\s*Wide",
+    re.I,
+)
+_LENGTH_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*(?:ft|foot|feet)\.?(?:\s*(?:Length|Long))?"
+    r"|(\d+(?:\s+\d+/\d+)?|\d+/\d+|\d+(?:\.\d+)?)\s*(?:\"|in(?:ch(?:es)?)?)?\s*(?:Length|Long)",
+    re.I,
+)
+# Part must look like 8741K53 (letter family + digits) — not customer PO 1013ASOLANKI.
+_PART_NEAR_PRICE_RE = re.compile(
+    r"(?P<part>[0-9]{3,5}[A-Z][0-9]{1,6}[A-Z0-9]{0,4})\b.{0,160}?"
+    r"(?P<qty>\d+(?:\.\d+)?)\s*each.{0,60}?"
+    r"(?:(?P<unit>[0-9,]+\.[0-9]{2})\s*each|\$\s*(?P<dollar>[0-9,]+\.[0-9]{2}))",
+    re.I | re.S,
+)
+_PRICE_EACH_RE = re.compile(
+    r"([0-9,]+\.[0-9]{2})\s*each",
+    re.I,
+)
 
 # Primary: same-line "McMaster-Carr Number: 7110963" or "7110963-01".
 # Use [ \t] only — \s allowed "McMaster-Carr … <many lines> … Number: <invoice#>".
@@ -141,6 +173,8 @@ _SIZE_RE = re.compile(
     r")",
     re.I,
 )
+_FRAC_RE = re.compile(r"^(\d+)\s+(\d+)/(\d+)$")
+_MIXED_HYPHEN_FRAC_RE = re.compile(r"^(\d+)-(\d+)/(\d+)$")
 
 _MONTHS = {
     "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
@@ -568,10 +602,16 @@ class McMasterAdapter:
         return bool(re.fullmatch(r"[0-9]{3,5}[A-Z][0-9]{1,6}[A-Z0-9]{0,4}", p))
 
     def _parse_lines(self, text: str) -> list[ParsedLine]:
+        blob = text or ""
+        # Prefer McMaster confirmation blocks: P/N near "N each" + unit price
+        block_lines = self._parse_confirmation_blocks(blob)
+        if block_lines:
+            return block_lines
+
         lines: list[ParsedLine] = []
         seen_parts: set[str] = set()
 
-        for m in _PART_LINE_RE.finditer(text or ""):
+        for m in _PART_LINE_RE.finditer(blob):
             part = m.group("part").upper()
             if part in seen_parts or not self._looks_like_part_number(part):
                 continue
@@ -588,12 +628,15 @@ class McMasterAdapter:
                     each = float(m.group("each").replace(",", ""))
                 except ValueError:
                     each = None
+            # Also scan nearby for "113.92 each" if $ missing on same match
+            if each is None:
+                each = self._price_near(blob, m.start(), m.end())
             lines.append(self._line_from_desc(part, desc, qty, each))
 
         if lines:
             return lines
 
-        for raw_line in (text or "").splitlines():
+        for raw_line in blob.splitlines():
             pm = _PART_ONLY_RE.search(raw_line)
             if not pm:
                 continue
@@ -602,13 +645,189 @@ class McMasterAdapter:
                 continue
             money = _MONEY_RE.findall(raw_line)
             each = float(money[0].replace(",", "")) if money else None
-            qty_m = re.search(r"\b(\d+(?:\.\d+)?)\b", raw_line[pm.end() :])
+            if each is None:
+                pe = _PRICE_EACH_RE.search(raw_line)
+                if pe:
+                    each = float(pe.group(1).replace(",", ""))
+            qty_m = re.search(r"\b(\d+(?:\.\d+)?)\s*each\b", raw_line, re.I)
+            if not qty_m:
+                qty_m = re.search(r"\b(\d+(?:\.\d+)?)\b", raw_line[pm.end() :])
             qty = float(qty_m.group(1)) if qty_m else 1.0
             desc = raw_line.strip()
             seen_parts.add(part)
             lines.append(self._line_from_desc(part, desc, qty, each))
 
         return lines
+
+    def _parse_confirmation_blocks(self, text: str) -> list[ParsedLine]:
+        """Pull lines from confirmation layout (desc/dims/P/N/qty/price may span lines)."""
+        lines: list[ParsedLine] = []
+        seen: set[str] = set()
+        matches = [
+            m
+            for m in _PART_NEAR_PRICE_RE.finditer(text or "")
+            if self._looks_like_part_number(m.group("part"))
+        ]
+        for i, m in enumerate(matches):
+            part = m.group("part").upper()
+            if part in seen:
+                continue
+            seen.add(part)
+            try:
+                qty = float(m.group("qty") or 1)
+            except ValueError:
+                qty = 1.0
+            unit_s = m.group("unit") or m.group("dollar")
+            each = None
+            if unit_s:
+                try:
+                    each = float(unit_s.replace(",", ""))
+                except ValueError:
+                    each = None
+            # Prefer unit "113.92 each" over line-total $ when both present
+            pe = _PRICE_EACH_RE.search(m.group(0))
+            if pe:
+                try:
+                    each = float(pe.group(1).replace(",", ""))
+                except ValueError:
+                    pass
+            # Description window: after previous part's match end, before this part
+            prev_end = matches[i - 1].end() if i > 0 else max(0, m.start() - 220)
+            window = text[prev_end : m.end() + 20]
+            desc = re.sub(r"\s+", " ", window).strip()
+            # Drop leading price/qty leftovers from the prior line
+            desc = re.sub(
+                r"^(?:\$?\s*[0-9,]+\.[0-9]{2}\s*)+(?:each\s*)?",
+                "",
+                desc,
+                flags=re.I,
+            ).strip()
+            desc = re.sub(
+                r"^.*?(?=\b(?:White|Black|Low-Carbon|Aluminum|Steel|Delrin|Acetal|"
+                r"Nylon|Stainless|Brass|Copper|UHMW|PTFE|Multipurpose|[A-Z][a-z]+))",
+                "",
+                desc,
+                count=1,
+            )
+            if part not in desc:
+                desc = f"{desc} {part}".strip()
+            lines.append(self._line_from_desc(part, desc, qty, each))
+        return lines
+
+    @staticmethod
+    def _price_near(text: str, start: int, end: int) -> Optional[float]:
+        window = text[max(0, start - 40) : end + 160]
+        pe = _PRICE_EACH_RE.search(window)
+        if pe:
+            try:
+                return float(pe.group(1).replace(",", ""))
+            except ValueError:
+                return None
+        money = _MONEY_RE.findall(window)
+        if money:
+            try:
+                return float(money[0].replace(",", ""))
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
+    def _dim_to_number(raw: str) -> Optional[str]:
+        """Normalize a dimension token to shop style (e.g. 2-1/2, 3, 1.5)."""
+        s = (raw or "").strip().replace('"', "").replace("in", "").strip()
+        if not s:
+            return None
+        m = _MIXED_HYPHEN_FRAC_RE.match(s)
+        if m:
+            return f"{m.group(1)}-{m.group(2)}/{m.group(3)}"
+        m = _FRAC_RE.match(s)
+        if m:
+            whole, num, den = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            return f"{whole}-{num}/{den}"
+        if re.match(r"^\d+/\d+$", s):
+            return s
+        try:
+            v = float(s)
+            if v == int(v):
+                return str(int(v))
+            return f"{v:g}"
+        except ValueError:
+            return s
+
+    def _normalize_size_label(self, desc: str) -> str:
+        """Shop style thickness x width x length in inches, e.g. 3x3x12."""
+        d = desc or ""
+        thick = _THICK_RE.search(d)
+        wide = _WIDE_RE.search(d)
+        length = _LENGTH_RE.search(d)
+        parts: list[str] = []
+        if thick:
+            t = self._dim_to_number(thick.group(1))
+            if t:
+                parts.append(t)
+        if wide:
+            w = self._dim_to_number(wide.group(1))
+            if w:
+                parts.append(w)
+        if length:
+            if length.group(1):  # feet
+                try:
+                    ft = float(length.group(1))
+                    inches = int(ft * 12) if ft == int(ft) else ft * 12
+                    parts.append(str(int(inches)) if float(inches) == int(inches) else f"{inches:g}")
+                except ValueError:
+                    pass
+            elif length.group(2):
+                ln = self._dim_to_number(length.group(2))
+                if ln:
+                    parts.append(ln)
+        if len(parts) >= 2:
+            return "x".join(parts)
+
+        # Round / rod: "1\" dia x 3 ft" → 1x36
+        dia = re.search(
+            r"(\d+(?:\.\d+)?(?:\s+\d+/\d+)?|\d+/\d+)\s*(?:\"|in)?\s*(?:dia(?:meter|\.)?|Ø)",
+            d,
+            re.I,
+        )
+        rod_len = re.search(
+            r"[x×]\s*(\d+(?:\.\d+)?)\s*(ft|foot|feet|\"|in)?",
+            d,
+            re.I,
+        )
+        if dia:
+            d0 = self._dim_to_number(dia.group(1))
+            if d0 and rod_len:
+                unit = (rod_len.group(2) or "").lower()
+                try:
+                    n = float(rod_len.group(1))
+                except ValueError:
+                    n = None
+                if n is not None:
+                    if unit.startswith("ft") or unit.startswith("foot"):
+                        inches = int(n * 12) if n == int(n) else n * 12
+                        return f"{d0}x{int(inches) if float(inches) == int(inches) else f'{inches:g}'}"
+                    return f"{d0}x{self._dim_to_number(rod_len.group(1))}"
+            if d0:
+                return d0
+        return ""
+
+    def _guess_form(self, desc: str) -> str:
+        d = desc or ""
+        # McMaster rectangular "Bar" with Thick/Wide → flat stock
+        if _FLAT_DIM_RE.search(d) and re.search(r"\bbar\b", d, re.I):
+            if not re.search(r"\brod\b|\bround\b|\bdia\.?\b|\bdiameter\b", d, re.I):
+                return "flat"
+        for rx, key in _FORM_HINTS:
+            if rx.search(d):
+                # Final bare-bar rule: Thick/Wide wins over round `bar` key
+                if key == "bar" and _FLAT_DIM_RE.search(d):
+                    if not re.search(r"\brod\b|\bround\b|\bdia\.?\b", d, re.I):
+                        return "flat"
+                return key
+        if _FLAT_DIM_RE.search(d):
+            return "flat"
+        return ""
 
     def _line_from_desc(
         self, part: str, desc: str, qty: float, each: Optional[float]
@@ -624,16 +843,8 @@ class McMasterAdapter:
                 ):
                     grade = grade.upper().replace(" ", "")
 
-        form = ""
-        for rx, key in _FORM_HINTS:
-            if rx.search(desc):
-                form = key
-                break
-
-        size_label = ""
-        sm = _SIZE_RE.search(desc)
-        if sm:
-            size_label = re.sub(r"\s+", " ", sm.group(1).strip())
+        form = self._guess_form(desc)
+        size_label = self._normalize_size_label(desc)
 
         # Plastics / metals with bar/plate/etc. count as material
         is_material = bool(grade or form) or bool(

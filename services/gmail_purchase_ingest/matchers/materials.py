@@ -169,13 +169,15 @@ _GRADE_RE = re.compile(
     re.I,
 )
 _FORM_HINTS = [
-    (re.compile(r"\bbar\b|\brod\b|\bdia\b", re.I), "bar"),
+    (re.compile(r"\bflat\s+bar\b|\bflat\b", re.I), "flat"),
+    (re.compile(r"\brod\b|\bround\s+bar\b|\bdia\b|\bdiameter\b", re.I), "bar"),
     (re.compile(r"\bplate\b", re.I), "plate"),
     (re.compile(r"\bsheet\b", re.I), "sheet"),
     (re.compile(r"\btube\b|\btubing\b", re.I), "tube"),
     (re.compile(r"\bhex\b", re.I), "hex"),
-    (re.compile(r"\bflat\b", re.I), "flat"),
+    (re.compile(r"\bbar\b", re.I), "bar"),
 ]
+_FLAT_DIM_RE = re.compile(r"\bthick\b|\bwide\b|\bwidth\b|\bthickness\b", re.I)
 _SIZE_RE = re.compile(
     r"(\d+(?:\.\d+)?\s*(?:\"|in)?(?:\s*[x×]\s*\d+(?:\.\d+)?\s*(?:\"|in|ft)?){0,3})",
     re.I,
@@ -188,9 +190,18 @@ def _guess_grade(description: str) -> str:
 
 
 def _guess_form(description: str) -> str:
+    d = description or ""
+    if _FLAT_DIM_RE.search(d) and re.search(r"\bbar\b", d, re.I):
+        if not re.search(r"\brod\b|\bround\b|\bdia\.?\b|\bdiameter\b", d, re.I):
+            return "flat"
     for rx, key in _FORM_HINTS:
-        if rx.search(description or ""):
+        if rx.search(d):
+            if key == "bar" and _FLAT_DIM_RE.search(d):
+                if not re.search(r"\brod\b|\bround\b|\bdia\.?\b", d, re.I):
+                    return "flat"
             return key
+    if _FLAT_DIM_RE.search(d):
+        return "flat"
     return ""
 
 
