@@ -280,7 +280,7 @@ def _upsert_draft(
         customer_po=customer_po or None,
         tracking=parsed.tracking or None,
     )
-    supplier_id = _supplier_id(vendor)
+    supplier_id = _supplier_id(pb, vendor)
     currency = (
         parsed.currency
         or vendor.get("default_currency")
@@ -370,6 +370,8 @@ def _upsert_draft(
                 _create_lines(pb, draft_id, parsed.lines, materials)
             else:
                 _enrich_lines_from_confirmation(pb, existing_lines, parsed.lines, materials)
+        # Receipt / late confirmation may carry shipping when product lines already exist
+        _ensure_shipping_line(pb, draft_id, parsed.lines)
     else:
         if not body.get("purchase_date"):
             body["purchase_date"] = _now_iso()[:10]
@@ -378,7 +380,7 @@ def _upsert_draft(
         if parsed.lines:
             _create_lines(pb, draft_id, parsed.lines, materials)
 
-    # Attach PDFs (mill certs prefer material lines when present)
+    # Attach PDFs (mill certs prefer steel material lines when present)
     _attach_files(pb, draft_id, parsed, msg, email_type=email_type)
     return draft_id
 
@@ -463,8 +465,8 @@ def _create_lines(
             "line_type": line.line_type if line.line_type in (
                 "item", "material", "misc", "tax", "shipping"
             ) else "misc",
-            "description": line.description[:500],
-            "part_number": line.part_number[:100],
+            "description": (line.description or "")[:500],
+            "part_number": (line.part_number or "")[:100],
             "quantity": line.quantity,
             "sort_order": i * 10,
             "match_status": match.status if match.status != "n_a" else "n_a",
@@ -481,7 +483,101 @@ def _create_lines(
             body["proposed_material_json"] = json.dumps(proposed)
         if match.candidate_ids:
             body["candidate_material_ids"] = ",".join(match.candidate_ids)
+        # Shipping / tax lines are not material matches
+        if line.line_type in ("shipping", "tax"):
+            body["match_status"] = "n_a"
+            body.pop("matched_material", None)
+            body.pop("material_proposal", None)
+            body.pop("proposed_material_json", None)
+            body.pop("candidate_material_ids", None)
+            if not body.get("description"):
+                body["description"] = "Shipping" if line.line_type == "shipping" else "Tax"
         pb.create("purchase_draft_lines", body)
+
+
+def _ensure_shipping_line(
+    pb: PocketBaseClient,
+    draft_id: str,
+    parsed_lines: list[ParsedLine],
+) -> None:
+    """Add a shipping draft line when a later email has shipping and the draft does not."""
+    ship = next((l for l in parsed_lines if l.line_type == "shipping" and l.unit_cost), None)
+    if ship is None or ship.unit_cost is None:
+        return
+    try:
+        existing = pb.list(
+            "purchase_draft_lines",
+            filter=f'draft = "{draft_id}" && line_type = "shipping"',
+            per_page=5,
+        )
+        if existing:
+            # Update zero/empty cost if we now have a real amount
+            for row in existing:
+                try:
+                    cur = float(row.get("unit_cost") or 0)
+                except (TypeError, ValueError):
+                    cur = 0.0
+                if cur <= 0 and float(ship.unit_cost) > 0:
+                    pb.update(
+                        "purchase_draft_lines",
+                        row["id"],
+                        {
+                            "unit_cost": float(ship.unit_cost),
+                            "description": (ship.description or "Shipping")[:500],
+                            "quantity": 1,
+                        },
+                    )
+            return
+        pb.create(
+            "purchase_draft_lines",
+            {
+                "draft": draft_id,
+                "line_type": "shipping",
+                "description": (ship.description or "Shipping")[:500],
+                "quantity": 1,
+                "unit_cost": float(ship.unit_cost),
+                "sort_order": 9000,
+                "match_status": "n_a",
+            },
+        )
+    except Exception:
+        log.exception("Failed to ensure shipping line on draft %s", draft_id)
+
+
+def _prefer_mill_cert_line(lines: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """Prefer steel / metal material lines for mill certs (not Delrin/plastic)."""
+    if not lines:
+        return None
+
+    def _score(row: dict[str, Any]) -> int:
+        blob = " ".join(
+            str(row.get(k) or "")
+            for k in ("description", "part_number", "proposed_material_json")
+        ).lower()
+        score = 0
+        if any(
+            k in blob
+            for k in (
+                "steel",
+                "1018",
+                "1045",
+                "4140",
+                "4340",
+                "a36",
+                "stainless",
+                "aluminum",
+                "aluminium",
+                "6061",
+                "7075",
+            )
+        ):
+            score += 50
+        if any(k in blob for k in ("delrin", "acetal", "nylon", "uhmw", "ptfe", "plastic", "resin")):
+            score -= 40
+        return score
+
+    ranked = sorted(lines, key=_score, reverse=True)
+    return ranked[0]
 
 
 def _attach_files(
@@ -510,7 +606,7 @@ def _attach_files(
         elif role in ("invoice", "confirmation") or filename.lower().endswith(".pdf"):
             other_files.append(item)
 
-    # Prefer attaching mill certs onto material draft lines
+    # Prefer attaching mill certs onto steel/metal material draft lines
     if mill_certs:
         attached_to_line = False
         try:
@@ -520,11 +616,11 @@ def _attach_files(
                 sort="sort_order",
                 per_page=20,
             )
-            if lines:
-                # Put cert on first material line (typical single-cert steel order)
+            target = _prefer_mill_cert_line(lines)
+            if target:
                 pb.upload_files(
                     "purchase_draft_lines",
-                    lines[0]["id"],
+                    target["id"],
                     "mill_certs",
                     mill_certs[:8],
                 )
@@ -543,14 +639,47 @@ def _attach_files(
             log.exception("Failed to upload draft attachments")
 
 
-def _supplier_id(vendor: dict[str, Any]) -> Optional[str]:
+def _supplier_id(pb: PocketBaseClient, vendor: dict[str, Any]) -> Optional[str]:
+    """Resolve supplier from vendor relation, else name match (McMaster-Carr, …)."""
     s = vendor.get("supplier")
     if isinstance(s, str) and s:
         return s
     expand = vendor.get("expand") or {}
     sup = expand.get("supplier")
-    if isinstance(sup, dict):
-        return sup.get("id")
+    if isinstance(sup, dict) and sup.get("id"):
+        return str(sup["id"])
+
+    # Fallback: match suppliers.company_name to vendor display name / key
+    names: list[str] = []
+    for key in ("name", "vendor_key"):
+        raw = (vendor.get(key) or "").strip()
+        if raw:
+            names.append(raw)
+    vk = (vendor.get("vendor_key") or "").strip().lower()
+    if vk == "mcmaster":
+        names.extend(["McMaster-Carr", "McMaster", "McMaster Carr"])
+    elif vk == "dgi_supply":
+        names.extend(["DGI Supply", "DGI Supply Canada", "DGI"])
+
+    seen: set[str] = set()
+    for name in names:
+        needle = name.strip().lower()
+        if not needle or needle in seen:
+            continue
+        seen.add(needle)
+        try:
+            # Prefer exact-ish contains match via PocketBase filter
+            safe = name.replace('"', "").replace("'", "")
+            if not safe:
+                continue
+            hit = pb.get_first(
+                "suppliers",
+                filter=f'company_name ~ "{safe}"',
+            )
+            if hit and hit.get("id"):
+                return str(hit["id"])
+        except Exception:
+            log.debug("Supplier name lookup failed for %s", name, exc_info=True)
     return None
 
 

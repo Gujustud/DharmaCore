@@ -1274,7 +1274,7 @@ class PocketBaseService {
     try {
       return await pb.collection('purchase_drafts').getOne(
         id,
-        expand: 'supplier,email_ingest_vendor',
+        expand: 'supplier,email_ingest_vendor,email_ingest_vendor.supplier',
       );
     } catch (e) {
       print('Error getting purchase draft: $e');
@@ -1434,9 +1434,11 @@ class PocketBaseService {
     final freshLineRecs = await getPurchaseDraftLines(draftId);
     final freshLines = freshLineRecs.map(PurchaseDraftLine.fromRecord).toList();
 
+    final supplierId = await _resolveDraftSupplierId(draft, draftRec);
+
     final purchase = await createPurchase(
       purchaseDate: draft.purchaseDate ?? DateTime.now(),
-      supplierId: draft.supplierId,
+      supplierId: supplierId,
       orderReference: draft.orderReference,
       invoice: draft.invoice,
       notes: [
@@ -1448,24 +1450,162 @@ class PocketBaseService {
       currency: draft.currency,
     );
 
-    for (final line in freshLines) {
+    final purchaseId = purchase.id as String;
+
+    for (var i = 0; i < freshLines.length; i++) {
+      final line = freshLines[i];
+      final lineRec = freshLineRecs[i];
+      List<http.MultipartFile>? millCertFiles;
+      if (line.lineType == 'material' && line.millCertNames.isNotEmpty) {
+        millCertFiles = await _millCertPartsFromDraftLine(lineRec, line.millCertNames);
+      }
       await createPurchaseItem(
-        purchaseId: purchase.id as String,
+        purchaseId: purchaseId,
         materialId: line.lineType == 'material' ? line.matchedMaterialId : null,
-        quantity: line.quantity,
+        quantity: line.lineType == 'shipping' ? 1 : line.quantity,
         unitCost: line.unitCost,
         lineType: line.lineType,
-        description: line.description ?? line.partNumber,
+        description: line.lineType == 'shipping'
+            ? ((line.description == null || line.description!.trim().isEmpty)
+                ? 'Shipping'
+                : line.description)
+            : (line.description ?? line.partNumber),
         heatLot: line.heatLot,
+        millCertFiles: millCertFiles,
       );
     }
+
+    // Copy draft-level PDFs (invoice/confirmation) onto the purchase
+    await _copyDraftAttachmentsToPurchase(draftRec, purchaseId);
 
     await updatePurchaseDraft(draftId, {
       'status': 'approved',
       'approved_purchase': purchase.id,
     });
 
-    return purchase.id as String;
+    return purchaseId;
+  }
+
+  /// Supplier from draft, linked ingest vendor, or company_name match.
+  Future<String?> _resolveDraftSupplierId(
+    PurchaseDraft draft,
+    dynamic draftRec,
+  ) async {
+    final existing = draft.supplierId?.trim();
+    if (existing != null && existing.isNotEmpty) return existing;
+
+    try {
+      final expand = draftRec.expand;
+      if (expand != null) {
+        final vendor = expand['email_ingest_vendor'];
+        final raw = (vendor is List && vendor.isNotEmpty) ? vendor[0] : vendor;
+        if (raw != null) {
+          final data = raw.data as Map<String, dynamic>? ?? {};
+          final linked = data['supplier']?.toString();
+          if (linked != null && linked.isNotEmpty) return linked;
+          // Expanded supplier on the vendor row
+          try {
+            final vExpand = raw.expand;
+            final sup = vExpand?['supplier'];
+            final sRaw = (sup is List && sup.isNotEmpty) ? sup[0] : sup;
+            final sid = sRaw?.id?.toString();
+            if (sid != null && sid.isNotEmpty) return sid;
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+
+    final needles = <String>[];
+    final vendorName = draft.vendorName?.trim();
+    final vendorKey = draft.vendorKey?.trim().toLowerCase();
+    if (vendorName != null && vendorName.isNotEmpty) needles.add(vendorName);
+    if (vendorKey == 'mcmaster') {
+      needles.addAll(['McMaster-Carr', 'McMaster', 'McMaster Carr']);
+    } else if (vendorKey == 'dgi_supply') {
+      needles.addAll(['DGI Supply', 'DGI Supply Canada', 'DGI']);
+    } else if (vendorKey != null && vendorKey.isNotEmpty) {
+      needles.add(vendorKey);
+    }
+
+    if (needles.isEmpty) return null;
+    try {
+      final suppliers = await getSuppliers();
+      for (final needle in needles) {
+        final n = needle.toLowerCase();
+        for (final s in suppliers) {
+          final name = (s.data['company_name'] ?? '').toString().toLowerCase();
+          if (name.isEmpty) continue;
+          if (name == n || name.contains(n) || n.contains(name)) {
+            return s.id as String;
+          }
+        }
+      }
+    } catch (e) {
+      print('Error resolving draft supplier by name: $e');
+    }
+    return null;
+  }
+
+  Future<List<http.MultipartFile>> _millCertPartsFromDraftLine(
+    dynamic lineRec,
+    List<String> filenames,
+  ) async {
+    final out = <http.MultipartFile>[];
+    for (final name in filenames) {
+      if (name.trim().isEmpty) continue;
+      try {
+        final bytes = await downloadRecordFile(lineRec, name);
+        if (bytes.isEmpty) continue;
+        out.add(
+          http.MultipartFile.fromBytes(
+            'mill_certs+',
+            bytes,
+            filename: name,
+          ),
+        );
+      } catch (e) {
+        print('Could not copy mill cert $name from draft line: $e');
+      }
+    }
+    return out;
+  }
+
+  Future<void> _copyDraftAttachmentsToPurchase(
+    dynamic draftRec,
+    String purchaseId,
+  ) async {
+    final data = draftRec.data as Map<String, dynamic>? ?? {};
+    final names = <String>[];
+    final raw = data['attachments'];
+    if (raw is List) {
+      names.addAll(raw.map((e) => e.toString()).where((s) => s.isNotEmpty));
+    } else if (raw != null && raw.toString().isNotEmpty) {
+      names.add(raw.toString());
+    }
+    if (names.isEmpty) return;
+
+    final uploads = <http.MultipartFile>[];
+    for (final name in names) {
+      try {
+        final bytes = await downloadRecordFile(draftRec, name);
+        if (bytes.isEmpty) continue;
+        uploads.add(
+          http.MultipartFile.fromBytes(
+            'attachments+',
+            bytes,
+            filename: name,
+          ),
+        );
+      } catch (e) {
+        print('Could not copy draft attachment $name: $e');
+      }
+    }
+    if (uploads.isEmpty) return;
+    try {
+      await uploadPurchaseAttachments(purchaseId, uploads);
+    } catch (e) {
+      print('Error uploading draft attachments to purchase: $e');
+    }
   }
 
   Future<void> rejectPurchaseDraft(String draftId) async {

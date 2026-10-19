@@ -324,6 +324,81 @@ def test_parse_lines_and_order():
     assert "6061" in mat.grade.upper()
 
 
+def test_explicit_shipping_line_from_receipt():
+    a = McMasterAdapter()
+    body = (
+        "Receipt for Your October 13th Order with McMaster-Carr\n"
+        "McMaster-Carr number 7110963\n"
+        "Merchandise $159.33\n"
+        "Shipping $38.92\n"
+        "Order Total: $198.25\n"
+    )
+    msg = EmailMessage(
+        "ship-explicit",
+        from_address="sales@mcmaster.com",
+        subject="Receipt for Your October 13th Order with McMaster-Carr",
+        body_text=body,
+    )
+    parsed = a.parse(msg)
+    ships = [l for l in parsed.lines if l.line_type == "shipping"]
+    assert len(ships) == 1
+    assert ships[0].unit_cost == 38.92
+    assert ships[0].description == "Shipping"
+
+
+def test_shipping_inferred_from_total_minus_line_items():
+    """Confirmation often has Order Total but no Shipping row — infer remainder."""
+    a = McMasterAdapter()
+    body = """
+    Confirmation for Your October 13th Order with McMaster-Carr
+    McMaster-Carr number 7110963 1013ASOLANKI
+
+    White Delrin Acetal Resin Bar Oversized Tolerance
+    3" Thick, 3" Wide, 1 ft. Length
+    8741K53
+    1 each
+    113.92 each
+    $113.92
+
+    Low-Carbon Steel Bar
+    1" Thick, 2-1/2" Wide, 1 Foot Long
+    8910K54
+    1 each
+    45.41 each
+    $45.41
+
+    Order Total: $198.25
+    """
+    msg = EmailMessage(
+        "ship-infer",
+        from_address="orders@mcmaster.com",
+        subject="Confirmation for Your October 13th Order with McMaster-Carr",
+        body_text=body,
+    )
+    parsed = a.parse(msg)
+    ships = [l for l in parsed.lines if l.line_type == "shipping"]
+    assert len(ships) == 1
+    assert ships[0].unit_cost == 38.92
+
+
+def test_merchandise_order_total_is_not_merchandise_subtotal():
+    a = McMasterAdapter()
+    # Must not treat "Merchandise Order Total: $198.25" as merchandise=$198.25
+    assert a._find_shipping_amount(
+        "Merchandise Order Total: $198.25",
+        lines=[],
+        total=198.25,
+    ) is None
+    assert (
+        a._find_shipping_amount(
+            "Merchandise $159.33\nOrder Total: $198.25",
+            lines=[],
+            total=198.25,
+        )
+        == 38.92
+    )
+
+
 def test_material_matcher_propose_and_match():
     materials = [
         {"id": "m1", "grade": "6061-T6", "form": "bar", "size_label": '1" dia x 3 ft'},

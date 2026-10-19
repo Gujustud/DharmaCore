@@ -41,7 +41,7 @@ def test_confirmation_block_prices_and_flat_size():
     assert parsed.order_reference == "7110963"
     assert parsed.total == 198.25
     assert len(parsed.lines) >= 2
-    by_pn = {l.part_number.upper(): l for l in parsed.lines}
+    by_pn = {l.part_number.upper(): l for l in parsed.lines if l.part_number}
     delrin = by_pn["8741K53"]
     steel = by_pn["8910K54"]
     assert delrin.unit_cost == 113.92
@@ -50,6 +50,8 @@ def test_confirmation_block_prices_and_flat_size():
     assert steel.form == "flat"
     assert delrin.size_label == "3x3x12"
     assert steel.size_label == "1x2.5x12"
+    ships = [l for l in parsed.lines if l.line_type == "shipping"]
+    assert len(ships) == 1 and ships[0].unit_cost == 38.92
 
 
 def test_rod_not_flat():
@@ -100,13 +102,15 @@ def test_strips_payment_method_and_maps_low_carbon_to_1018():
         body_text=body,
     )
     parsed = a.parse(msg)
-    by_pn = {l.part_number.upper(): l for l in parsed.lines}
+    by_pn = {l.part_number.upper(): l for l in parsed.lines if l.part_number}
     d = by_pn["8741K53"]
     s = by_pn["8910K54"]
     assert "Payment" not in d.description and "Visa" not in d.description
     assert d.description.startswith("White Delrin")
     assert s.grade == "1018"
     assert s.description.startswith("Low-Carbon Steel")
+    ships = [l for l in parsed.lines if l.line_type == "shipping"]
+    assert len(ships) == 1 and ships[0].unit_cost == 38.92
 
 
 if __name__ == "__main__":

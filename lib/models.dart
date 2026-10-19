@@ -763,6 +763,8 @@ class PurchaseDraftLine {
   final Map<String, dynamic>? proposedMaterial;
   final List<String> candidateMaterialIds;
   final int sortOrder;
+  /// Mill cert filenames on this draft line (`purchase_draft_lines.mill_certs`).
+  final List<String> millCertNames;
 
   PurchaseDraftLine({
     required this.id,
@@ -780,6 +782,7 @@ class PurchaseDraftLine {
     this.proposedMaterial,
     this.candidateMaterialIds = const [],
     this.sortOrder = 0,
+    this.millCertNames = const [],
   });
 
   factory PurchaseDraftLine.fromRecord(dynamic record) {
@@ -829,6 +832,7 @@ class PurchaseDraftLine {
       proposedMaterial: proposed,
       candidateMaterialIds: candidates,
       sortOrder: (data['sort_order'] as num?)?.toInt() ?? 0,
+      millCertNames: _fileNamesFrom(data['mill_certs']),
     );
   }
 }

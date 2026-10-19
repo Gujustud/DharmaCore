@@ -357,9 +357,12 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
     };
     final subtitle = [
       if ((line.partNumber ?? '').isNotEmpty) 'P/N ${line.partNumber}',
-      'Qty ${line.quantity}',
+      if (line.lineType == 'shipping') 'Shipping'
+      else 'Qty ${line.quantity}',
       if (line.unitCost != null) '\$${line.unitCost!.toStringAsFixed(2)}',
       if (line.matchedMaterialLabel != null) line.matchedMaterialLabel!,
+      if (line.millCertNames.isNotEmpty)
+        '${line.millCertNames.length} mill cert${line.millCertNames.length == 1 ? '' : 's'}',
     ].join(' · ');
 
     return Card(

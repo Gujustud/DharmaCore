@@ -165,6 +165,21 @@ _TOTAL_RE = re.compile(
     r"(?:order\s*total|total(?:\s*due)?|amount\s*due)\s*[:$]?\s*\$?\s*([0-9,]+\.[0-9]{2})",
     re.I,
 )
+# Footer rows on confirmation / receipt (Merchandise / Shipping / Tax).
+_SHIPPING_RE = re.compile(
+    r"(?:^|\b)(?:shipping(?:\s*(?:&|and)\s*handling)?|freight|delivery)\s*"
+    r"[:$]?\s*\$?\s*([0-9,]+\.[0-9]{2})",
+    re.I | re.M,
+)
+# Real merchandise subtotal — never "Merchandise Order Total" (that is order total).
+_MERCHANDISE_RE = re.compile(
+    r"(?:^|\b)merchandise(?!\s+order\b)(?:\s*subtotal)?\s*[:$]?\s*\$?\s*([0-9,]+\.[0-9]{2})",
+    re.I | re.M,
+)
+_TAX_RE = re.compile(
+    r"(?:^|\b)(?:gst|hst|pst|sales\s*tax|tax)\s*[:$]?\s*\$?\s*([0-9,]+\.[0-9]{2})",
+    re.I | re.M,
+)
 _DATE_RE = re.compile(
     r"\b((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}"
     r"|\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{2,4})\b",
@@ -308,6 +323,20 @@ class McMasterAdapter:
             lines = self._parse_lines(text)
             if not lines and email_type == "order_confirmation":
                 parse_notes_parts.append("No line items extracted; review manually.")
+
+        # Shipping from confirmation / receipt footer (or total − merchandise).
+        if email_type in ("order_confirmation", "invoice", "other", "shipping"):
+            ship = self._find_shipping_amount(text, lines=lines, total=total)
+            if ship is not None and ship > 0:
+                if not any(l.line_type == "shipping" for l in lines):
+                    lines.append(
+                        ParsedLine(
+                            line_type="shipping",
+                            description="Shipping",
+                            quantity=1.0,
+                            unit_cost=ship,
+                        )
+                    )
 
         # Tracking lives on draft.tracking — do not also stuff it into notes (UI dupes).
 
@@ -578,6 +607,69 @@ class McMasterAdapter:
                 return float(m.group(1).replace(",", ""))
             except ValueError:
                 return None
+        return None
+
+    @staticmethod
+    def _parse_money(raw: Optional[str]) -> Optional[float]:
+        if not raw:
+            return None
+        try:
+            return float(raw.replace(",", ""))
+        except ValueError:
+            return None
+
+    @classmethod
+    def _find_shipping_amount(
+        cls,
+        text: str,
+        *,
+        lines: Optional[list[ParsedLine]] = None,
+        total: Optional[float] = None,
+    ) -> Optional[float]:
+        """Explicit Shipping row, else Order Total − Merchandise (− tax)."""
+        blob = text or ""
+        m = _SHIPPING_RE.search(blob)
+        if m:
+            amt = cls._parse_money(m.group(1))
+            if amt is not None and amt >= 0:
+                return amt
+
+        merch = None
+        merch_from_lines = False
+        mm = _MERCHANDISE_RE.search(blob)
+        if mm:
+            merch = cls._parse_money(mm.group(1))
+        if merch is None and lines:
+            # Sum product lines when footer has no Merchandise row
+            sub = 0.0
+            any_priced = False
+            for pl in lines:
+                if pl.line_type in ("shipping", "tax"):
+                    continue
+                if pl.unit_cost is None:
+                    continue
+                any_priced = True
+                sub += float(pl.quantity or 1) * float(pl.unit_cost)
+            if any_priced:
+                merch = round(sub, 2)
+                merch_from_lines = True
+
+        tax = 0.0
+        for tm in _TAX_RE.finditer(blob):
+            t = cls._parse_money(tm.group(1))
+            if t is not None:
+                tax += t
+
+        if total is not None and merch is not None:
+            ship = round(float(total) - float(merch) - tax, 2)
+            if abs(ship) < 0.01:
+                return 0.0
+            if ship < 0.01:
+                return None
+            # Partial line parses must not invent a huge "shipping" remainder
+            if merch_from_lines and float(total) > 0 and ship > float(total) * 0.55:
+                return None
+            return ship
         return None
 
     @staticmethod
