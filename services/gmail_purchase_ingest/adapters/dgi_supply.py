@@ -209,10 +209,12 @@ class DgiSupplyAdapter:
             )
 
         if freight and freight > 0 and not any(l.line_type == "shipping" for l in lines):
+            # DGI Next Day Air is a fixed $34.95 charge on these invoices
+            ship_desc = "Next Day Air" if abs(float(freight) - 34.95) < 0.01 else ""
             lines.append(
                 ParsedLine(
                     line_type="shipping",
-                    description="Shipping",
+                    description=ship_desc,
                     quantity=1.0,
                     unit_cost=freight,
                 )

@@ -560,14 +560,18 @@ def _create_lines(
             body.pop("material_proposal", None)
             body.pop("proposed_material_json", None)
             body.pop("candidate_material_ids", None)
-            if not body.get("description"):
-                body["description"] = "Shipping" if line.line_type == "shipping" else "Tax"
+            if line.line_type == "tax" and not body.get("description"):
+                body["description"] = "Tax"
+            # shipping: keep parser description (e.g. Next Day Air) or empty — never force "Shipping"
         try:
             pb.create("purchase_draft_lines", body)
         except Exception:
             # Older PB without matched_tool field — retry without it
             if "matched_tool" in body:
                 body.pop("matched_tool", None)
+                # Don't claim matched if we could not store the tool id
+                if body.get("match_status") == "matched":
+                    body["match_status"] = "none"
                 pb.create("purchase_draft_lines", body)
             else:
                 raise
@@ -644,30 +648,32 @@ def _ensure_shipping_line(
             filter=f'draft = "{draft_id}" && line_type = "shipping"',
             per_page=5,
         )
+        ship_desc = (ship.description or "").strip()
         if existing:
-            # Update zero/empty cost if we now have a real amount
             for row in existing:
                 try:
                     cur = float(row.get("unit_cost") or 0)
                 except (TypeError, ValueError):
                     cur = 0.0
+                patch: dict[str, Any] = {}
                 if cur <= 0 and float(ship.unit_cost) > 0:
-                    pb.update(
-                        "purchase_draft_lines",
-                        row["id"],
-                        {
-                            "unit_cost": float(ship.unit_cost),
-                            "description": (ship.description or "Shipping")[:500],
-                            "quantity": 1,
-                        },
-                    )
+                    patch["unit_cost"] = float(ship.unit_cost)
+                    patch["quantity"] = 1
+                # Upgrade generic "Shipping" / empty → Next Day Air etc.
+                cur_desc = str(row.get("description") or "").strip()
+                if ship_desc and (
+                    not cur_desc or cur_desc.lower() == "shipping"
+                ):
+                    patch["description"] = ship_desc[:500]
+                if patch:
+                    pb.update("purchase_draft_lines", row["id"], patch)
             return
         pb.create(
             "purchase_draft_lines",
             {
                 "draft": draft_id,
                 "line_type": "shipping",
-                "description": (ship.description or "Shipping")[:500],
+                "description": ship_desc[:500],
                 "quantity": 1,
                 "unit_cost": float(ship.unit_cost),
                 "sort_order": 9000,
@@ -853,8 +859,10 @@ def _attach_files(
 
     if other_files:
         try:
+            # attachments+ appends so invoice PDF is kept alongside order ack;
+            # approve prefers invoice / non-ack when copying to the purchase.
             pb.upload_files(
-                "purchase_drafts", draft_id, "attachments", other_files[:12]
+                "purchase_drafts", draft_id, "attachments+", other_files[:12]
             )
         except Exception:
             log.exception("Failed to upload draft attachments")

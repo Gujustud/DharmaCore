@@ -225,19 +225,45 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
                     raw == 'misc'
                 ? raw
                 : 'item';
+            // Resolve tool label from catalog when expand did not populate toolName
+            var toolName = item.toolName ?? '';
+            final toolId = item.toolId;
+            if (type == 'item' &&
+                toolName.isEmpty &&
+                toolId != null &&
+                toolId.isNotEmpty) {
+              for (final t in _tools) {
+                if (t.id != toolId) continue;
+                final model = (t.modelNumber ?? '').trim();
+                toolName = model.isEmpty
+                    ? t.toolName
+                    : '${t.toolName} ($model)';
+                break;
+              }
+            }
+            var shipDesc = (type == 'shipping') ? (item.description ?? '') : '';
+            if (type == 'shipping') {
+              final d = shipDesc.trim();
+              if (d.toLowerCase() == 'shipping') {
+                shipDesc = (item.unitCost != null &&
+                        (item.unitCost! - 34.95).abs() < 0.01)
+                    ? 'Next Day Air'
+                    : '';
+              }
+            }
             _lineItems.add({
               'type': type,
-              'toolId': item.toolId,
-              'toolName': item.toolName ?? '',
+              'toolId': toolId,
+              'toolName': toolName,
               'materialId': item.materialId,
               'materialLabel': item.materialLabel ?? '',
               'quantity': item.quantity,
               'unitCost': item.unitCost,
               'description': (type == 'shipping' || type == 'misc')
-                  ? (item.description ?? '')
+                  ? (type == 'shipping' ? shipDesc : (item.description ?? ''))
                   : '',
               'itemText': type == 'item'
-                  ? (item.toolName ?? '')
+                  ? toolName
                   : (type == 'material' ? (item.materialLabel ?? '') : ''),
               'heatLot': item.heatLot ?? '',
               'sourceItemId': item.id,

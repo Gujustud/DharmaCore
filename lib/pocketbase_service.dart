@@ -1479,9 +1479,25 @@ class PocketBaseService {
         if (d.contains('PST') && !d.contains('GST')) taxDesc = 'PST';
         if ((taxDesc ?? '').trim().isEmpty) taxDesc = 'Tax';
       }
+      // Shipping: keep "Next Day Air" etc.; never force the word "Shipping".
+      String? shipDesc;
+      if (line.lineType == 'shipping') {
+        final raw = (line.description ?? '').trim();
+        if (raw.isNotEmpty && raw.toLowerCase() != 'shipping') {
+          shipDesc = raw;
+        } else if (line.unitCost != null &&
+            (line.unitCost! - 34.95).abs() < 0.01) {
+          shipDesc = 'Next Day Air';
+        } else {
+          shipDesc = null; // empty description on shipping line
+        }
+      }
+      final toolId = line.lineType == 'item'
+          ? _relationId(line.matchedToolId)
+          : null;
       await createPurchaseItem(
         purchaseId: purchaseId,
-        toolId: line.lineType == 'item' ? line.matchedToolId : null,
+        toolId: toolId,
         materialId: line.lineType == 'material' ? line.matchedMaterialId : null,
         quantity: (line.lineType == 'shipping' || line.lineType == 'tax')
             ? 1
@@ -1489,9 +1505,7 @@ class PocketBaseService {
         unitCost: line.unitCost,
         lineType: line.lineType,
         description: line.lineType == 'shipping'
-            ? ((line.description == null || line.description!.trim().isEmpty)
-                ? 'Shipping'
-                : line.description)
+            ? shipDesc
             : line.lineType == 'tax'
                 ? taxDesc
                 : (line.description ?? line.partNumber),
@@ -1500,7 +1514,7 @@ class PocketBaseService {
       );
     }
 
-    // Copy draft-level PDFs (invoice/confirmation) onto the purchase
+    // Prefer invoice PDF(s); drop order-ack when an invoice file is present
     await _copyDraftAttachmentsToPurchase(draftRec, purchaseId);
 
     await updatePurchaseDraft(draftId, {
@@ -1609,8 +1623,11 @@ class PocketBaseService {
     }
     if (names.isEmpty) return;
 
+    // Prefer invoice PDFs; if any look like invoices, skip order-ack / confirmation.
+    final toCopy = _preferInvoiceAttachmentNames(names);
+
     final uploads = <http.MultipartFile>[];
-    for (final name in names) {
+    for (final name in toCopy) {
       try {
         final bytes = await downloadRecordFile(draftRec, name);
         if (bytes.isEmpty) continue;
@@ -1631,6 +1648,54 @@ class PocketBaseService {
     } catch (e) {
       print('Error uploading draft attachments to purchase: $e');
     }
+  }
+
+  /// Relation field → id string (handles raw id, expand map, or toString noise).
+  static String? _relationId(dynamic value) {
+    if (value == null) return null;
+    if (value is String) {
+      final s = value.trim();
+      if (s.isEmpty || s == 'null') return null;
+      return s;
+    }
+    if (value is Map) {
+      final id = value['id']?.toString().trim();
+      if (id != null && id.isNotEmpty && id != 'null') return id;
+    }
+    try {
+      final id = (value as dynamic).id?.toString().trim();
+      if (id != null && id.isNotEmpty && id != 'null') return id;
+    } catch (_) {}
+    final s = value.toString().trim();
+    if (s.isEmpty || s == 'null' || s.startsWith('Instance of')) return null;
+    return s;
+  }
+
+  static bool _isOrderAckFilename(String name) {
+    final n = name.toLowerCase();
+    return n.contains('ord_ack') ||
+        n.contains('order_ack') ||
+        n.contains('acknowledg') ||
+        n.contains('confirmation') ||
+        n.contains('confirm');
+  }
+
+  static bool _isInvoiceFilename(String name) {
+    final n = name.toLowerCase();
+    if (_isOrderAckFilename(n)) return false;
+    return n.contains('invoice') ||
+        n.contains('inv_') ||
+        n.startsWith('inv-') ||
+        n.startsWith('inv.');
+  }
+
+  /// When invoice PDFs exist, copy only those. Else non-ack PDFs. Else all.
+  static List<String> _preferInvoiceAttachmentNames(List<String> names) {
+    final invoices = names.where(_isInvoiceFilename).toList();
+    if (invoices.isNotEmpty) return invoices;
+    final nonAck = names.where((n) => !_isOrderAckFilename(n)).toList();
+    if (nonAck.isNotEmpty) return nonAck;
+    return names;
   }
 
   Future<void> rejectPurchaseDraft(String draftId) async {

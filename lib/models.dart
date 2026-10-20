@@ -627,8 +627,10 @@ class PurchaseItem {
     return PurchaseItem(
       id: record.id,
       purchaseId: data['purchase'] ?? '',
-      toolId: data['tool'],
-      materialId: data['material']?.toString(),
+      toolId: _relationIdFromData(data['tool']) ??
+          _relationIdFromExpand(record.expand?['tool']),
+      materialId: _relationIdFromData(data['material']) ??
+          _relationIdFromExpand(record.expand?['material']),
       quantity: quantity,
       unitCost: data['unit_cost']?.toDouble(),
       toolName: toolName,
@@ -653,6 +655,32 @@ List<String> _fileNamesFrom(dynamic v) {
   if (v == null) return [];
   final s = v.toString();
   return s.isEmpty ? [] : [s];
+}
+
+String? _relationIdFromData(dynamic v) {
+  if (v == null) return null;
+  if (v is String) {
+    final s = v.trim();
+    if (s.isEmpty || s == 'null') return null;
+    return s;
+  }
+  if (v is Map) {
+    final id = v['id']?.toString().trim();
+    if (id != null && id.isNotEmpty && id != 'null') return id;
+  }
+  try {
+    final id = (v as dynamic).id?.toString().trim();
+    if (id != null && id.isNotEmpty && id != 'null') return id;
+  } catch (_) {}
+  final s = v.toString().trim();
+  if (s.isEmpty || s == 'null' || s.startsWith('Instance of')) return null;
+  return s;
+}
+
+String? _relationIdFromExpand(dynamic expanded) {
+  if (expanded == null) return null;
+  final raw = (expanded is List && expanded.isNotEmpty) ? expanded[0] : expanded;
+  return _relationIdFromData(raw);
 }
 
 /// Pending email-ingest purchase draft (review queue).
@@ -842,9 +870,10 @@ class PurchaseDraftLine {
       unitCost: (data['unit_cost'] as num?)?.toDouble(),
       heatLot: data['heat_lot']?.toString(),
       matchStatus: (data['match_status'] ?? 'n_a').toString(),
-      matchedMaterialId: data['matched_material']?.toString(),
+      matchedMaterialId: _relationIdFromData(data['matched_material']),
       matchedMaterialLabel: materialLabel,
-      matchedToolId: data['matched_tool']?.toString(),
+      matchedToolId: _relationIdFromData(data['matched_tool']) ??
+          _relationIdFromExpand(record.expand?['matched_tool']),
       matchedToolLabel: toolLabel,
       materialProposalId: data['material_proposal']?.toString(),
       proposedMaterial: proposed,

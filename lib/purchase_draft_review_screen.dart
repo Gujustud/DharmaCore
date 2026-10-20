@@ -262,6 +262,11 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
                       label: Text('Ref: ${_draft.orderReference}'),
                       visualDensity: VisualDensity.compact,
                     ),
+                  if ((_draft.invoice ?? '').isNotEmpty)
+                    Chip(
+                      label: Text('Invoice: ${_draft.invoice}'),
+                      visualDensity: VisualDensity.compact,
+                    ),
                   Chip(
                     label: Text(dateText),
                     visualDensity: VisualDensity.compact,
@@ -382,14 +387,38 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
           _ => line.lineType,
         },
     };
+    String? toolLabel = line.matchedToolLabel;
+    if ((toolLabel == null || toolLabel.isEmpty) &&
+        line.matchedToolId != null &&
+        line.matchedToolId!.isNotEmpty) {
+      for (final t in _tools) {
+        if (t.id != line.matchedToolId) continue;
+        final model = (t.modelNumber ?? '').trim();
+        toolLabel =
+            model.isEmpty ? t.toolName : '${t.toolName} ($model)';
+        break;
+      }
+    }
+    final shipLabel = () {
+      if (line.lineType != 'shipping') return null;
+      final d = (line.description ?? '').trim();
+      if (d.isNotEmpty && d.toLowerCase() != 'shipping') return d;
+      if (line.unitCost != null && (line.unitCost! - 34.95).abs() < 0.01) {
+        return 'Next Day Air';
+      }
+      return null;
+    }();
     final subtitle = [
       if ((line.partNumber ?? '').isNotEmpty) 'P/N ${line.partNumber}',
-      if (line.lineType == 'shipping') 'Shipping'
-      else if (line.lineType == 'tax') 'Tax'
-      else 'Qty ${line.quantity}',
+      if (line.lineType == 'shipping')
+        (shipLabel ?? 'Shipping')
+      else if (line.lineType == 'tax')
+        'Tax'
+      else
+        'Qty ${line.quantity}',
       if (line.unitCost != null) '\$${line.unitCost!.toStringAsFixed(2)}',
       if (line.matchedMaterialLabel != null) line.matchedMaterialLabel!,
-      if (line.matchedToolLabel != null) line.matchedToolLabel!,
+      if (toolLabel != null && toolLabel.isNotEmpty) toolLabel,
       if (line.millCertNames.isNotEmpty)
         '${line.millCertNames.length} mill cert${line.millCertNames.length == 1 ? '' : 's'}',
     ].join(' · ');
@@ -423,12 +452,17 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
       );
     }
 
+    final title = () {
+      if (line.lineType == 'shipping') {
+        return shipLabel ?? 'Shipping';
+      }
+      if (line.description?.isNotEmpty == true) return line.description!;
+      return line.partNumber ?? line.lineType;
+    }();
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
-        title: Text(line.description?.isNotEmpty == true
-            ? line.description!
-            : (line.partNumber ?? line.lineType)),
+        title: Text(title),
         subtitle: Text('$matchLabel\n$subtitle'),
         isThreeLine: true,
         trailing: trailing,

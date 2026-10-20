@@ -143,6 +143,7 @@ def test_scrambled_invoice_freight_gst_not_amount_due():
         ships = [l for l in p.lines if l.line_type == "shipping"]
         taxes = [l for l in p.lines if l.line_type == "tax"]
         assert len(ships) == 1 and ships[0].unit_cost == 34.95
+        assert ships[0].description == "Next Day Air"
         assert len(taxes) == 1 and taxes[0].unit_cost == 16.84
         assert taxes[0].unit_cost != 353.50
         by = {l.part_number: l for l in p.lines if l.line_type == "item"}
