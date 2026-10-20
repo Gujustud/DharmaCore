@@ -137,9 +137,31 @@ class _PurchasesScreenState extends State<PurchasesScreen> with AutoOpenDrawerMi
     });
   }
 
-  void _onPanelClosed(bool saved) {
+  void _onPanelClosed(bool saved, {String? approvedPurchaseId}) {
     _closePanel();
+    if (approvedPurchaseId != null && approvedPurchaseId.isNotEmpty) {
+      _openApprovedPurchase(approvedPurchaseId);
+      return;
+    }
     if (saved) _loadPurchases();
+  }
+
+  Future<void> _openApprovedPurchase(String purchaseId) async {
+    await _loadPurchases();
+    if (!mounted) return;
+    try {
+      final rec = await PocketBaseService().getPurchase(purchaseId);
+      final purchase = Purchase.fromRecord(rec);
+      if (!mounted) return;
+      final width = MediaQuery.sizeOf(context).width;
+      final usePanel = width >= kWorkspaceWideBreakpointPx;
+      await _openPurchase(purchase, usePanel: usePanel);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Purchase created, but could not open it: $e')),
+      );
+    }
   }
 
   Future<void> _openPurchase(Purchase purchase, {required bool usePanel}) async {
@@ -169,13 +191,17 @@ class _PurchasesScreenState extends State<PurchasesScreen> with AutoOpenDrawerMi
       });
       return;
     }
-    final saved = await Navigator.push<bool>(
+    final result = await Navigator.push<Object?>(
       context,
       MaterialPageRoute(
         builder: (context) => PurchaseDraftReviewScreen(draft: draft),
       ),
     );
-    if (saved == true) _loadPurchases();
+    if (result is String && result.isNotEmpty) {
+      await _openApprovedPurchase(result);
+    } else if (result == true) {
+      _loadPurchases();
+    }
   }
 
   Future<void> _openAddPurchase({required bool usePanel}) async {
@@ -497,8 +523,11 @@ class _PurchasesScreenState extends State<PurchasesScreen> with AutoOpenDrawerMi
         ? DateFormat.yMMMd().format(d.purchaseDate!)
         : '—';
     final refRaw = d.orderReference?.trim();
+    final invRaw = d.invoice?.trim();
     final refText =
-        (refRaw != null && refRaw.isNotEmpty) ? 'Ref: $refRaw' : null;
+        (refRaw != null && refRaw.isNotEmpty) ? 'Order: $refRaw' : null;
+    final invText =
+        (invRaw != null && invRaw.isNotEmpty) ? 'Invoice: $invRaw' : null;
     final cur = d.currency == 'USD' ? 'USD' : 'CAD';
     final totalText = d.total != null
         ? 'Total: \$${d.total!.toStringAsFixed(2)} $cur'
@@ -528,6 +557,7 @@ class _PurchasesScreenState extends State<PurchasesScreen> with AutoOpenDrawerMi
                         d.displayVendor,
                         dateText,
                         if (refText != null) refText,
+                        if (invText != null) invText,
                         if (totalText.isNotEmpty) totalText,
                       ].join(' · '),
                       style: muted,
@@ -566,7 +596,7 @@ class _PurchasesScreenState extends State<PurchasesScreen> with AutoOpenDrawerMi
       ),
       purchase: _creatingNew ? null : _selectedPurchase,
       embedded: true,
-      onClosed: _onPanelClosed,
+      onClosed: (saved) => _onPanelClosed(saved),
     );
   }
 

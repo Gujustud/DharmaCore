@@ -18,7 +18,8 @@ class PurchaseDraftReviewScreen extends StatefulWidget {
 
   final PurchaseDraft draft;
   final bool embedded;
-  final void Function(bool saved)? onClosed;
+  /// [saved] true after approve/reject. [approvedPurchaseId] set after approve.
+  final void Function(bool saved, {String? approvedPurchaseId})? onClosed;
 
   @override
   State<PurchaseDraftReviewScreen> createState() =>
@@ -32,6 +33,23 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
   List<Tool> _tools = [];
   bool _loading = true;
   bool _busy = false;
+
+  /// Invoice # from draft field, or recovered from attachment filenames.
+  String get _displayInvoice {
+    final fromDraft = (_draft.invoice ?? '').trim();
+    if (fromDraft.isNotEmpty) return fromDraft;
+    for (final name in _draft.attachmentNames) {
+      final m = RegExp(
+        r'(?:invoice|inv)[_\s.\-]*#?\s*(\d{5,12})',
+        caseSensitive: false,
+      ).firstMatch(name);
+      if (m != null) return m.group(1)!;
+      final m2 = RegExp(r'(\d{5,12})_in[_\-.]', caseSensitive: false)
+          .firstMatch(name);
+      if (m2 != null) return m2.group(1)!;
+    }
+    return '';
+  }
 
   @override
   void initState() {
@@ -73,15 +91,16 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
   Future<void> _approve() async {
     setState(() => _busy = true);
     try {
-      await PocketBaseService().approvePurchaseDraft(_draft.id);
+      final purchaseId =
+          await PocketBaseService().approvePurchaseDraft(_draft.id);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Purchase created from draft')),
       );
       if (widget.embedded) {
-        widget.onClosed?.call(true);
+        widget.onClosed?.call(true, approvedPurchaseId: purchaseId);
       } else {
-        Navigator.pop(context, true);
+        Navigator.pop(context, purchaseId);
       }
     } catch (e) {
       if (mounted) {
@@ -122,7 +141,7 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
       if (widget.embedded) {
         widget.onClosed?.call(true);
       } else {
-        Navigator.pop(context, true);
+        Navigator.pop(context, true); // rejected — no purchase id
       }
     } catch (e) {
       if (mounted) {
@@ -259,12 +278,12 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
                   ),
                   if ((_draft.orderReference ?? '').isNotEmpty)
                     Chip(
-                      label: Text('Ref: ${_draft.orderReference}'),
+                      label: Text('Order: ${_draft.orderReference}'),
                       visualDensity: VisualDensity.compact,
                     ),
-                  if ((_draft.invoice ?? '').isNotEmpty)
+                  if (_displayInvoice.isNotEmpty)
                     Chip(
-                      label: Text('Invoice: ${_draft.invoice}'),
+                      label: Text('Invoice: $_displayInvoice'),
                       visualDensity: VisualDensity.compact,
                     ),
                   Chip(
@@ -372,6 +391,55 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
   }
 
   Widget _buildLineCard(PurchaseDraftLine line, ColorScheme scheme) {
+    Tool? matchedTool;
+    if (line.matchedToolId != null && line.matchedToolId!.isNotEmpty) {
+      for (final t in _tools) {
+        if (t.id == line.matchedToolId) {
+          matchedTool = t;
+          break;
+        }
+      }
+    }
+    String? toolLabel = line.matchedToolLabel;
+    if ((toolLabel == null || toolLabel.isEmpty) && matchedTool != null) {
+      final model = (matchedTool.modelNumber ?? '').trim();
+      toolLabel = model.isEmpty
+          ? matchedTool.toolName
+          : '${matchedTool.toolName} ($model)';
+    }
+
+    // Prefer manufacturer catalog # (989816-C4) over DGI HVT* codes
+    final displayPn = _manufacturerPartNumber(line, matchedTool);
+
+    final shipLabel = () {
+      if (line.lineType != 'shipping') return null;
+      final d = (line.description ?? '').trim();
+      if (d.isNotEmpty && d.toLowerCase() != 'shipping') return d;
+      if (line.unitCost != null && (line.unitCost! - 34.95).abs() < 0.01) {
+        return 'Next Day Air';
+      }
+      return null;
+    }();
+
+    // Shipping / tax: title + amount only (no duplicate "shipping"/"tax"/"Tax")
+    if (line.lineType == 'shipping' || line.lineType == 'tax') {
+      final title = line.lineType == 'shipping'
+          ? (shipLabel ?? 'Shipping')
+          : ((line.description ?? '').trim().isNotEmpty
+              ? line.description!.trim()
+              : 'GST');
+      final amount = line.unitCost != null
+          ? '\$${line.unitCost!.toStringAsFixed(2)}'
+          : '';
+      return Card(
+        margin: const EdgeInsets.only(bottom: 8),
+        child: ListTile(
+          title: Text(title),
+          subtitle: amount.isEmpty ? null : Text(amount),
+        ),
+      );
+    }
+
     final matchLabel = switch (line.lineType) {
       'item' => switch (line.matchStatus) {
           'matched' => 'Matched tool',
@@ -387,35 +455,9 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
           _ => line.lineType,
         },
     };
-    String? toolLabel = line.matchedToolLabel;
-    if ((toolLabel == null || toolLabel.isEmpty) &&
-        line.matchedToolId != null &&
-        line.matchedToolId!.isNotEmpty) {
-      for (final t in _tools) {
-        if (t.id != line.matchedToolId) continue;
-        final model = (t.modelNumber ?? '').trim();
-        toolLabel =
-            model.isEmpty ? t.toolName : '${t.toolName} ($model)';
-        break;
-      }
-    }
-    final shipLabel = () {
-      if (line.lineType != 'shipping') return null;
-      final d = (line.description ?? '').trim();
-      if (d.isNotEmpty && d.toLowerCase() != 'shipping') return d;
-      if (line.unitCost != null && (line.unitCost! - 34.95).abs() < 0.01) {
-        return 'Next Day Air';
-      }
-      return null;
-    }();
     final subtitle = [
-      if ((line.partNumber ?? '').isNotEmpty) 'P/N ${line.partNumber}',
-      if (line.lineType == 'shipping')
-        (shipLabel ?? 'Shipping')
-      else if (line.lineType == 'tax')
-        'Tax'
-      else
-        'Qty ${line.quantity}',
+      if (displayPn.isNotEmpty) 'P/N $displayPn',
+      'Qty ${line.quantity}',
       if (line.unitCost != null) '\$${line.unitCost!.toStringAsFixed(2)}',
       if (line.matchedMaterialLabel != null) line.matchedMaterialLabel!,
       if (toolLabel != null && toolLabel.isNotEmpty) toolLabel,
@@ -452,13 +494,9 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
       );
     }
 
-    final title = () {
-      if (line.lineType == 'shipping') {
-        return shipLabel ?? 'Shipping';
-      }
-      if (line.description?.isNotEmpty == true) return line.description!;
-      return line.partNumber ?? line.lineType;
-    }();
+    final title = line.description?.isNotEmpty == true
+        ? line.description!
+        : (displayPn.isNotEmpty ? displayPn : line.lineType);
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
@@ -468,6 +506,25 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
         trailing: trailing,
       ),
     );
+  }
+
+  /// Catalog model (989816-C4) over DGI HVT989816C4 when available.
+  String _manufacturerPartNumber(PurchaseDraftLine line, Tool? matched) {
+    final model = (matched?.modelNumber ?? '').trim();
+    if (model.isNotEmpty) return model;
+    final label = (line.matchedToolLabel ?? '').trim();
+    final m = RegExp(r'\(([^)]+)\)\s*$').firstMatch(label);
+    if (m != null && (m.group(1) ?? '').trim().isNotEmpty) {
+      return m.group(1)!.trim();
+    }
+    final pn = (line.partNumber ?? '').trim().toUpperCase();
+    if (pn.startsWith('HVT') && pn.length > 3) {
+      final rest = pn.substring(3);
+      final hm = RegExp(r'^(\d+)([A-Z].*)$').firstMatch(rest);
+      if (hm != null) return '${hm.group(1)}-${hm.group(2)}';
+      return rest;
+    }
+    return (line.partNumber ?? '').trim();
   }
 }
 

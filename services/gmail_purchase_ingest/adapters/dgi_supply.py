@@ -242,11 +242,17 @@ class DgiSupplyAdapter:
         for att in message.attachments:
             fn = att.get("filename") or ""
             fn_l = fn.lower()
+            mime = (att.get("mime_type") or "").lower()
             if not fn:
+                continue
+            # Never tag logos / signature images as invoice/confirmation
+            if self._is_skip_attachment(fn, mime):
+                continue
+            if not (fn_l.endswith(".pdf") or "pdf" in mime):
                 continue
             if "invoice" in fn_l or email_type == "invoice":
                 attachment_roles[fn] = "invoice"
-            elif fn_l.endswith(".pdf"):
+            else:
                 attachment_roles[fn] = (
                     "confirmation" if email_type == "order_confirmation" else "invoice"
                 )
@@ -287,6 +293,31 @@ class DgiSupplyAdapter:
             return ""
         return tok.upper()
 
+    @staticmethod
+    def _is_skip_attachment(filename: str, mime: str = "") -> bool:
+        """Drop logos, signature images, and other non-document attachments."""
+        fn = (filename or "").lower()
+        mime = (mime or "").lower()
+        if any(
+            fn.endswith(ext)
+            for ext in (
+                ".jpg",
+                ".jpeg",
+                ".png",
+                ".gif",
+                ".webp",
+                ".bmp",
+                ".svg",
+                ".ico",
+            )
+        ):
+            return True
+        if mime.startswith("image/"):
+            return True
+        if any(k in fn for k in ("logo", "dgilog", "signature", "spacer", "pixel")):
+            return True
+        return False
+
     @classmethod
     def _find_invoice_number(cls, blob: str, message: EmailMessage) -> str:
         inv = _first_group(_INVOICE_NUMBER_RE.search(blob or ""))
@@ -298,9 +329,17 @@ class DgiSupplyAdapter:
             return m.group(1)
         for att in message.attachments or []:
             fn = att.get("filename") or ""
+            # inv_3525554.pdf / invoice-3525554.pdf
             m = re.search(
                 r"(?:invoice|inv)[_\s.-]*#?\s*([0-9]{5,12})", fn, re.I
             )
+            if m:
+                return m.group(1)
+            # Live DGI names: 3525554_in_….pdf
+            m = re.search(r"\b([0-9]{5,12})_in(?:v(?:oice)?)?[_\-.]", fn, re.I)
+            if m:
+                return m.group(1)
+            m = re.search(r"\b([0-9]{5,12})_in_", fn, re.I)
             if m:
                 return m.group(1)
         return ""

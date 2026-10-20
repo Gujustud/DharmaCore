@@ -236,6 +236,46 @@ def test_live_ui_style_invoice_keeps_order_not_invoice_ref():
         DgiSupplyAdapter._pdf_bytes_to_text = orig
 
 
+def test_invoice_from_dgi_in_filename_and_skips_logo():
+    a = DgiSupplyAdapter()
+    # PDF text without Invoice Number label — recover from 3525554_in_….pdf
+    pdf = """
+DGI Supply Canada
+Order Number 1653184
+PO Number AMISH
+EA 112.1800 112.18 .250 BALL HVT989816C4
+HVT68320 EA 189.5300 189.53 KEYSEAT 68320
+Total Freight Out: 34.95
+AMOUNT DUE 353.50
+"""
+    orig = DgiSupplyAdapter._pdf_bytes_to_text
+    DgiSupplyAdapter._pdf_bytes_to_text = staticmethod(lambda _d: pdf)
+    try:
+        msg = EmailMessage(
+            "logo",
+            from_address="ar_canada@dgisupply.ca",
+            subject="Your invoice",
+            attachments=[
+                {
+                    "filename": "dgilog_abc.jpg",
+                    "data": b"\xff\xd8\xff",
+                    "mime_type": "image/jpeg",
+                },
+                {
+                    "filename": "3525554_in_rb1vhos6cs.pdf",
+                    "data": b"%PDF",
+                    "mime_type": "application/pdf",
+                },
+            ],
+        )
+        p = a.parse(msg)
+        assert p.invoice == "3525554"
+        assert "dgilog_abc.jpg" not in p.attachment_roles
+        assert p.attachment_roles.get("3525554_in_rb1vhos6cs.pdf") == "invoice"
+    finally:
+        DgiSupplyAdapter._pdf_bytes_to_text = orig
+
+
 def test_correlate_parts_fallback_not_gmail_id():
     a = DgiSupplyAdapter()
     msg = EmailMessage("19f3e545c60a8114", from_address="cho@dgisupply.ca", subject="x")
@@ -265,6 +305,7 @@ if __name__ == "__main__":
     test_scrambled_invoice_freight_gst_not_amount_due()
     test_invoice_filename_not_used_as_order_ref()
     test_live_ui_style_invoice_keeps_order_not_invoice_ref()
+    test_invoice_from_dgi_in_filename_and_skips_logo()
     test_correlate_parts_fallback_not_gmail_id()
     test_tool_match()
     print("ok")

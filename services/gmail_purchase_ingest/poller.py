@@ -821,16 +821,25 @@ def _attach_files(
         filename = att.get("filename") or "attachment.pdf"
         if not data:
             continue
+        mime = (att.get("mime_type") or "application/pdf").lower()
+        fn_l = filename.lower()
+        # Skip logos / signature images (e.g. dgilog_….jpg)
+        if mime.startswith("image/") or any(
+            fn_l.endswith(ext)
+            for ext in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg")
+        ):
+            continue
+        if any(k in fn_l for k in ("logo", "dgilog", "signature", "spacer", "pixel")):
+            continue
         role = parsed.attachment_roles.get(filename) or parsed.attachment_roles.get(
             filename.lower(), ""
         )
-        mime = att.get("mime_type") or "application/pdf"
-        item = (filename, data, mime)
+        item = (filename, data, mime or "application/pdf")
         if role == "mill_cert" or (
-            email_type == "certificate" and filename.lower().endswith(".pdf")
+            email_type == "certificate" and fn_l.endswith(".pdf")
         ):
             mill_certs.append(item)
-        elif role in ("invoice", "confirmation") or filename.lower().endswith(".pdf"):
+        elif role in ("invoice", "confirmation") or fn_l.endswith(".pdf"):
             other_files.append(item)
 
     # Prefer attaching mill certs onto steel/metal material draft lines

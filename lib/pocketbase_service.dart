@@ -1448,11 +1448,17 @@ class PocketBaseService {
 
     final supplierId = await _resolveDraftSupplierId(draft, draftRec);
 
+    // Invoice # from draft, or recover from attachment filenames (e.g. 3525554_in_….pdf)
+    var invoiceNo = (draft.invoice ?? '').trim();
+    if (invoiceNo.isEmpty) {
+      invoiceNo = _invoiceFromAttachmentNames(draft.attachmentNames) ?? '';
+    }
+
     final purchase = await createPurchase(
       purchaseDate: draft.purchaseDate ?? DateTime.now(),
       supplierId: supplierId,
       orderReference: draft.orderReference,
-      invoice: draft.invoice,
+      invoice: invoiceNo.isEmpty ? null : invoiceNo,
       notes: [
         if (draft.notes != null && draft.notes!.trim().isNotEmpty) draft.notes!.trim(),
         if (draft.tracking != null && draft.tracking!.trim().isNotEmpty)
@@ -1680,22 +1686,60 @@ class PocketBaseService {
         n.contains('confirm');
   }
 
+  static bool _isImageOrLogoFilename(String name) {
+    final n = name.toLowerCase();
+    if (n.endsWith('.jpg') ||
+        n.endsWith('.jpeg') ||
+        n.endsWith('.png') ||
+        n.endsWith('.gif') ||
+        n.endsWith('.webp') ||
+        n.endsWith('.bmp') ||
+        n.endsWith('.svg') ||
+        n.endsWith('.ico')) {
+      return true;
+    }
+    return n.contains('logo') ||
+        n.contains('dgilog') ||
+        n.contains('signature') ||
+        n.contains('spacer') ||
+        n.contains('pixel');
+  }
+
   static bool _isInvoiceFilename(String name) {
     final n = name.toLowerCase();
-    if (_isOrderAckFilename(n)) return false;
-    return n.contains('invoice') ||
+    if (_isOrderAckFilename(n) || _isImageOrLogoFilename(n)) return false;
+    if (n.contains('invoice') ||
         n.contains('inv_') ||
         n.startsWith('inv-') ||
-        n.startsWith('inv.');
+        n.startsWith('inv.')) {
+      return true;
+    }
+    // Live DGI: 3525554_in_….pdf
+    return RegExp(r'\d{5,12}_in[_\-.]').hasMatch(n);
   }
 
   /// When invoice PDFs exist, copy only those. Else non-ack PDFs. Else all.
   static List<String> _preferInvoiceAttachmentNames(List<String> names) {
-    final invoices = names.where(_isInvoiceFilename).toList();
+    final docs = names.where((n) => !_isImageOrLogoFilename(n)).toList();
+    final invoices = docs.where(_isInvoiceFilename).toList();
     if (invoices.isNotEmpty) return invoices;
-    final nonAck = names.where((n) => !_isOrderAckFilename(n)).toList();
+    final nonAck = docs.where((n) => !_isOrderAckFilename(n)).toList();
     if (nonAck.isNotEmpty) return nonAck;
-    return names;
+    return docs.isNotEmpty ? docs : names;
+  }
+
+  static String? _invoiceFromAttachmentNames(List<String> names) {
+    for (final name in names) {
+      final m = RegExp(
+        r'(?:invoice|inv)[_\s.\-]*#?\s*(\d{5,12})',
+        caseSensitive: false,
+      ).firstMatch(name);
+      if (m != null) return m.group(1);
+      final m2 = RegExp(r'(\d{5,12})_in[_\-.]', caseSensitive: false)
+          .firstMatch(name);
+      if (m2 != null) return m2.group(1);
+    }
+    return null;
   }
 
   Future<void> rejectPurchaseDraft(String draftId) async {
