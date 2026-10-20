@@ -297,14 +297,31 @@ def _upsert_draft(
 
     # Don't overwrite a real McMaster # with an MC-DAY-… / invoice-sized fallback
     merged_ref = order_ref
+    inv = (parsed.invoice or "").strip()
+    # Never persist the supplier invoice # as order_reference
+    if inv and merged_ref == inv:
+        merged_ref = str((existing or {}).get("order_reference") or "")
+        if merged_ref == inv:
+            merged_ref = ""
     if existing:
         existing_ref = str(existing.get("order_reference") or "")
-        if existing_ref.isdigit() and (
+        # Upgrade off a draft that was keyed by invoice # (DGI AR-only first pass)
+        if inv and existing_ref == inv and order_ref and order_ref != inv:
+            merged_ref = order_ref
+        elif existing_ref.isdigit() and (
             order_ref.startswith("MC-DAY-") or not order_ref.isdigit()
         ):
             merged_ref = existing_ref
         elif order_ref.startswith("MC-DAY-") and existing_ref:
             merged_ref = existing_ref
+        elif (
+            order_ref.isdigit()
+            and existing_ref.isdigit()
+            and inv
+            and existing_ref == inv
+            and order_ref != inv
+        ):
+            merged_ref = order_ref
         elif (
             order_ref.isdigit()
             and existing_ref.isdigit()
@@ -315,6 +332,7 @@ def _upsert_draft(
             order_ref.isdigit()
             and existing_ref.isdigit()
             and _ref_quality(existing_ref) >= _ref_quality(order_ref)
+            and not (inv and existing_ref == inv)
         ):
             merged_ref = existing_ref
     # If this email carries an invoice # equal to order_ref, keep existing order #
@@ -324,6 +342,7 @@ def _upsert_draft(
         and order_ref
         and order_ref == parsed.invoice
         and str(existing.get("order_reference") or "")
+        and str(existing.get("order_reference") or "") != parsed.invoice
     ):
         merged_ref = str(existing.get("order_reference"))
 

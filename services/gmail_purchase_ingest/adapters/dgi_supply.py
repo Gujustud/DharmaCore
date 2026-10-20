@@ -180,14 +180,17 @@ class DgiSupplyAdapter:
         pdf_text = _normalize(self._attachment_pdf_text(message))
         blob = f"{body}\n{pdf_text}"
 
+        invoice = _first_group(_INVOICE_NUMBER_RE.search(blob))
         order_ref = _first_group(_ORDER_NUMBER_RE.search(blob))
         if not order_ref:
-            order_ref = self._order_from_filenames(message)
-
-        invoice = _first_group(_INVOICE_NUMBER_RE.search(blob))
-        # Never treat invoice # as order #
+            order_ref = self._order_from_filenames(message, invoice=invoice)
+        # Never treat invoice # as order # (filename / weak "Order" hits)
         if order_ref and invoice and order_ref == invoice:
-            order_ref = self._order_from_filenames(message) or ""
+            order_ref = ""
+        if not order_ref:
+            order_ref = self._order_from_filenames(message, invoice=invoice) or ""
+            if order_ref and invoice and order_ref == invoice:
+                order_ref = ""
 
         customer_po = self._find_customer_po(blob)
 
@@ -209,6 +212,10 @@ class DgiSupplyAdapter:
             freight = _money(fm.group(1))
 
         tax_amt = self._find_tax_amount(blob, total=total, subtotal=subtotal, freight=freight)
+        if tax_amt is None:
+            tax_amt = self._tax_from_total_minus_lines(
+                total=total, freight=freight, lines=lines, subtotal=subtotal
+            )
 
         if freight and freight > 0 and not any(l.line_type == "shipping" for l in lines):
             lines.append(
@@ -288,15 +295,26 @@ class DgiSupplyAdapter:
         return tok.upper()
 
     @staticmethod
-    def _order_from_filenames(message: EmailMessage) -> str:
+    def _order_from_filenames(
+        message: EmailMessage, *, invoice: str = ""
+    ) -> str:
+        inv = (invoice or "").strip()
         for att in message.attachments or []:
             fn = att.get("filename") or ""
-            m = re.search(r"(?:order|ord)[^\d]{0,8}([0-9]{5,10})", fn, re.I)
+            fn_l = fn.lower()
+            # Never pull order # from an invoice-named attachment
+            if any(k in fn_l for k in ("invoice", "inv_", "inv-", "inv.")):
+                continue
+            m = re.search(r"(?:order|ord|ack)[^\d]{0,8}([0-9]{5,10})", fn, re.I)
             if m:
-                return m.group(1)
+                hit = m.group(1)
+                if hit != inv:
+                    return hit
             m = re.search(r"\b([0-9]{6,8})\b", fn)
-            if m and "invoice" not in fn.lower():
-                return m.group(1)
+            if m:
+                hit = m.group(1)
+                if hit != inv:
+                    return hit
         return ""
 
     @classmethod
@@ -316,21 +334,21 @@ class DgiSupplyAdapter:
 
         candidates: list[tuple[float, str]] = []
         for m in _TAX_LABEL_RE.finditer(blob or ""):
-            window = blob[m.end() : m.end() + 100]
-            money = _EXT2_RE.search(window)
-            if not money:
-                continue
-            amt = _money(money.group(1))
-            if amt is None or amt <= 0:
-                continue
-            if round(amt, 2) in banned:
-                continue
-            # GST on these orders is a small % of merchandise — reject absurd
-            if total and amt >= float(total) * 0.5:
-                continue
-            if amt > 200:
-                continue
-            candidates.append((amt, m.group(0).lower()))
+            window = blob[m.end() : m.end() + 120]
+            # Skip leading REG# / percent junk; take the first plausible money
+            for money in _EXT2_RE.finditer(window):
+                amt = _money(money.group(1))
+                if amt is None or amt <= 0:
+                    continue
+                if round(amt, 2) in banned:
+                    continue
+                # GST on these orders is a small % of merchandise — reject absurd
+                if total and amt >= float(total) * 0.5:
+                    continue
+                if amt > 200:
+                    continue
+                candidates.append((amt, m.group(0).lower()))
+                break
 
         if not candidates:
             return None
@@ -339,6 +357,33 @@ class DgiSupplyAdapter:
             if "gst" in label:
                 return amt
         return candidates[0][0]
+
+    @staticmethod
+    def _tax_from_total_minus_lines(
+        *,
+        total: Optional[float],
+        freight: Optional[float],
+        lines: list[ParsedLine],
+        subtotal: Optional[float],
+    ) -> Optional[float]:
+        """When GST label is missing from the PDF extract, back into tax."""
+        if total is None or total <= 0:
+            return None
+        freight_v = float(freight or 0)
+        if subtotal is not None and subtotal > 0:
+            approx = round(float(total) - float(subtotal) - freight_v, 2)
+        else:
+            items = 0.0
+            for l in lines:
+                if l.line_type != "item" or l.unit_cost is None:
+                    continue
+                items += float(l.unit_cost) * float(l.quantity or 1)
+            if items <= 0:
+                return None
+            approx = round(float(total) - items - freight_v, 2)
+        if 0.5 <= approx <= 200:
+            return approx
+        return None
 
     def _attachment_pdf_text(self, message: EmailMessage) -> str:
         chunks: list[str] = []
@@ -435,17 +480,10 @@ class DgiSupplyAdapter:
                         before, banned=banned, prefer_near=len(before)
                     )
             # Prefer text around this line's unit price (avoids stealing neighbor titles)
-            desc = self._description_for_unit(blob, part, unit)
-            if len(desc) < 12 or desc.upper() == part:
-                desc = self._description_near(before, part)
-            if len(desc) < 12 or desc.upper() == part or not _DESC_START_RE.search(
-                desc
-            ):
-                alt = self._description_near(after, part)
-                if len(alt) > len(desc) or _DESC_START_RE.search(alt):
-                    desc = alt
-            if len(desc) < 12:
-                desc = self._description_near(before + " " + after, part)
+            others = [p for (_s, _e, p) in ordered if p != part]
+            desc = self._best_description(
+                part, others, unit=unit, blob=blob, before=before, after=after
+            )
             lines.append(
                 ParsedLine(
                     line_type="item",
@@ -661,6 +699,83 @@ class DgiSupplyAdapter:
         return money[0][1]
 
     @classmethod
+    def _best_description(
+        cls,
+        part: str,
+        others: list[str],
+        *,
+        unit: Optional[float],
+        blob: str,
+        before: str,
+        after: str,
+    ) -> str:
+        unit_desc = cls._description_for_unit(blob, part, unit)
+        # Unit-price window is the strongest signal for scrambled invoices
+        if (
+            unit_desc
+            and _DESC_START_RE.search(unit_desc)
+            and cls._description_belongs(part, unit_desc, others)
+        ):
+            return unit_desc[:500]
+
+        candidates = [
+            unit_desc,
+            cls._description_near(before, part),
+            cls._description_near(after, part),
+            cls._description_near(before + " " + after, part),
+        ]
+        scored: list[tuple[int, str]] = []
+        for desc in candidates:
+            if not desc or len(desc) < 8:
+                continue
+            if not cls._description_belongs(part, desc, others):
+                continue
+            score = cls._catalog_score(part, desc)
+            if _DESC_START_RE.search(desc):
+                score += 20
+            scored.append((score, desc))
+        if scored:
+            scored.sort(key=lambda t: (t[0], -len(t[1])), reverse=True)
+            return scored[0][1][:500]
+        # Fallback: unit-price window stripped of a neighbor's catalog tokens
+        if unit_desc:
+            cleaned = cls._strip_foreign_catalog(unit_desc, part, others)
+            if cleaned and _DESC_START_RE.search(cleaned):
+                return cleaned[:500]
+        for desc in candidates[1:]:
+            if desc and len(desc) >= 8:
+                cleaned = cls._strip_foreign_catalog(desc, part, others)
+                if cleaned and _DESC_START_RE.search(cleaned):
+                    return cleaned[:500]
+        return part
+
+    @classmethod
+    def _description_belongs(cls, part: str, desc: str, others: list[str]) -> bool:
+        """Reject titles that clearly belong to a different HVT on the order."""
+        own = cls._catalog_score(part, desc)
+        foreign = max((cls._catalog_score(o, desc) for o in others), default=0)
+        if foreign >= 70 and foreign > own:
+            return False
+        return True
+
+    @classmethod
+    def _strip_foreign_catalog(cls, desc: str, part: str, others: list[str]) -> str:
+        raw = desc
+        for o in others:
+            if cls._catalog_score(o, raw) >= 70:
+                # Drop the other part's catalog token + HVT id if present
+                rest = o[3:]
+                raw = re.sub(rf"\b{re.escape(o)}\b", " ", raw, flags=re.I)
+                if rest:
+                    raw = re.sub(rf"\b{re.escape(rest)}\b", " ", raw, flags=re.I)
+                m = re.match(r"^(\d+)([A-Z]\d+)$", rest)
+                if m:
+                    cat = f"{m.group(1)}-{m.group(2)}"
+                    raw = re.sub(rf"\b{re.escape(cat)}\b", " ", raw, flags=re.I)
+        raw = re.sub(r"\s+", " ", raw).strip()
+        return raw if len(raw) >= 8 else ""
+
+    @classmethod
     def _description_for_unit(
         cls, blob: str, part: str, unit: Optional[float]
     ) -> str:
@@ -716,13 +831,11 @@ class DgiSupplyAdapter:
             raw,
             flags=re.I,
         ).strip()
-        # Drop duplicate part at end
+        # Drop duplicate part at end (do not re-append — that fools catalog scoring)
         raw = re.sub(rf"\s*{re.escape(part)}\s*$", "", raw, flags=re.I).strip()
         # Drop glued trailing catalog-only fragments after a clean title
         if len(raw) > 180:
             raw = raw[:180].rsplit(" ", 1)[0]
-        if part and part.upper() not in raw.upper():
-            raw = f"{raw} {part}".strip()
         return raw[:500]
 
 

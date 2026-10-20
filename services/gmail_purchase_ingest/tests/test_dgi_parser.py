@@ -137,6 +137,7 @@ def test_scrambled_invoice_freight_gst_not_amount_due():
         p = a.parse(msg)
         assert p.order_reference == "1653184"
         assert p.invoice == "3525554"
+        assert p.order_reference != p.invoice
         assert p.total == 353.50
         assert p.customer_po == "AMISH"
         ships = [l for l in p.lines if l.line_type == "shipping"]
@@ -147,6 +148,49 @@ def test_scrambled_invoice_freight_gst_not_amount_due():
         by = {l.part_number: l for l in p.lines if l.line_type == "item"}
         assert by["HVT989816C4"].unit_cost == 112.18
         assert by["HVT68320"].unit_cost == 189.53
+        # Descriptions must not cross-contaminate
+        d4 = (by["HVT989816C4"].description or "").upper()
+        d20 = (by["HVT68320"].description or "").upper()
+        assert "BALL" in d4 or "989816" in d4
+        assert "KEYSEAT" in d20 or "68320" in d20
+        assert "989816" not in d20
+    finally:
+        DgiSupplyAdapter._pdf_bytes_to_text = orig
+
+
+def test_invoice_filename_not_used_as_order_ref():
+    """Inv_3525554.pdf must not become order_reference when Order Number is absent."""
+    a = DgiSupplyAdapter()
+    pdf = """
+DGI Supply Canada
+Invoice Number 3525554
+Invoice Date 10/15/2026
+PO Number AMISH
+EA 112.1800 112.18 .250 BALL V-HELIX NF 3X LOC 3 FL DMD HVT989816C4
+1.00 EA HVT68320 EA 189.5300 189.53 .020 R X 3/16 D FULL RAD KEYSEAT CUTTER 68320
+Total Freight Out: 34.95
+AMOUNT DUE 353.50
+"""
+    orig = DgiSupplyAdapter._pdf_bytes_to_text
+    DgiSupplyAdapter._pdf_bytes_to_text = staticmethod(lambda _d: pdf)
+    try:
+        msg = EmailMessage(
+            "i2",
+            from_address="ar_canada@dgisupply.ca",
+            subject="Invoice 3525554",
+            attachments=[
+                {
+                    "filename": "Inv_3525554.pdf",
+                    "data": b"%PDF",
+                    "mime_type": "application/pdf",
+                }
+            ],
+        )
+        p = a.parse(msg)
+        assert p.invoice == "3525554"
+        assert p.order_reference != "3525554"
+        taxes = [l for l in p.lines if l.line_type == "tax"]
+        assert len(taxes) == 1 and abs(taxes[0].unit_cost - 16.84) < 0.02
     finally:
         DgiSupplyAdapter._pdf_bytes_to_text = orig
 
@@ -178,6 +222,7 @@ if __name__ == "__main__":
     test_confirmation_clean()
     test_scrambled_conf_strips_glued_digit_and_finds_order()
     test_scrambled_invoice_freight_gst_not_amount_due()
+    test_invoice_filename_not_used_as_order_ref()
     test_correlate_parts_fallback_not_gmail_id()
     test_tool_match()
     print("ok")
