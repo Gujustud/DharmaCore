@@ -13,6 +13,7 @@ from adapters import ALL_ADAPTERS
 from adapters.base import EmailMessage, ParsedEmail, ParsedLine
 from gmail_client import GmailClient, fetch_attachment_bytes
 from matchers.materials import match_material_line
+from matchers.tools import match_tool_line
 from note_utils import merge_note_lines, merge_tracking_field
 from pb_client import PocketBaseClient, _ref_quality
 
@@ -90,6 +91,7 @@ def run_once(
         gmail.connect()
 
     materials = pb.list_materials()
+    tools = pb.list_tools()
     processed = 0
     skipped_known = 0
     errors: list[str] = []
@@ -108,7 +110,7 @@ def run_once(
                     aid = att.get("attachment_id")
                     if aid and not att.get("data"):
                         att["data"] = fetch_attachment_bytes(gmail, mid, aid)
-                _ingest_message(pb, msg, vendors, materials)
+                _ingest_message(pb, msg, vendors, materials, tools)
                 processed += 1
                 # Small pause between full message fetches (quota units)
                 time.sleep(0.4)
@@ -179,6 +181,7 @@ def _ingest_message(
     msg: EmailMessage,
     vendors: list[dict[str, Any]],
     materials: list[dict[str, Any]],
+    tools: Optional[list[dict[str, Any]]] = None,
 ) -> None:
     vendor = _match_vendor(msg, vendors)
     if not vendor:
@@ -223,7 +226,9 @@ def _ingest_message(
 
     draft_id = None
     if corr:
-        draft_id = _upsert_draft(pb, vendor, parsed, corr, email_type, materials, msg)
+        draft_id = _upsert_draft(
+            pb, vendor, parsed, corr, email_type, materials, msg, tools or []
+        )
 
     pb.create(
         "email_ingest_messages",
@@ -266,7 +271,9 @@ def _upsert_draft(
     email_type: str,
     materials: list[dict[str, Any]],
     msg: EmailMessage,
+    tools: Optional[list[dict[str, Any]]] = None,
 ) -> Optional[str]:
+    tools = tools or []
     customer_po = (getattr(parsed, "customer_po", None) or "").strip()
     if not customer_po and parsed.notes:
         m = re.search(r"\b([0-9]{3,4}A[A-Z0-9]{4,})\b", parsed.notes, re.I)
@@ -360,16 +367,24 @@ def _upsert_draft(
     if existing:
         draft = pb.update("purchase_drafts", existing["id"], body)
         draft_id = draft["id"]
-        if email_type in ("order_confirmation",) and parsed.lines:
+        if parsed.lines and email_type in (
+            "order_confirmation",
+            "invoice",
+            "other",
+        ):
             existing_lines = pb.list(
                 "purchase_draft_lines",
                 filter=f'draft = "{draft_id}"',
                 per_page=100,
             )
             if not existing_lines:
-                _create_lines(pb, draft_id, parsed.lines, materials)
+                _create_lines(pb, draft_id, parsed.lines, materials, tools)
             else:
-                _enrich_lines_from_confirmation(pb, existing_lines, parsed.lines, materials)
+                if email_type == "order_confirmation":
+                    _enrich_lines_from_confirmation(
+                        pb, existing_lines, parsed.lines, materials
+                    )
+                _enrich_tool_matches(pb, existing_lines, parsed.lines, tools)
         # Receipt / late confirmation may carry shipping + tax when product lines exist
         _ensure_shipping_line(pb, draft_id, parsed.lines)
         _ensure_tax_lines(pb, draft_id, parsed.lines)
@@ -380,7 +395,7 @@ def _upsert_draft(
         draft = pb.create("purchase_drafts", body)
         draft_id = draft["id"]
         if parsed.lines:
-            _create_lines(pb, draft_id, parsed.lines, materials)
+            _create_lines(pb, draft_id, parsed.lines, materials, tools)
 
     # Attach PDFs (mill certs prefer steel material lines when present)
     _attach_files(pb, draft_id, parsed, msg, email_type=email_type)
@@ -444,7 +459,9 @@ def _create_lines(
     draft_id: str,
     lines: list[ParsedLine],
     materials: list[dict[str, Any]],
+    tools: Optional[list[dict[str, Any]]] = None,
 ) -> None:
+    tools = tools or []
     for i, line in enumerate(lines):
         match = match_material_line(
             materials=materials,
@@ -452,6 +469,12 @@ def _create_lines(
             form=line.form,
             size_label=line.size_label,
             description=line.description,
+            line_type=line.line_type,
+        )
+        tool_match = match_tool_line(
+            tools=tools,
+            part_number=line.part_number or "",
+            description=line.description or "",
             line_type=line.line_type,
         )
         proposal_id = None
@@ -485,16 +508,90 @@ def _create_lines(
             body["proposed_material_json"] = json.dumps(proposed)
         if match.candidate_ids:
             body["candidate_material_ids"] = ",".join(match.candidate_ids)
-        # Shipping / tax lines are not material matches
+
+        # Tool / item lines (DGI): match catalog or leave unmatched for review pick
+        if line.line_type == "item":
+            body["match_status"] = tool_match.status
+            if tool_match.matched_tool_id:
+                body["matched_tool"] = tool_match.matched_tool_id
+            if tool_match.candidate_ids:
+                body["candidate_material_ids"] = ",".join(tool_match.candidate_ids)
+
+        # Shipping / tax lines are not material/tool matches
         if line.line_type in ("shipping", "tax"):
             body["match_status"] = "n_a"
             body.pop("matched_material", None)
+            body.pop("matched_tool", None)
             body.pop("material_proposal", None)
             body.pop("proposed_material_json", None)
             body.pop("candidate_material_ids", None)
             if not body.get("description"):
                 body["description"] = "Shipping" if line.line_type == "shipping" else "Tax"
-        pb.create("purchase_draft_lines", body)
+        try:
+            pb.create("purchase_draft_lines", body)
+        except Exception:
+            # Older PB without matched_tool field — retry without it
+            if "matched_tool" in body:
+                body.pop("matched_tool", None)
+                pb.create("purchase_draft_lines", body)
+            else:
+                raise
+
+
+def _enrich_tool_matches(
+    pb: PocketBaseClient,
+    existing_lines: list[dict[str, Any]],
+    parsed_lines: list[ParsedLine],
+    tools: list[dict[str, Any]],
+) -> None:
+    """Backfill tool matches when a later email has cleaner part numbers."""
+    by_part = {
+        str(l.get("part_number") or "").upper(): l
+        for l in existing_lines
+        if l.get("part_number") and l.get("line_type") == "item"
+    }
+    for pl in parsed_lines:
+        if pl.line_type != "item":
+            continue
+        pn = (pl.part_number or "").upper()
+        if not pn:
+            continue
+        existing = by_part.get(pn)
+        if not existing or existing.get("matched_tool"):
+            continue
+        tm = match_tool_line(
+            tools=tools,
+            part_number=pl.part_number or "",
+            description=pl.description or existing.get("description") or "",
+            line_type="item",
+        )
+        patch: dict[str, Any] = {}
+        if tm.status != "n_a":
+            patch["match_status"] = tm.status
+        if tm.matched_tool_id:
+            patch["matched_tool"] = tm.matched_tool_id
+        if tm.candidate_ids:
+            patch["candidate_material_ids"] = ",".join(tm.candidate_ids)
+        if pl.description and len(pl.description) > len(str(existing.get("description") or "")) + 5:
+            patch["description"] = pl.description[:500]
+        if pl.unit_cost is not None:
+            try:
+                cur = float(existing.get("unit_cost") or 0)
+            except (TypeError, ValueError):
+                cur = 0.0
+            if cur <= 0:
+                patch["unit_cost"] = pl.unit_cost
+        if not patch:
+            continue
+        try:
+            pb.update("purchase_draft_lines", existing["id"], patch)
+        except Exception:
+            patch.pop("matched_tool", None)
+            if patch:
+                try:
+                    pb.update("purchase_draft_lines", existing["id"], patch)
+                except Exception:
+                    log.exception("Failed to enrich tool match on %s", existing.get("id"))
 
 
 def _ensure_shipping_line(

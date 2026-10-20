@@ -1288,7 +1288,7 @@ class PocketBaseService {
       return await pb.collection('purchase_draft_lines').getFullList(
         filter: 'draft = "$draftId"',
         sort: 'sort_order',
-        expand: 'matched_material,material_proposal',
+        expand: 'matched_material,matched_tool,material_proposal',
       );
     } catch (e) {
       print('Error getting purchase draft lines (with expand): $e');
@@ -1393,6 +1393,18 @@ class PocketBaseService {
     final lineRecs = await getPurchaseDraftLines(draftId);
     final lines = lineRecs.map(PurchaseDraftLine.fromRecord).toList();
 
+    // Tool item lines must be matched in review (user adds new tools manually first).
+    for (final line in lines) {
+      if (line.lineType != 'item') continue;
+      if (line.matchedToolId == null || line.matchedToolId!.isEmpty) {
+        throw StateError(
+          'Match all tools before approving '
+          '(${line.partNumber ?? line.description ?? line.id}). '
+          'Add the tool in inventory first if it is new, then pick it here.',
+        );
+      }
+    }
+
     // Resolve material proposals → create catalog rows when needed.
     for (final line in lines) {
       if (line.lineType != 'material') continue;
@@ -1459,8 +1471,17 @@ class PocketBaseService {
       if (line.lineType == 'material' && line.millCertNames.isNotEmpty) {
         millCertFiles = await _millCertPartsFromDraftLine(lineRec, line.millCertNames);
       }
+      // Normalize GST/HST → GST so the purchase editor checkbox recognizes it.
+      var taxDesc = line.description;
+      if (line.lineType == 'tax') {
+        final d = (taxDesc ?? '').toUpperCase();
+        if (d.contains('GST')) taxDesc = 'GST';
+        if (d.contains('PST') && !d.contains('GST')) taxDesc = 'PST';
+        if ((taxDesc ?? '').trim().isEmpty) taxDesc = 'Tax';
+      }
       await createPurchaseItem(
         purchaseId: purchaseId,
+        toolId: line.lineType == 'item' ? line.matchedToolId : null,
         materialId: line.lineType == 'material' ? line.matchedMaterialId : null,
         quantity: (line.lineType == 'shipping' || line.lineType == 'tax')
             ? 1
@@ -1472,9 +1493,7 @@ class PocketBaseService {
                 ? 'Shipping'
                 : line.description)
             : line.lineType == 'tax'
-                ? ((line.description == null || line.description!.trim().isEmpty)
-                    ? 'Tax'
-                    : line.description)
+                ? taxDesc
                 : (line.description ?? line.partNumber),
         heatLot: line.heatLot,
         millCertFiles: millCertFiles,

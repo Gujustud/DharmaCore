@@ -214,8 +214,9 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
           for (final record in existingItemRecords) {
             final item = PurchaseItem.fromRecord(record);
             if (item.lineType == 'tax') {
-              if (item.description == 'GST') gst = true;
-              if (item.description == 'PST') pst = true;
+              final d = (item.description ?? '').toUpperCase();
+              if (d.contains('GST')) gst = true;
+              if (d.contains('PST') && !d.contains('GST')) pst = true;
               continue;
             }
             final raw = item.lineType;

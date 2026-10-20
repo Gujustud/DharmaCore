@@ -60,10 +60,20 @@ python main.py
 
 See [docs/GMAIL_PURCHASE_INGEST.md](../../docs/GMAIL_PURCHASE_INGEST.md).
 
+## Vendors
+
+| Key | Status | Domains | Notes |
+|-----|--------|---------|-------|
+| `mcmaster` | full | mcmaster.com | Materials + mill certs; USD |
+| `dgi_supply` | full | **dgisupply.ca**, dgisupply.com | Tools from Cliff conf + AR invoice; CAD; match existing tools in review (no auto-create) |
+
+Enable each vendor under **Settings → Email vendors**. Link a supplier. For DGI, ensure `dgisupply.ca` is in from-domains and apply migration `1776500000_draft_matched_tool_and_dgi_domains.js` (adds `matched_tool` on draft lines).
+
 ## Tests
 
 ```bash
 python -m pytest tests/ -q
 # or without pytest:
 python tests/test_mcmaster_parser.py
+python tests/test_dgi_parser.py
 ```

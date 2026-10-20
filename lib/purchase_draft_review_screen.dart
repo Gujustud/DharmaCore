@@ -29,6 +29,7 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
   late PurchaseDraft _draft;
   List<PurchaseDraftLine> _lines = [];
   List<ShopMaterial> _materials = [];
+  List<Tool> _tools = [];
   bool _loading = true;
   bool _busy = false;
 
@@ -47,6 +48,7 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
         pb.getPurchaseDraft(_draft.id),
         pb.getPurchaseDraftLines(_draft.id),
         pb.getMaterials(),
+        pb.getTools(),
       ]);
       setState(() {
         _draft = PurchaseDraft.fromRecord(results[0]);
@@ -55,6 +57,7 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
             .toList();
         _materials =
             (results[2] as List).map((r) => ShopMaterial.fromRecord(r)).toList();
+        _tools = (results[3] as List).map((r) => Tool.fromRecord(r)).toList();
         _loading = false;
       });
     } catch (e) {
@@ -155,6 +158,22 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
     if (selected == null) return;
     await PocketBaseService().updatePurchaseDraftLine(line.id, {
       'matched_material': selected.id,
+      'match_status': 'matched',
+    });
+    await _load();
+  }
+
+  Future<void> _pickTool(PurchaseDraftLine line) async {
+    final selected = await showDialog<Tool>(
+      context: context,
+      builder: (ctx) => _ToolMatchDialog(
+        tools: _tools,
+        hint: line.partNumber ?? line.description,
+      ),
+    );
+    if (selected == null) return;
+    await PocketBaseService().updatePurchaseDraftLine(line.id, {
+      'matched_tool': selected.id,
       'match_status': 'matched',
     });
     await _load();
@@ -348,22 +367,61 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
   }
 
   Widget _buildLineCard(PurchaseDraftLine line, ColorScheme scheme) {
-    final matchLabel = switch (line.matchStatus) {
-      'matched' => 'Matched',
-      'ambiguous' => 'Pick material',
-      'propose_new' => 'New material',
-      'none' => 'Unmatched',
-      _ => line.lineType,
+    final matchLabel = switch (line.lineType) {
+      'item' => switch (line.matchStatus) {
+          'matched' => 'Matched tool',
+          'ambiguous' => 'Pick tool',
+          'none' => 'Unmatched tool — add in inventory, then pick',
+          _ => 'Tool',
+        },
+      _ => switch (line.matchStatus) {
+          'matched' => 'Matched',
+          'ambiguous' => 'Pick material',
+          'propose_new' => 'New material',
+          'none' => 'Unmatched',
+          _ => line.lineType,
+        },
     };
     final subtitle = [
       if ((line.partNumber ?? '').isNotEmpty) 'P/N ${line.partNumber}',
       if (line.lineType == 'shipping') 'Shipping'
+      else if (line.lineType == 'tax') 'Tax'
       else 'Qty ${line.quantity}',
       if (line.unitCost != null) '\$${line.unitCost!.toStringAsFixed(2)}',
       if (line.matchedMaterialLabel != null) line.matchedMaterialLabel!,
+      if (line.matchedToolLabel != null) line.matchedToolLabel!,
       if (line.millCertNames.isNotEmpty)
         '${line.millCertNames.length} mill cert${line.millCertNames.length == 1 ? '' : 's'}',
     ].join(' · ');
+
+    Widget? trailing;
+    if (line.lineType == 'material') {
+      trailing = PopupMenuButton<String>(
+        onSelected: (v) {
+          if (v == 'match') _pickMaterial(line);
+          if (v == 'propose') _editProposal(line);
+        },
+        itemBuilder: (ctx) => [
+          const PopupMenuItem(
+            value: 'match',
+            child: Text('Match existing…'),
+          ),
+          const PopupMenuItem(
+            value: 'propose',
+            child: Text('Add / edit material…'),
+          ),
+        ],
+      );
+    } else if (line.lineType == 'item') {
+      trailing = TextButton(
+        onPressed: _busy ? null : () => _pickTool(line),
+        child: Text(
+          (line.matchedToolId == null || line.matchedToolId!.isEmpty)
+              ? 'Match tool…'
+              : 'Change tool…',
+        ),
+      );
+    }
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -373,25 +431,115 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
             : (line.partNumber ?? line.lineType)),
         subtitle: Text('$matchLabel\n$subtitle'),
         isThreeLine: true,
-        trailing: line.lineType == 'material'
-            ? PopupMenuButton<String>(
-                onSelected: (v) {
-                  if (v == 'match') _pickMaterial(line);
-                  if (v == 'propose') _editProposal(line);
-                },
-                itemBuilder: (ctx) => [
-                  const PopupMenuItem(
-                    value: 'match',
-                    child: Text('Match existing…'),
-                  ),
-                  const PopupMenuItem(
-                    value: 'propose',
-                    child: Text('Add / edit material…'),
-                  ),
-                ],
-              )
-            : null,
+        trailing: trailing,
       ),
+    );
+  }
+}
+
+class _ToolMatchDialog extends StatefulWidget {
+  const _ToolMatchDialog({required this.tools, this.hint});
+
+  final List<Tool> tools;
+  final String? hint;
+
+  @override
+  State<_ToolMatchDialog> createState() => _ToolMatchDialogState();
+}
+
+class _ToolMatchDialogState extends State<_ToolMatchDialog> {
+  late final TextEditingController _ctrl;
+  String _q = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _q = (widget.hint ?? '').trim();
+    _ctrl = TextEditingController(text: _q);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  List<Tool> get _filtered {
+    final q = _q.trim().toLowerCase();
+    if (q.isEmpty) return widget.tools.take(60).toList();
+    final tokens = q.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
+    return widget.tools.where((t) {
+      final hay = [
+        t.toolName,
+        t.modelNumber ?? '',
+        t.manufacturerBarcode ?? '',
+        t.brand ?? '',
+        t.size ?? '',
+      ].join(' ').toLowerCase();
+      return tokens.every((tok) => hay.contains(tok));
+    }).take(60).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final items = _filtered;
+    return AlertDialog(
+      title: const Text('Match tool'),
+      content: SizedBox(
+        width: 420,
+        height: 420,
+        child: Column(
+          children: [
+            TextField(
+              controller: _ctrl,
+              decoration: const InputDecoration(
+                labelText: 'Search catalog',
+                hintText: 'Name, model, Harvey #…',
+                prefixIcon: Icon(Icons.search),
+              ),
+              onChanged: (v) => setState(() => _q = v),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'If the tool is new, add it in Inventory first, then search here.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: items.isEmpty
+                  ? const Center(child: Text('No tools match'))
+                  : ListView.builder(
+                      itemCount: items.length,
+                      itemBuilder: (ctx, i) {
+                        final t = items[i];
+                        final model = (t.modelNumber ?? '').trim();
+                        final label = model.isEmpty
+                            ? t.toolName
+                            : '${t.toolName} ($model)';
+                        return ListTile(
+                          dense: true,
+                          title: Text(label),
+                          subtitle: Text(
+                            [
+                              if ((t.brand ?? '').isNotEmpty) t.brand!,
+                              if ((t.manufacturerBarcode ?? '').isNotEmpty)
+                                t.manufacturerBarcode!,
+                            ].join(' · '),
+                          ),
+                          onTap: () => Navigator.pop(context, t),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+      ],
     );
   }
 }

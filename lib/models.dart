@@ -759,6 +759,8 @@ class PurchaseDraftLine {
   final String matchStatus;
   final String? matchedMaterialId;
   final String? matchedMaterialLabel;
+  final String? matchedToolId;
+  final String? matchedToolLabel;
   final String? materialProposalId;
   final Map<String, dynamic>? proposedMaterial;
   final List<String> candidateMaterialIds;
@@ -778,6 +780,8 @@ class PurchaseDraftLine {
     this.matchStatus = 'n_a',
     this.matchedMaterialId,
     this.matchedMaterialLabel,
+    this.matchedToolId,
+    this.matchedToolLabel,
     this.materialProposalId,
     this.proposedMaterial,
     this.candidateMaterialIds = const [],
@@ -788,11 +792,23 @@ class PurchaseDraftLine {
   factory PurchaseDraftLine.fromRecord(dynamic record) {
     final data = record.data as Map<String, dynamic>? ?? {};
     String? materialLabel;
+    String? toolLabel;
     try {
       if (record.expand != null && record.expand['matched_material'] != null) {
         final m = record.expand['matched_material'];
         final raw = (m is List && m.isNotEmpty) ? m[0] : m;
         materialLabel = ShopMaterial.fromRecord(raw).displayLabel;
+      }
+    } catch (_) {}
+    try {
+      if (record.expand != null && record.expand['matched_tool'] != null) {
+        final t = record.expand['matched_tool'];
+        final raw = (t is List && t.isNotEmpty) ? t[0] : t;
+        final tool = Tool.fromRecord(raw);
+        final model = (tool.modelNumber ?? '').trim();
+        toolLabel = model.isEmpty
+            ? tool.toolName
+            : '${tool.toolName} ($model)';
       }
     } catch (_) {}
 
@@ -828,6 +844,8 @@ class PurchaseDraftLine {
       matchStatus: (data['match_status'] ?? 'n_a').toString(),
       matchedMaterialId: data['matched_material']?.toString(),
       matchedMaterialLabel: materialLabel,
+      matchedToolId: data['matched_tool']?.toString(),
+      matchedToolLabel: toolLabel,
       materialProposalId: data['material_proposal']?.toString(),
       proposedMaterial: proposed,
       candidateMaterialIds: candidates,

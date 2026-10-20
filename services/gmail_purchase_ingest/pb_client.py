@@ -391,6 +391,15 @@ class PocketBaseClient:
     def list_materials(self) -> list[dict[str, Any]]:
         return self.list("materials", sort="grade,form,size_label")
 
+    def list_tools(self) -> list[dict[str, Any]]:
+        """Shop tool catalog — collection may be named tools or inventory."""
+        for name in ("tools", "inventory"):
+            try:
+                return self.list(name, per_page=500)
+            except Exception:
+                continue
+        return []
+
     def create_material_proposal(self, proposed: dict[str, str], source: str) -> dict[str, Any]:
         body = {
             "grade": proposed.get("grade") or "Unknown",
