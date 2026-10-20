@@ -135,14 +135,15 @@ def run_once(
                 if "rateLimitExceeded" in err_s or "Quota exceeded" in err_s:
                     break
 
-        # Collapse pending McMaster drafts that share customer PO / tracking
+        # Collapse pending drafts that share customer PO / tracking
         try:
-            consolidated = pb.consolidate_pending_by_customer_po("mcmaster")
-            if consolidated:
-                log.info("Consolidated %s pending McMaster draft(s)", consolidated)
-            cleaned = pb.sanitize_pending_draft_display("mcmaster")
-            if cleaned:
-                log.info("Sanitized %s pending draft field(s)/dup lines", cleaned)
+            for vk in ("mcmaster", "dgi_supply"):
+                consolidated = pb.consolidate_pending_by_customer_po(vk)
+                if consolidated:
+                    log.info("Consolidated %s pending %s draft(s)", consolidated, vk)
+                cleaned = pb.sanitize_pending_draft_display(vk)
+                if cleaned:
+                    log.info("Sanitized %s pending %s field(s)/dup lines", cleaned, vk)
         except Exception:
             log.exception("Draft consolidate/sanitize failed")
 
