@@ -284,6 +284,10 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
                 runSpacing: 4,
                 children: [
                   Chip(
+                    label: Text(dateText),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  Chip(
                     label: Text(_draft.displayVendor),
                     visualDensity: VisualDensity.compact,
                   ),
@@ -297,10 +301,6 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
                       label: Text('Invoice: $_displayInvoice'),
                       visualDensity: VisualDensity.compact,
                     ),
-                  Chip(
-                    label: Text(dateText),
-                    visualDensity: VisualDensity.compact,
-                  ),
                   Chip(
                     label: Text(totalText),
                     visualDensity: VisualDensity.compact,
