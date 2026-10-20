@@ -1462,14 +1462,20 @@ class PocketBaseService {
       await createPurchaseItem(
         purchaseId: purchaseId,
         materialId: line.lineType == 'material' ? line.matchedMaterialId : null,
-        quantity: line.lineType == 'shipping' ? 1 : line.quantity,
+        quantity: (line.lineType == 'shipping' || line.lineType == 'tax')
+            ? 1
+            : line.quantity,
         unitCost: line.unitCost,
         lineType: line.lineType,
         description: line.lineType == 'shipping'
             ? ((line.description == null || line.description!.trim().isEmpty)
                 ? 'Shipping'
                 : line.description)
-            : (line.description ?? line.partNumber),
+            : line.lineType == 'tax'
+                ? ((line.description == null || line.description!.trim().isEmpty)
+                    ? 'Tax'
+                    : line.description)
+                : (line.description ?? line.partNumber),
         heatLot: line.heatLot,
         millCertFiles: millCertFiles,
       );
