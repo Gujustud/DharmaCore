@@ -180,17 +180,8 @@ class DgiSupplyAdapter:
         pdf_text = _normalize(self._attachment_pdf_text(message))
         blob = f"{body}\n{pdf_text}"
 
-        invoice = _first_group(_INVOICE_NUMBER_RE.search(blob))
-        order_ref = _first_group(_ORDER_NUMBER_RE.search(blob))
-        if not order_ref:
-            order_ref = self._order_from_filenames(message, invoice=invoice)
-        # Never treat invoice # as order # (filename / weak "Order" hits)
-        if order_ref and invoice and order_ref == invoice:
-            order_ref = ""
-        if not order_ref:
-            order_ref = self._order_from_filenames(message, invoice=invoice) or ""
-            if order_ref and invoice and order_ref == invoice:
-                order_ref = ""
+        invoice = self._find_invoice_number(blob, message)
+        order_ref = self._find_order_number(blob, message, invoice=invoice)
 
         customer_po = self._find_customer_po(blob)
 
@@ -293,6 +284,49 @@ class DgiSupplyAdapter:
         if len(tok) > 24:
             return ""
         return tok.upper()
+
+    @classmethod
+    def _find_invoice_number(cls, blob: str, message: EmailMessage) -> str:
+        inv = _first_group(_INVOICE_NUMBER_RE.search(blob or ""))
+        if inv:
+            return inv
+        subj = message.subject or ""
+        m = re.search(r"\binvoice\s*#?\s*([0-9]{5,12})\b", subj, re.I)
+        if m:
+            return m.group(1)
+        for att in message.attachments or []:
+            fn = att.get("filename") or ""
+            m = re.search(
+                r"(?:invoice|inv)[_\s.-]*#?\s*([0-9]{5,12})", fn, re.I
+            )
+            if m:
+                return m.group(1)
+        return ""
+
+    @classmethod
+    def _find_order_number(
+        cls, blob: str, message: EmailMessage, *, invoice: str = ""
+    ) -> str:
+        inv = (invoice or "").strip()
+        # Prefer an Order Number that is not the invoice #
+        for m in _ORDER_NUMBER_RE.finditer(blob or ""):
+            hit = _first_group(m)
+            if hit and hit != inv:
+                return hit
+        # Sales / cust order variants
+        for pat in (
+            r"Sales\s*[\n\r\t ]*Order\s*[:#]?\s*([0-9]{5,10})",
+            r"Cust(?:omer)?\s*[\n\r\t ]*Order\s*[:#]?\s*([0-9]{5,10})",
+        ):
+            m = re.search(pat, blob or "", re.I)
+            if m and m.group(1) != inv:
+                return m.group(1)
+        # Confirmation attachments only — never bare digits from invoice PDFs
+        from_a = (message.from_address or "").lower()
+        subj = (message.subject or "").lower()
+        if "ar_canada" in from_a or "invoice" in subj:
+            return ""
+        return cls._order_from_filenames(message, invoice=inv)
 
     @staticmethod
     def _order_from_filenames(
@@ -709,8 +743,12 @@ class DgiSupplyAdapter:
         before: str,
         after: str,
     ) -> str:
+        # Exclusive span between this unit price and the next — no neighbor bleed
+        span_desc = cls._description_from_price_span(blob, part, unit, others)
+        if span_desc:
+            return span_desc[:500]
+
         unit_desc = cls._description_for_unit(blob, part, unit)
-        # Unit-price window is the strongest signal for scrambled invoices
         if (
             unit_desc
             and _DESC_START_RE.search(unit_desc)
@@ -737,7 +775,6 @@ class DgiSupplyAdapter:
         if scored:
             scored.sort(key=lambda t: (t[0], -len(t[1])), reverse=True)
             return scored[0][1][:500]
-        # Fallback: unit-price window stripped of a neighbor's catalog tokens
         if unit_desc:
             cleaned = cls._strip_foreign_catalog(unit_desc, part, others)
             if cleaned and _DESC_START_RE.search(cleaned):
@@ -745,9 +782,62 @@ class DgiSupplyAdapter:
         for desc in candidates[1:]:
             if desc and len(desc) >= 8:
                 cleaned = cls._strip_foreign_catalog(desc, part, others)
-                if cleaned and _DESC_START_RE.search(cleaned):
+                if (
+                    cleaned
+                    and _DESC_START_RE.search(cleaned)
+                    and cls._description_belongs(part, cleaned, others)
+                ):
                     return cleaned[:500]
         return part
+
+    @classmethod
+    def _description_from_price_span(
+        cls,
+        blob: str,
+        part: str,
+        unit: Optional[float],
+        others: list[str],
+    ) -> str:
+        """Title text owned by this line's unit price until the next unit price."""
+        if unit is None:
+            return ""
+        target = round(float(unit), 2)
+        price_hits = [
+            (m.start(), m.end())
+            for m in _UNIT4_RE.finditer(blob or "")
+            if round(float(m.group(1)), 2) == target
+        ]
+        if not price_hits:
+            return ""
+        all_prices = [(m.start(), m.end()) for m in _UNIT4_RE.finditer(blob or "")]
+        best = ""
+        best_score = -1
+        for ps, pe in price_hits:
+            next_ps = min((p[0] for p in all_prices if p[0] > ps), default=len(blob))
+            # Include a short lookback for "HVT… EA 189.5300" / glued titles after price
+            start = max(0, ps - 60)
+            # Don't start inside a previous unit price span
+            prev = [p for p in all_prices if p[0] < ps]
+            if prev:
+                start = max(start, prev[-1][1])
+            end = next_ps
+            # Stop before a different HVT that is not this part
+            for hm in _HVT_RE.finditer(blob[pe:end]):
+                other = cls._normalize_part(hm.group(1).upper(), blob)
+                if other and other != part:
+                    end = pe + hm.start()
+                    break
+            slice_ = cls._cut_footer(blob[start:end])
+            desc = cls._description_near(slice_, part)
+            if not desc or not _DESC_START_RE.search(desc):
+                continue
+            if not cls._description_belongs(part, desc, others):
+                continue
+            score = cls._catalog_score(part, desc) + len(desc)
+            if score > best_score:
+                best_score = score
+                best = desc
+        return best
 
     @classmethod
     def _description_belongs(cls, part: str, desc: str, others: list[str]) -> bool:
@@ -756,6 +846,16 @@ class DgiSupplyAdapter:
         foreign = max((cls._catalog_score(o, desc) for o in others), default=0)
         if foreign >= 70 and foreign > own:
             return False
+        # Keyword families: ball/endmill vs keyseat must not cross
+        d = (desc or "").upper()
+        rest = (part or "")[3:]
+        if "KEYSEAT" in d and own < 40 and not rest.isdigit():
+            # Letter-variant parts (989816C4) are endmills, not keyseats
+            return False
+        if ("BALL" in d or "ENDMILL" in d) and "KEYSEAT" not in d:
+            if rest.isdigit() and own < 40:
+                # Pure numeric Harvey codes on this order are the keyseat line
+                return False
         return True
 
     @classmethod

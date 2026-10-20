@@ -300,28 +300,26 @@ def _upsert_draft(
     inv = (parsed.invoice or "").strip()
     # Never persist the supplier invoice # as order_reference
     if inv and merged_ref == inv:
-        merged_ref = str((existing or {}).get("order_reference") or "")
-        if merged_ref == inv:
-            merged_ref = ""
+        merged_ref = ""
     if existing:
         existing_ref = str(existing.get("order_reference") or "")
-        # Upgrade off a draft that was keyed by invoice # (DGI AR-only first pass)
-        if inv and existing_ref == inv and order_ref and order_ref != inv:
-            merged_ref = order_ref
+        existing_is_invoice = bool(inv and existing_ref == inv)
+        # Drop invoice-as-ref on the existing draft whenever we can
+        if existing_is_invoice:
+            if order_ref and order_ref != inv:
+                merged_ref = order_ref
+            elif existing_ref == inv:
+                merged_ref = order_ref or ""
         elif existing_ref.isdigit() and (
             order_ref.startswith("MC-DAY-") or not order_ref.isdigit()
         ):
-            merged_ref = existing_ref
+            # Keep real McMaster/DGI order # when incoming is a day-key fallback
+            if not order_ref.startswith("DGI-"):
+                merged_ref = existing_ref
+            else:
+                merged_ref = order_ref
         elif order_ref.startswith("MC-DAY-") and existing_ref:
             merged_ref = existing_ref
-        elif (
-            order_ref.isdigit()
-            and existing_ref.isdigit()
-            and inv
-            and existing_ref == inv
-            and order_ref != inv
-        ):
-            merged_ref = order_ref
         elif (
             order_ref.isdigit()
             and existing_ref.isdigit()
@@ -332,19 +330,20 @@ def _upsert_draft(
             order_ref.isdigit()
             and existing_ref.isdigit()
             and _ref_quality(existing_ref) >= _ref_quality(order_ref)
-            and not (inv and existing_ref == inv)
         ):
             merged_ref = existing_ref
     # If this email carries an invoice # equal to order_ref, keep existing order #
     if (
         existing
-        and parsed.invoice
+        and inv
         and order_ref
-        and order_ref == parsed.invoice
+        and order_ref == inv
         and str(existing.get("order_reference") or "")
-        and str(existing.get("order_reference") or "") != parsed.invoice
+        and str(existing.get("order_reference") or "") != inv
     ):
         merged_ref = str(existing.get("order_reference"))
+    if inv and merged_ref == inv:
+        merged_ref = ""
 
     body: dict[str, Any] = {
         "vendor_key": vendor.get("vendor_key"),
@@ -400,7 +399,7 @@ def _upsert_draft(
             if not existing_lines:
                 _create_lines(pb, draft_id, parsed.lines, materials, tools)
             else:
-                if email_type == "order_confirmation":
+                if email_type in ("order_confirmation", "invoice", "other"):
                     _enrich_lines_from_confirmation(
                         pb, existing_lines, parsed.lines, materials
                     )
@@ -449,8 +448,24 @@ def _enrich_lines_from_confirmation(
         if pl.unit_cost is not None and cur_cost <= 0:
             patch["unit_cost"] = pl.unit_cost
         cur_desc = str(existing.get("description") or "")
-        if pl.description and len(pl.description) > len(cur_desc) + 5:
-            patch["description"] = pl.description[:500]
+        new_desc = (pl.description or "").strip()
+        if new_desc:
+            # Prefer a title that actually fits this part (fixes crossed DGI descs)
+            cur_u = cur_desc.upper()
+            new_u = new_desc.upper()
+            pn = pn  # already upper
+            better_fit = False
+            if pn and pn in new_u and pn not in cur_u:
+                better_fit = True
+            rest = pn[3:] if pn.startswith("HVT") and len(pn) > 3 else ""
+            if rest and rest in new_u and rest not in cur_u:
+                better_fit = True
+            if "KEYSEAT" in new_u and "BALL" in cur_u and "KEYSEAT" not in cur_u:
+                better_fit = True
+            if "BALL" in new_u and "KEYSEAT" in cur_u and "BALL" not in cur_u:
+                better_fit = True
+            if better_fit or len(new_desc) > len(cur_desc) + 5:
+                patch["description"] = new_desc[:500]
         # Refresh material proposal hints when we now have better form/size
         if pl.form or pl.size_label or pl.grade:
             match = match_material_line(
@@ -721,14 +736,16 @@ def _refresh_dirty_descriptions(
     by_part = {
         (l.part_number or "").upper(): l
         for l in parsed_lines
-        if l.part_number and l.line_type == "material" and l.description
+        if l.part_number
+        and l.line_type in ("material", "item")
+        and l.description
     }
     if not by_part:
         return
     try:
         existing = pb.list(
             "purchase_draft_lines",
-            filter=f'draft = "{draft_id}" && line_type = "material"',
+            filter=f'draft = "{draft_id}" && (line_type = "material" || line_type = "item")',
             per_page=50,
         )
         for row in existing:

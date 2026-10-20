@@ -189,8 +189,48 @@ AMOUNT DUE 353.50
         p = a.parse(msg)
         assert p.invoice == "3525554"
         assert p.order_reference != "3525554"
+        assert a.correlate_key(p, msg) != "3525554"
         taxes = [l for l in p.lines if l.line_type == "tax"]
         assert len(taxes) == 1 and abs(taxes[0].unit_cost - 16.84) < 0.02
+        by = {l.part_number: l for l in p.lines if l.line_type == "item"}
+        assert "BALL" in (by["HVT989816C4"].description or "").upper()
+        assert "KEYSEAT" in (by["HVT68320"].description or "").upper()
+        assert "BALL" not in (by["HVT68320"].description or "").upper()
+    finally:
+        DgiSupplyAdapter._pdf_bytes_to_text = orig
+
+
+def test_live_ui_style_invoice_keeps_order_not_invoice_ref():
+    """Matches the review UI: order 1653184, invoice 3525554, GST, no crossed descs."""
+    a = DgiSupplyAdapter()
+    # Order Number present; filename is invoice digits only
+    pdf = SCRAMBLED_INVOICE
+    orig = DgiSupplyAdapter._pdf_bytes_to_text
+    DgiSupplyAdapter._pdf_bytes_to_text = staticmethod(lambda _d: pdf)
+    try:
+        msg = EmailMessage(
+            "live",
+            from_address="ar_canada@dgisupply.ca",
+            subject="Invoice 3525554",
+            attachments=[
+                {
+                    "filename": "3525554.pdf",
+                    "data": b"%PDF",
+                    "mime_type": "application/pdf",
+                }
+            ],
+        )
+        p = a.parse(msg)
+        assert p.order_reference == "1653184"
+        assert p.invoice == "3525554"
+        assert a.correlate_key(p, msg) == "1653184"
+        by = {l.part_number: l for l in p.lines if l.line_type == "item"}
+        assert by["HVT989816C4"].unit_cost == 112.18
+        assert by["HVT68320"].unit_cost == 189.53
+        assert "BALL" in (by["HVT989816C4"].description or "").upper()
+        assert "KEYSEAT" in (by["HVT68320"].description or "").upper()
+        taxes = [l for l in p.lines if l.line_type == "tax"]
+        assert taxes and abs(taxes[0].unit_cost - 16.84) < 0.02
     finally:
         DgiSupplyAdapter._pdf_bytes_to_text = orig
 
@@ -223,6 +263,7 @@ if __name__ == "__main__":
     test_scrambled_conf_strips_glued_digit_and_finds_order()
     test_scrambled_invoice_freight_gst_not_amount_due()
     test_invoice_filename_not_used_as_order_ref()
+    test_live_ui_style_invoice_keeps_order_not_invoice_ref()
     test_correlate_parts_fallback_not_gmail_id()
     test_tool_match()
     print("ok")
