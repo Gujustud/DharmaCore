@@ -370,8 +370,10 @@ def _upsert_draft(
                 _create_lines(pb, draft_id, parsed.lines, materials)
             else:
                 _enrich_lines_from_confirmation(pb, existing_lines, parsed.lines, materials)
-        # Receipt / late confirmation may carry shipping when product lines already exist
+        # Receipt / late confirmation may carry shipping + tax when product lines exist
         _ensure_shipping_line(pb, draft_id, parsed.lines)
+        _ensure_tax_lines(pb, draft_id, parsed.lines)
+        _refresh_dirty_descriptions(pb, draft_id, parsed.lines)
     else:
         if not body.get("purchase_date"):
             body["purchase_date"] = _now_iso()[:10]
@@ -542,6 +544,91 @@ def _ensure_shipping_line(
         )
     except Exception:
         log.exception("Failed to ensure shipping line on draft %s", draft_id)
+
+
+def _ensure_tax_lines(
+    pb: PocketBaseClient,
+    draft_id: str,
+    parsed_lines: list[ParsedLine],
+) -> None:
+    """Add GST/HST (etc.) draft lines from a later receipt when missing."""
+    taxes = [l for l in parsed_lines if l.line_type == "tax" and l.unit_cost]
+    if not taxes:
+        return
+    try:
+        existing = pb.list(
+            "purchase_draft_lines",
+            filter=f'draft = "{draft_id}" && line_type = "tax"',
+            per_page=10,
+        )
+        existing_amts: list[float] = []
+        for row in existing:
+            try:
+                existing_amts.append(float(row.get("unit_cost") or 0))
+            except (TypeError, ValueError):
+                pass
+        for i, tax in enumerate(taxes):
+            amt = float(tax.unit_cost or 0)
+            if amt <= 0:
+                continue
+            if any(abs(amt - e) < 0.01 for e in existing_amts):
+                continue
+            pb.create(
+                "purchase_draft_lines",
+                {
+                    "draft": draft_id,
+                    "line_type": "tax",
+                    "description": (tax.description or "Tax")[:500],
+                    "quantity": 1,
+                    "unit_cost": amt,
+                    "sort_order": 8000 + i,
+                    "match_status": "n_a",
+                },
+            )
+            existing_amts.append(amt)
+    except Exception:
+        log.exception("Failed to ensure tax lines on draft %s", draft_id)
+
+
+def _refresh_dirty_descriptions(
+    pb: PocketBaseClient,
+    draft_id: str,
+    parsed_lines: list[ParsedLine],
+) -> None:
+    """Replace receipt-header dumps with clean product titles when a later email has them."""
+    noise = re.compile(
+        r"(?:billed\s+to|shipped\s+to|invoice\s+\d|credit\s+card|your\s+account|"
+        r"cle\.sales@|@mcmaster\.com|\(fax\))",
+        re.I,
+    )
+    by_part = {
+        (l.part_number or "").upper(): l
+        for l in parsed_lines
+        if l.part_number and l.line_type == "material" and l.description
+    }
+    if not by_part:
+        return
+    try:
+        existing = pb.list(
+            "purchase_draft_lines",
+            filter=f'draft = "{draft_id}" && line_type = "material"',
+            per_page=50,
+        )
+        for row in existing:
+            pn = str(row.get("part_number") or "").upper()
+            pl = by_part.get(pn)
+            if not pl or not pl.description:
+                continue
+            cur = str(row.get("description") or "")
+            new = pl.description
+            if noise.search(cur) and not noise.search(new) and len(new) < len(cur):
+                pb.update(
+                    "purchase_draft_lines",
+                    row["id"],
+                    {"description": new[:500]},
+                )
+    except Exception:
+        log.exception("Failed to refresh descriptions on draft %s", draft_id)
 
 
 def _prefer_mill_cert_line(lines: list[dict[str, Any]]) -> Optional[dict[str, Any]]:

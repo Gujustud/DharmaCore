@@ -93,6 +93,11 @@ _MCMASTER_NUMBER_RE = re.compile(
     r"([0-9]{6,10})(?:[ \t]*-[ \t]*(\d{2}))?",
     re.I,
 )
+# Receipt PDF footer: "Packing List 7110963-01" (true McMaster order #).
+_PACKING_LIST_RE = re.compile(
+    r"Packing\s+List\s*[:#]?\s*([0-9]{6,10})(?:\s*-\s*(\d{2}))?",
+    re.I,
+)
 # Tight order-number labels only — NEVER allow newlines between "order" and the digits.
 _ORDER_NUMBER_RE = re.compile(
     r"(?:order|confirmation)[ \t]*(?:#|number|no\.?)[ \t]*[:#]?[ \t]*"
@@ -162,13 +167,16 @@ _TRACKING_LABEL_RE = re.compile(
     re.I,
 )
 _TOTAL_RE = re.compile(
-    r"(?:order\s*total|total(?:\s*due)?|amount\s*due)\s*[:$]?\s*\$?\s*([0-9,]+\.[0-9]{2})",
+    r"(?:order\s*total|total(?:\s*\([^)]*\))?|amount\s*due|paid(?:\s*\([^)]*\))?)"
+    r"\s*[:$]?\s*\$?\s*([0-9,]+\.[0-9]{2})",
     re.I,
 )
 # Footer rows on confirmation / receipt (Merchandise / Shipping / Tax).
+# Allow label and amount on separate lines (PDF extract often stacks them).
 _SHIPPING_RE = re.compile(
-    r"(?:^|\b)(?:shipping(?:\s*(?:&|and)\s*handling)?|freight|delivery)\s*"
-    r"[:$]?\s*\$?\s*([0-9,]+\.[0-9]{2})",
+    r"(?:^|\b)(?:shipping(?:\s*(?:&|and)\s*handling)?|freight)"
+    r"(?!\s+to\b)(?:\s*(?:charge|cost|fee|amount|total))?"
+    r"\s*[:$]?\s*\$?\s*([0-9,]+\.[0-9]{2})",
     re.I | re.M,
 )
 # Real merchandise subtotal — never "Merchandise Order Total" (that is order total).
@@ -176,9 +184,26 @@ _MERCHANDISE_RE = re.compile(
     r"(?:^|\b)merchandise(?!\s+order\b)(?:\s*subtotal)?\s*[:$]?\s*\$?\s*([0-9,]+\.[0-9]{2})",
     re.I | re.M,
 )
+# Receipt: "Canadian GST/HST" then 9.44 (slash form must be allowed after gst).
 _TAX_RE = re.compile(
-    r"(?:^|\b)(?:gst|hst|pst|sales\s*tax|tax)\s*[:$]?\s*\$?\s*([0-9,]+\.[0-9]{2})",
+    r"(?:^|\b)(?:canadian\s+)?(?:gst\s*/\s*hst|hst\s*/\s*gst|gst|hst|pst|sales\s*tax)"
+    r"(?:\s*(?:tax)?)?\s*[:$]?\s*\$?\s*([0-9,]+\.[0-9]{2})",
     re.I | re.M,
+)
+# Header/noise markers — description still containing these is polluted.
+_DESC_NOISE_RE = re.compile(
+    r"(?:billed\s+to|shipped\s+to|invoice\s+\d|purchase\s+order|"
+    r"credit\s+card|your\s+account|cle\.sales@|@mcmaster\.com|"
+    r"\d{3}[-.]?\d{3}[-.]?\d{4}|\(fax\)|attention:)",
+    re.I,
+)
+# Receipt grid: P/N then title/dims then Ordered/Shipped then "113.92 Each"
+_RECEIPT_LINE_RE = re.compile(
+    r"(?P<part>[0-9]{3,5}[A-Z][0-9]{1,6}[A-Z0-9]{0,4})\s+"
+    r"(?P<desc>.+?)\s+"
+    r"(?P<qty>\d+)\s+\d+\s+"
+    r"(?P<each>[0-9,]+\.[0-9]{2})\s*Each",
+    re.I | re.S,
 )
 _DATE_RE = re.compile(
     r"\b((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}"
@@ -292,7 +317,8 @@ class McMasterAdapter:
         tracking = self._find_tracking_href(message.body_html or "")
         if not tracking:
             tracking = self._find_tracking(search_blob, order_ref=order_ref)
-        total = self._find_money_total(text)
+        # Receipt totals live on the PDF more often than the HTML body
+        total = self._find_money_total(pdf_text) or self._find_money_total(text)
         purchase_date = self._normalize_date(self._find_first(_DATE_RE, search_blob))
         # Cert PDF header uses Order Date MM/DD/YYYY
         if not purchase_date and pdf_text:
@@ -320,13 +346,32 @@ class McMasterAdapter:
             # 7110963-01 → base order correlator; keep suffix for review context
             parse_notes_parts.append(f"McMaster cert/shipment seq: {order_ref}-{order_suffix}")
         if email_type in ("order_confirmation", "invoice", "other"):
-            lines = self._parse_lines(text)
+            # Receipt PDFs have clean line grids; body HTML often dumps the header.
+            lines = self._parse_lines(pdf_text) if pdf_text else []
+            if not lines:
+                lines = self._parse_lines(text)
             if not lines and email_type == "order_confirmation":
                 parse_notes_parts.append("No line items extracted; review manually.")
 
-        # Shipping from confirmation / receipt footer (or total − merchandise).
+        # Prefer receipt PDF footer for money rows when body is sparse.
+        money_blob = "\n".join(x for x in (pdf_text, text) if x)
+
+        # Tax (GST/HST) + shipping from confirmation / receipt footer.
         if email_type in ("order_confirmation", "invoice", "other", "shipping"):
-            ship = self._find_shipping_amount(text, lines=lines, total=total)
+            for tax_amt, tax_label in self._find_tax_amounts(money_blob):
+                if tax_amt > 0 and not any(
+                    l.line_type == "tax" and abs((l.unit_cost or 0) - tax_amt) < 0.01
+                    for l in lines
+                ):
+                    lines.append(
+                        ParsedLine(
+                            line_type="tax",
+                            description=tax_label,
+                            quantity=1.0,
+                            unit_cost=tax_amt,
+                        )
+                    )
+            ship = self._find_shipping_amount(money_blob, lines=lines, total=total)
             if ship is not None and ship > 0:
                 if not any(l.line_type == "shipping" for l in lines):
                     lines.append(
@@ -390,6 +435,13 @@ class McMasterAdapter:
         blob = _normalize_extract_text(f"{text or ''}\n{subject or ''}")
         invoice_nums = {m.group(1) for m in _INVOICE_NUMBER_RE.finditer(blob)}
 
+        # Receipt: Packing List 7110963-01 beats stray "order number" hits.
+        for m in _PACKING_LIST_RE.finditer(blob):
+            base = m.group(1).strip()
+            if base in invoice_nums:
+                continue
+            return base, (m.group(2) or "").strip()
+
         for m in _MCMASTER_NUMBER_RE.finditer(blob):
             base = m.group(1).strip()
             if base in invoice_nums:
@@ -407,12 +459,27 @@ class McMasterAdapter:
         return "", ""
 
     def _find_order_in_filenames(self, message: EmailMessage) -> tuple[str, str]:
+        # Prefer filenames that look like packing lists / certs with 7110963-01
+        ranked: list[tuple[int, str, str]] = []
         for att in message.attachments or []:
             fn = att.get("filename") or ""
             m = re.search(r"\b([0-9]{6,10})(?:-(\d{2}))?\b", fn)
-            if m:
-                return m.group(1), (m.group(2) or "")
-        return "", ""
+            if not m:
+                continue
+            base, suffix = m.group(1), (m.group(2) or "")
+            fn_l = fn.lower()
+            score = 0
+            if suffix:
+                score += 20
+            if any(k in fn_l for k in ("cert", "packing", "7110", "order")):
+                score += 10
+            if any(k in fn_l for k in ("receipt", "invoice")):
+                score -= 5
+            ranked.append((score, base, suffix))
+        if not ranked:
+            return "", ""
+        ranked.sort(key=lambda t: t[0], reverse=True)
+        return ranked[0][1], ranked[0][2]
 
     def _attachment_pdf_text(self, message: EmailMessage) -> str:
         """Extract text from PDF attachments (cert header has McMaster-Carr Number)."""
@@ -619,6 +686,32 @@ class McMasterAdapter:
             return None
 
     @classmethod
+    def _find_tax_amounts(cls, text: str) -> list[tuple[float, str]]:
+        """Return [(amount, label), ...] for GST/HST/PST rows on the receipt."""
+        out: list[tuple[float, str]] = []
+        seen: set[float] = set()
+        for m in _TAX_RE.finditer(text or ""):
+            amt = cls._parse_money(m.group(1))
+            if amt is None or amt <= 0:
+                continue
+            if any(abs(amt - s) < 0.01 for s in seen):
+                continue
+            seen.add(amt)
+            label_raw = m.group(0)
+            if re.search(r"gst\s*/\s*hst|hst\s*/\s*gst", label_raw, re.I):
+                label = "GST/HST"
+            elif re.search(r"\bgst\b", label_raw, re.I):
+                label = "GST"
+            elif re.search(r"\bhst\b", label_raw, re.I):
+                label = "HST"
+            elif re.search(r"\bpst\b", label_raw, re.I):
+                label = "PST"
+            else:
+                label = "Tax"
+            out.append((amt, label))
+        return out
+
+    @classmethod
     def _find_shipping_amount(
         cls,
         text: str,
@@ -655,10 +748,12 @@ class McMasterAdapter:
                 merch_from_lines = True
 
         tax = 0.0
-        for tm in _TAX_RE.finditer(blob):
-            t = cls._parse_money(tm.group(1))
-            if t is not None:
-                tax += t
+        for amt, _label in cls._find_tax_amounts(blob):
+            tax += amt
+        if tax <= 0 and lines:
+            for pl in lines:
+                if pl.line_type == "tax" and pl.unit_cost is not None:
+                    tax += float(pl.unit_cost)
 
         if total is not None and merch is not None:
             ship = round(float(total) - float(merch) - tax, 2)
@@ -710,6 +805,11 @@ class McMasterAdapter:
 
     def _parse_lines(self, text: str) -> list[ParsedLine]:
         blob = text or ""
+        # Receipt PDF grid (P/N → desc → ordered/shipped → Each) first
+        receipt_lines = self._parse_receipt_lines(blob)
+        if receipt_lines:
+            return receipt_lines
+
         # Prefer McMaster confirmation blocks: P/N near "N each" + unit price
         block_lines = self._parse_confirmation_blocks(blob)
         if block_lines:
@@ -766,6 +866,26 @@ class McMasterAdapter:
 
         return lines
 
+    def _parse_receipt_lines(self, text: str) -> list[ParsedLine]:
+        """Receipt PDF: part, description, ordered/shipped counts, unit Each."""
+        lines: list[ParsedLine] = []
+        seen: set[str] = set()
+        for m in _RECEIPT_LINE_RE.finditer(text or ""):
+            part = m.group("part").upper()
+            if part in seen or not self._looks_like_part_number(part):
+                continue
+            seen.add(part)
+            try:
+                qty = float(m.group("qty") or 1)
+            except ValueError:
+                qty = 1.0
+            each = self._parse_money(m.group("each"))
+            desc = self._clean_line_description(m.group("desc") or "", part)
+            if _DESC_NOISE_RE.search(desc):
+                continue
+            lines.append(self._line_from_desc(part, desc, qty, each))
+        return lines
+
     def _parse_confirmation_blocks(self, text: str) -> list[ParsedLine]:
         """Pull lines from confirmation layout (desc/dims/P/N/qty/price may span lines)."""
         lines: list[ParsedLine] = []
@@ -784,6 +904,13 @@ class McMasterAdapter:
                 qty = float(m.group("qty") or 1)
             except ValueError:
                 qty = 1.0
+            # Avoid treating "113.92 each" as qty when confirmation uses unit-price phrasing
+            if qty >= 20 and re.search(
+                rf"{re.escape(m.group('qty'))}\s*each", m.group(0), re.I
+            ):
+                pe = _PRICE_EACH_RE.search(m.group(0))
+                if pe and abs(float(pe.group(1).replace(",", "")) - qty) < 0.001:
+                    qty = 1.0
             unit_s = m.group("unit") or m.group("dollar")
             each = None
             if unit_s:
@@ -802,6 +929,19 @@ class McMasterAdapter:
             prev_end = matches[i - 1].end() if i > 0 else 0
             before = text[prev_end : m.start()]
             desc = self._clean_line_description(before, part)
+            # Receipt/HTML dumps put the title AFTER the P/N — recover from match body
+            if _DESC_NOISE_RE.search(desc) or len(desc) > 220:
+                after = m.group(0)[len(m.group("part")) :]
+                after_desc = self._clean_line_description(after, part)
+                if after_desc and not _DESC_NOISE_RE.search(after_desc):
+                    desc = after_desc
+                else:
+                    # Wider window just after the part number in the full text
+                    wider = text[m.start() : m.start() + 280]
+                    wider = wider[len(part) :]
+                    wider_desc = self._clean_line_description(wider, part)
+                    if wider_desc and not _DESC_NOISE_RE.search(wider_desc):
+                        desc = wider_desc
             lines.append(self._line_from_desc(part, desc, qty, each))
         return lines
 
@@ -812,16 +952,20 @@ class McMasterAdapter:
         # trailing window so "Low-Carbon Steel" keeps "Low-Carbon", not just "Steel".
         starts = list(_PRODUCT_START_RE.finditer(raw))
         if starts:
-            tail_from = max(0, len(raw) - 180)
-            in_tail = [m for m in starts if m.start() >= tail_from]
-            pick = in_tail[0] if in_tail else starts[-1]
+            # Prefer a product-title hit that is not buried in header noise.
+            clean_hits = [m for m in starts if not _DESC_NOISE_RE.search(raw[m.start() :])]
+            pool = clean_hits or starts
+            tail_from = max(0, len(raw) - 220)
+            in_tail = [m for m in pool if m.start() >= tail_from]
+            pick = in_tail[0] if in_tail else pool[-1]
             raw = raw[pick.start() :].strip()
         # Drop leading line index ("1 ", "2 ")
         raw = re.sub(r"^\d+\s+", "", raw).strip()
         # Drop any leftover payment / deliver crumbs if still present
         raw = re.sub(
             r"^(?:Payment\s+method|Placed\s+by|McMaster(?:-Carr)?\s+number|"
-            r"Delivers?|Visa)\b.*?(?=\b(?:White|Black|Low-Carbon|Delrin|Acetal|"
+            r"Delivers?|Visa|Receipt|Billed\s+to|Shipped\s+to|Paid)\b.*?"
+            r"(?=\b(?:White|Black|Low-Carbon|Delrin|Acetal|"
             r"Aluminum|Steel|Nylon|Multipurpose)\b)",
             "",
             raw,
@@ -834,8 +978,17 @@ class McMasterAdapter:
             raw,
             flags=re.I,
         ).strip()
+        raw = re.sub(
+            r"\s+\d+\s+\d+\s+[0-9,]+\.[0-9]{2}\s*Each.*$",
+            "",
+            raw,
+            flags=re.I,
+        ).strip()
         raw = re.sub(r"\s+Merchandise.*$", "", raw, flags=re.I).strip()
-        if part and part.upper() not in raw.upper():
+        # Strip trailing part number duplicate
+        if part:
+            raw = re.sub(rf"\s*{re.escape(part)}\s*$", "", raw, flags=re.I).strip()
+        if part and part.upper() not in raw.upper() and not _DESC_NOISE_RE.search(raw):
             raw = f"{raw} {part}".strip()
         return raw[:500]
 

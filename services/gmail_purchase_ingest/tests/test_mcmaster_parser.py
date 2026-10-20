@@ -346,6 +346,108 @@ def test_explicit_shipping_line_from_receipt():
     assert ships[0].description == "Shipping"
 
 
+def test_receipt_pdf_packing_list_gst_shipping_clean_lines():
+    """Real receipt layout: Packing List order #, GST/HST, Shipping, clean P/N grid."""
+    a = McMasterAdapter()
+    pdf_text = """
+    McMASTER-CARR
+    330-995-5500 330-995-9600 (fax) cle.sales@mcmaster.com
+    Receipt
+    Billed to ATTENTION: AMISH SOLANKI S S CADCAM INC
+    Purchase Order 1013ASOLANKI
+    Paid (US Dollars) $198.25
+    Invoice 73569330 Invoice Date 10/14/26
+    Shipped to S S Cadcam Inc Squamish BC
+    Your Account 375541600
+    Amish Solanki placed this order.
+
+    8741K53
+    White Delrin Acetal Resin Bar Oversized Tolerance
+    3" Thick, 3" Wide, 1 ft. Length
+    1 1
+    113.92 Each
+    113.92
+
+    8910K54
+    Low-Carbon Steel Bar
+    1" Thick, 2-1/2" Wide, 1 Foot Long
+    1 1
+    45.41 Each
+    45.41
+
+    Packing List 7110963-01
+    Shipped Date 10/14/26
+    Carrier Purolator
+    Tracking CPK004315941
+
+    Merchandise
+    159.33
+    Canadian GST/HST
+    9.44
+    Shipping
+    29.48
+    Total (US Dollars)
+    $198.25
+    """
+    orig = McMasterAdapter._pdf_bytes_to_text
+    McMasterAdapter._pdf_bytes_to_text = staticmethod(lambda _data: pdf_text)
+    try:
+        # Body intentionally has a wrong "order number" that used to win as Ref
+        msg = EmailMessage(
+            "receipt-pdf",
+            from_address="sales@mcmaster.com",
+            subject="Receipt for Your October 13th Order with McMaster-Carr",
+            body_text=(
+                "Receipt\nOrder Number: 18678242\n"
+                "330-995-5500 cle.sales@mcmaster.com "
+                "Billed to ATTENTION: AMISH SOLANKI "
+                "8741K53 1 each 113.92 each $113.92\n"
+            ),
+            received_at="2026-10-15T12:00:00+00:00",
+            attachments=[
+                {
+                    "filename": "Receipt.pdf",
+                    "data": b"%PDF-1.4 fake",
+                    "mime_type": "application/pdf",
+                }
+            ],
+        )
+        parsed = a.parse(msg)
+        assert parsed.order_reference == "7110963"
+        assert parsed.order_reference != "18678242"
+        assert parsed.invoice == "73569330"
+        assert parsed.total == 198.25
+        by_pn = {l.part_number.upper(): l for l in parsed.lines if l.part_number}
+        assert "8741K53" in by_pn and "8910K54" in by_pn
+        d = by_pn["8741K53"]
+        assert "Delrin" in d.description
+        assert "Billed to" not in d.description
+        assert "cle.sales" not in d.description
+        assert d.unit_cost == 113.92
+        assert by_pn["8910K54"].grade == "1018"
+        ships = [l for l in parsed.lines if l.line_type == "shipping"]
+        taxes = [l for l in parsed.lines if l.line_type == "tax"]
+        assert len(ships) == 1 and ships[0].unit_cost == 29.48
+        assert len(taxes) == 1 and taxes[0].unit_cost == 9.44
+        assert taxes[0].description == "GST/HST"
+        # Footer math: 159.33 + 9.44 + 29.48 = 198.25
+        assert abs(159.33 + 9.44 + 29.48 - 198.25) < 0.01
+    finally:
+        McMasterAdapter._pdf_bytes_to_text = orig
+
+
+def test_packing_list_preferred_over_generic_order_number():
+    a = McMasterAdapter()
+    blob = (
+        "Order Number: 18678242\n"
+        "Invoice Number: 73569330\n"
+        "Packing List 7110963-01\n"
+    )
+    base, suffix = a._find_order(blob, "")
+    assert base == "7110963"
+    assert suffix == "01"
+
+
 def test_shipping_inferred_from_total_minus_line_items():
     """Confirmation often has Order Total but no Shipping row — infer remainder."""
     a = McMasterAdapter()
