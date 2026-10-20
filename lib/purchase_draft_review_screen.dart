@@ -183,11 +183,22 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
   }
 
   Future<void> _pickTool(PurchaseDraftLine line) async {
+    Tool? matched;
+    if (line.matchedToolId != null && line.matchedToolId!.isNotEmpty) {
+      for (final t in _tools) {
+        if (t.id == line.matchedToolId) {
+          matched = t;
+          break;
+        }
+      }
+    }
+    final mfrPn = _manufacturerPartNumber(line, matched);
     final selected = await showDialog<Tool>(
       context: context,
       builder: (ctx) => _ToolMatchDialog(
         tools: _tools,
-        hint: line.partNumber ?? line.description,
+        // Prefer catalog/manufacturer model (989816-C4), never raw DGI HVT*.
+        hint: mfrPn.isNotEmpty ? mfrPn : line.description,
       ),
     );
     if (selected == null) return;
@@ -567,7 +578,11 @@ class _ToolMatchDialogState extends State<_ToolMatchDialog> {
         t.brand ?? '',
         t.size ?? '',
       ].join(' ').toLowerCase();
-      return tokens.every((tok) => hay.contains(tok));
+      // Also match without hyphens (989816C4 ↔ 989816-C4).
+      final hayCompact = hay.replaceAll('-', '');
+      return tokens.every(
+        (tok) => hay.contains(tok) || hayCompact.contains(tok.replaceAll('-', '')),
+      );
     }).take(60).toList();
   }
 
