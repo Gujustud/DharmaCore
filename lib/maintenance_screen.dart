@@ -1036,6 +1036,8 @@ class _MaintenanceScreenState extends State<MaintenanceScreen>
         final status = dueStatusOf(data);
         final machine = _machineNameOf(schedule);
         final note = '${data['note'] ?? ''}'.trim();
+        final photoCount =
+            PartImagesPanel.normalizeFilenames(data['photos']).length;
         final statusColor = _statusColor(status, scheme);
 
         return Material(
@@ -1069,6 +1071,15 @@ class _MaintenanceScreenState extends State<MaintenanceScreen>
                           ),
                         ),
                       ),
+                      if (photoCount > 0)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6, top: 2),
+                          child: Icon(
+                            Icons.photo_library_outlined,
+                            size: 18,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 8,
@@ -1121,6 +1132,8 @@ class _MaintenanceScreenState extends State<MaintenanceScreen>
                       machine.isEmpty ? '—' : machine,
                       frequencyLabel(data),
                       'Next ${formatMaintenanceDateLabel(data['next_due_date'])}',
+                      if (photoCount > 0)
+                        '$photoCount photo${photoCount == 1 ? '' : 's'}',
                     ].join(' · '),
                     style: TextStyle(
                       color: scheme.onSurfaceVariant,
@@ -1456,6 +1469,9 @@ class _MaintenanceScheduleDialogState extends State<_MaintenanceScheduleDialog> 
   bool _active = true;
   bool _saving = false;
   List<dynamic> _machines = [];
+  List<String> _photoFilenames = [];
+  List<_PendingPhoto> _pendingPhotos = [];
+  bool _photosDirty = false;
 
   bool get _isEdit => widget.schedule != null;
 
@@ -1486,6 +1502,7 @@ class _MaintenanceScheduleDialogState extends State<_MaintenanceScheduleDialog> 
     _machineId = (mid != null && mid.isNotEmpty)
         ? mid
         : (_machines.isNotEmpty ? _machines.first.id as String : null);
+    _photoFilenames = PartImagesPanel.normalizeFilenames(data['photos']);
   }
 
   @override
@@ -1573,9 +1590,12 @@ class _MaintenanceScheduleDialogState extends State<_MaintenanceScheduleDialog> 
           leadDays: lead.clamp(0, 3650),
           active: _active,
           updatedByEmail: email,
+          photoFiles: _pendingPhotos.isEmpty
+              ? null
+              : _pendingPhotoMultipart(_pendingPhotos),
         );
       }
-      if (mounted) Navigator.pop(context, true);
+      if (mounted) _close(true);
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);
@@ -1584,6 +1604,50 @@ class _MaintenanceScheduleDialogState extends State<_MaintenanceScheduleDialog> 
         );
       }
     }
+  }
+
+  Widget _buildPhotosSection() {
+    if (_isEdit) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Photos',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          PartImagesPanel(
+            recordId: widget.schedule.id as String?,
+            collectionName: 'maintenance_schedules',
+            fieldName: 'photos',
+            filenames: _photoFilenames,
+            maxFiles: 8,
+            allowedExtensions: const ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+            emptyHint: 'Click to add photos.',
+            addTileLabel: 'Add photo',
+            onFilenamesChanged: (list) => setState(() {
+              _photoFilenames = list;
+              _photosDirty = true;
+            }),
+          ),
+        ],
+      );
+    }
+    return _buildPendingPhotosSection(
+      photos: _pendingPhotos,
+      onChanged: (next) => setState(() => _pendingPhotos = next),
+    );
+  }
+
+  void _close([bool saved = false]) {
+    Navigator.pop(context, saved || _photosDirty);
   }
 
   @override
@@ -1703,13 +1767,15 @@ class _MaintenanceScheduleDialogState extends State<_MaintenanceScheduleDialog> 
                 maxLines: 5,
                 textCapitalization: TextCapitalization.sentences,
               ),
+              const SizedBox(height: 16),
+              _buildPhotosSection(),
             ],
           ),
         ),
       ),
       actions: [
         TextButton(
-          onPressed: _saving ? null : () => Navigator.pop(context, false),
+          onPressed: _saving ? null : () => _close(false),
           child: const Text('Cancel'),
         ),
         ElevatedButton(
