@@ -2393,9 +2393,10 @@ class PocketBaseService {
     String? note,
     String? updatedByEmail,
     String? scheduleId,
+    List<http.MultipartFile>? photoFiles,
   }) async {
     try {
-      return await pb.collection('maintenance_records').create(body: {
+      final body = <String, dynamic>{
         'name': name.trim(),
         'machine': machineId,
         if (completedDate != null && completedDate.isNotEmpty)
@@ -2404,7 +2405,14 @@ class PocketBaseService {
         if (updatedByEmail != null && updatedByEmail.isNotEmpty)
           'updated_by_email': updatedByEmail,
         if (scheduleId != null && scheduleId.isNotEmpty) 'schedule': scheduleId,
-      });
+      };
+      if (photoFiles != null && photoFiles.isNotEmpty) {
+        return await pb.collection('maintenance_records').create(
+          body: body,
+          files: photoFiles,
+        );
+      }
+      return await pb.collection('maintenance_records').create(body: body);
     } catch (e) {
       print('Error creating maintenance record: $e');
       rethrow;
@@ -2543,6 +2551,7 @@ class PocketBaseService {
     int leadDays = 7,
     bool active = true,
     String? updatedByEmail,
+    List<http.MultipartFile>? photoFiles,
   }) async {
     try {
       await createMaintenanceRecord(
@@ -2552,6 +2561,7 @@ class PocketBaseService {
         note: note,
         updatedByEmail: updatedByEmail,
         scheduleId: scheduleId,
+        photoFiles: photoFiles,
       );
 
       final completed = DateTime.parse(completedDate);
