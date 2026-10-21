@@ -1230,6 +1230,8 @@ class PocketBaseService {
         'exchange_rate_usd_to_cad': 1.3,
         'exchange_rate_auto_update': false,
         'auto_logout_minutes': 0,
+        'email_ingest_enabled': false,
+        'email_ingest_poll_minutes': 30,
       };
 
   Future<void> updateShopSettings(String id, Map<String, dynamic> body) async {
@@ -1239,6 +1241,509 @@ class PocketBaseService {
       print('Error updating shop settings: $e');
       rethrow;
     }
+  }
+
+  // ============================================================================
+  // EMAIL PURCHASE INGEST (drafts / vendors)
+  // ============================================================================
+
+  Future<List<dynamic>> getPendingPurchaseDrafts() async {
+    try {
+      // Avoid sort '-created' — live shop PB has returned 400 on that before.
+      return await pb.collection('purchase_drafts').getFullList(
+        filter: 'status = "pending"',
+        sort: '-purchase_date',
+        expand: 'supplier,email_ingest_vendor',
+      );
+    } catch (e) {
+      print('Error getting purchase drafts (with expand): $e');
+      // Retry without expand so the review queue still shows.
+      try {
+        return await pb.collection('purchase_drafts').getFullList(
+          filter: 'status = "pending"',
+          sort: '-purchase_date',
+        );
+      } catch (e2) {
+        print('Error getting purchase drafts: $e2');
+        rethrow;
+      }
+    }
+  }
+
+  Future<dynamic> getPurchaseDraft(String id) async {
+    try {
+      return await pb.collection('purchase_drafts').getOne(
+        id,
+        expand: 'supplier,email_ingest_vendor,email_ingest_vendor.supplier',
+      );
+    } catch (e) {
+      print('Error getting purchase draft: $e');
+      rethrow;
+    }
+  }
+
+  Future<List<dynamic>> getPurchaseDraftLines(String draftId) async {
+    try {
+      // Live shop PB 400s on multi-field sorts that include `created`.
+      return await pb.collection('purchase_draft_lines').getFullList(
+        filter: 'draft = "$draftId"',
+        sort: 'sort_order',
+        expand: 'matched_material,matched_tool,material_proposal',
+      );
+    } catch (e) {
+      print('Error getting purchase draft lines (with expand): $e');
+      try {
+        return await pb.collection('purchase_draft_lines').getFullList(
+          filter: 'draft = "$draftId"',
+          sort: 'sort_order',
+        );
+      } catch (e2) {
+        print('Error getting purchase draft lines: $e2');
+        rethrow;
+      }
+    }
+  }
+
+  Future<void> updatePurchaseDraft(
+    String id,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      await pb.collection('purchase_drafts').update(id, body: body);
+    } catch (e) {
+      print('Error updating purchase draft: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> updatePurchaseDraftLine(
+    String id,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      await pb.collection('purchase_draft_lines').update(id, body: body);
+    } catch (e) {
+      print('Error updating purchase draft line: $e');
+      rethrow;
+    }
+  }
+
+  Future<List<dynamic>> getEmailIngestVendors() async {
+    try {
+      return await pb.collection('email_ingest_vendors').getFullList(
+        sort: 'name',
+        expand: 'supplier',
+      );
+    } catch (e) {
+      print('Error getting email ingest vendors: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> updateEmailIngestVendor(
+    String id,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      await pb.collection('email_ingest_vendors').update(id, body: body);
+    } catch (e) {
+      print('Error updating email ingest vendor: $e');
+      rethrow;
+    }
+  }
+
+  Future<dynamic> createEmailIngestVendor(Map<String, dynamic> body) async {
+    try {
+      return await pb.collection('email_ingest_vendors').create(body: body);
+    } catch (e) {
+      print('Error creating email ingest vendor: $e');
+      rethrow;
+    }
+  }
+
+  Future<dynamic> getMaterialProposal(String id) async {
+    try {
+      return await pb.collection('material_proposals').getOne(id);
+    } catch (e) {
+      print('Error getting material proposal: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> updateMaterialProposal(
+    String id,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      await pb.collection('material_proposals').update(id, body: body);
+    } catch (e) {
+      print('Error updating material proposal: $e');
+      rethrow;
+    }
+  }
+
+  /// Approve a pending draft into a real purchase (+ items). Returns purchase id.
+  Future<String> approvePurchaseDraft(String draftId) async {
+    final draftRec = await getPurchaseDraft(draftId);
+    final draft = PurchaseDraft.fromRecord(draftRec);
+    if (draft.status != 'pending') {
+      throw StateError('Draft is not pending');
+    }
+
+    final lineRecs = await getPurchaseDraftLines(draftId);
+    final lines = lineRecs.map(PurchaseDraftLine.fromRecord).toList();
+
+    // Tool item lines must be matched in review (user adds new tools manually first).
+    for (final line in lines) {
+      if (line.lineType != 'item') continue;
+      if (line.matchedToolId == null || line.matchedToolId!.isEmpty) {
+        throw StateError(
+          'Match all tools before approving '
+          '(${line.partNumber ?? line.description ?? line.id}). '
+          'Add the tool in inventory first if it is new, then pick it here.',
+        );
+      }
+    }
+
+    // Resolve material proposals → create catalog rows when needed.
+    for (final line in lines) {
+      if (line.lineType != 'material') continue;
+      if (line.matchedMaterialId != null && line.matchedMaterialId!.isNotEmpty) {
+        continue;
+      }
+      if (line.materialProposalId == null || line.materialProposalId!.isEmpty) {
+        continue;
+      }
+      final prop = await getMaterialProposal(line.materialProposalId!);
+      final pdata = prop.data as Map<String, dynamic>? ?? {};
+      if (pdata['status'] == 'approved' &&
+          pdata['created_material'] != null &&
+          pdata['created_material'].toString().isNotEmpty) {
+        await updatePurchaseDraftLine(line.id, {
+          'matched_material': pdata['created_material'].toString(),
+          'match_status': 'matched',
+        });
+        continue;
+      }
+      final created = await createMaterial(
+        grade: (pdata['grade'] ?? 'Unknown').toString(),
+        form: (pdata['form'] ?? 'other').toString(),
+        sizeLabel: (pdata['size_label'] ?? 'unknown').toString(),
+        unit: (pdata['unit'] ?? 'ea').toString(),
+        notes: pdata['notes']?.toString(),
+      );
+      await updateMaterialProposal(line.materialProposalId!, {
+        'status': 'approved',
+        'created_material': created.id,
+      });
+      await updatePurchaseDraftLine(line.id, {
+        'matched_material': created.id,
+        'match_status': 'matched',
+      });
+    }
+
+    // Reload lines after material resolution
+    final freshLineRecs = await getPurchaseDraftLines(draftId);
+    final freshLines = freshLineRecs.map(PurchaseDraftLine.fromRecord).toList();
+
+    final supplierId = await _resolveDraftSupplierId(draft, draftRec);
+
+    // Invoice # from draft, or recover from attachment filenames (e.g. 3525554_in_….pdf)
+    var invoiceNo = (draft.invoice ?? '').trim();
+    if (invoiceNo.isEmpty) {
+      invoiceNo = _invoiceFromAttachmentNames(draft.attachmentNames) ?? '';
+    }
+
+    final purchase = await createPurchase(
+      purchaseDate: draft.purchaseDate ?? DateTime.now(),
+      supplierId: supplierId,
+      orderReference: draft.orderReference,
+      invoice: invoiceNo.isEmpty ? null : invoiceNo,
+      notes: [
+        if (draft.notes != null && draft.notes!.trim().isNotEmpty) draft.notes!.trim(),
+        if (draft.tracking != null && draft.tracking!.trim().isNotEmpty)
+          'Tracking: ${draft.tracking!.trim()}',
+      ].where((s) => s.isNotEmpty).join('\n'),
+      total: draft.total,
+      currency: draft.currency,
+    );
+
+    final purchaseId = purchase.id as String;
+
+    for (var i = 0; i < freshLines.length; i++) {
+      final line = freshLines[i];
+      final lineRec = freshLineRecs[i];
+      List<http.MultipartFile>? millCertFiles;
+      if (line.lineType == 'material' && line.millCertNames.isNotEmpty) {
+        millCertFiles = await _millCertPartsFromDraftLine(lineRec, line.millCertNames);
+      }
+      // Normalize GST/HST → GST so the purchase editor checkbox recognizes it.
+      var taxDesc = line.description;
+      if (line.lineType == 'tax') {
+        final d = (taxDesc ?? '').toUpperCase();
+        if (d.contains('GST')) taxDesc = 'GST';
+        if (d.contains('PST') && !d.contains('GST')) taxDesc = 'PST';
+        if ((taxDesc ?? '').trim().isEmpty) taxDesc = 'Tax';
+      }
+      // Shipping: keep "Next Day Air" etc.; never force the word "Shipping".
+      String? shipDesc;
+      if (line.lineType == 'shipping') {
+        final raw = (line.description ?? '').trim();
+        if (raw.isNotEmpty && raw.toLowerCase() != 'shipping') {
+          shipDesc = raw;
+        } else if (line.unitCost != null &&
+            (line.unitCost! - 34.95).abs() < 0.01) {
+          shipDesc = 'Next Day Air';
+        } else {
+          shipDesc = null; // empty description on shipping line
+        }
+      }
+      final toolId = line.lineType == 'item'
+          ? _relationId(line.matchedToolId)
+          : null;
+      await createPurchaseItem(
+        purchaseId: purchaseId,
+        toolId: toolId,
+        materialId: line.lineType == 'material' ? line.matchedMaterialId : null,
+        quantity: (line.lineType == 'shipping' || line.lineType == 'tax')
+            ? 1
+            : line.quantity,
+        unitCost: line.unitCost,
+        lineType: line.lineType,
+        description: line.lineType == 'shipping'
+            ? shipDesc
+            : line.lineType == 'tax'
+                ? taxDesc
+                : (line.description ?? line.partNumber),
+        heatLot: line.heatLot,
+        millCertFiles: millCertFiles,
+      );
+    }
+
+    // Prefer invoice PDF(s); drop order-ack when an invoice file is present
+    await _copyDraftAttachmentsToPurchase(draftRec, purchaseId);
+
+    await updatePurchaseDraft(draftId, {
+      'status': 'approved',
+      'approved_purchase': purchase.id,
+    });
+
+    return purchaseId;
+  }
+
+  /// Supplier from draft, linked ingest vendor, or company_name match.
+  Future<String?> _resolveDraftSupplierId(
+    PurchaseDraft draft,
+    dynamic draftRec,
+  ) async {
+    final existing = draft.supplierId?.trim();
+    if (existing != null && existing.isNotEmpty) return existing;
+
+    try {
+      final expand = draftRec.expand;
+      if (expand != null) {
+        final vendor = expand['email_ingest_vendor'];
+        final raw = (vendor is List && vendor.isNotEmpty) ? vendor[0] : vendor;
+        if (raw != null) {
+          final data = raw.data as Map<String, dynamic>? ?? {};
+          final linked = data['supplier']?.toString();
+          if (linked != null && linked.isNotEmpty) return linked;
+          // Expanded supplier on the vendor row
+          try {
+            final vExpand = raw.expand;
+            final sup = vExpand?['supplier'];
+            final sRaw = (sup is List && sup.isNotEmpty) ? sup[0] : sup;
+            final sid = sRaw?.id?.toString();
+            if (sid != null && sid.isNotEmpty) return sid;
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+
+    final needles = <String>[];
+    final vendorName = draft.vendorName?.trim();
+    final vendorKey = draft.vendorKey?.trim().toLowerCase();
+    if (vendorName != null && vendorName.isNotEmpty) needles.add(vendorName);
+    if (vendorKey == 'mcmaster') {
+      needles.addAll(['McMaster-Carr', 'McMaster', 'McMaster Carr']);
+    } else if (vendorKey == 'dgi_supply') {
+      needles.addAll(['DGI Supply', 'DGI Supply Canada', 'DGI']);
+    } else if (vendorKey != null && vendorKey.isNotEmpty) {
+      needles.add(vendorKey);
+    }
+
+    if (needles.isEmpty) return null;
+    try {
+      final suppliers = await getSuppliers();
+      for (final needle in needles) {
+        final n = needle.toLowerCase();
+        for (final s in suppliers) {
+          final name = (s.data['company_name'] ?? '').toString().toLowerCase();
+          if (name.isEmpty) continue;
+          if (name == n || name.contains(n) || n.contains(name)) {
+            return s.id as String;
+          }
+        }
+      }
+    } catch (e) {
+      print('Error resolving draft supplier by name: $e');
+    }
+    return null;
+  }
+
+  Future<List<http.MultipartFile>> _millCertPartsFromDraftLine(
+    dynamic lineRec,
+    List<String> filenames,
+  ) async {
+    final out = <http.MultipartFile>[];
+    for (final name in filenames) {
+      if (name.trim().isEmpty) continue;
+      try {
+        final bytes = await downloadRecordFile(lineRec, name);
+        if (bytes.isEmpty) continue;
+        out.add(
+          http.MultipartFile.fromBytes(
+            'mill_certs+',
+            bytes,
+            filename: name,
+          ),
+        );
+      } catch (e) {
+        print('Could not copy mill cert $name from draft line: $e');
+      }
+    }
+    return out;
+  }
+
+  Future<void> _copyDraftAttachmentsToPurchase(
+    dynamic draftRec,
+    String purchaseId,
+  ) async {
+    final data = draftRec.data as Map<String, dynamic>? ?? {};
+    final names = <String>[];
+    final raw = data['attachments'];
+    if (raw is List) {
+      names.addAll(raw.map((e) => e.toString()).where((s) => s.isNotEmpty));
+    } else if (raw != null && raw.toString().isNotEmpty) {
+      names.add(raw.toString());
+    }
+    if (names.isEmpty) return;
+
+    // Prefer invoice PDFs; if any look like invoices, skip order-ack / confirmation.
+    final toCopy = _preferInvoiceAttachmentNames(names);
+
+    final uploads = <http.MultipartFile>[];
+    for (final name in toCopy) {
+      try {
+        final bytes = await downloadRecordFile(draftRec, name);
+        if (bytes.isEmpty) continue;
+        uploads.add(
+          http.MultipartFile.fromBytes(
+            'attachments+',
+            bytes,
+            filename: name,
+          ),
+        );
+      } catch (e) {
+        print('Could not copy draft attachment $name: $e');
+      }
+    }
+    if (uploads.isEmpty) return;
+    try {
+      await uploadPurchaseAttachments(purchaseId, uploads);
+    } catch (e) {
+      print('Error uploading draft attachments to purchase: $e');
+    }
+  }
+
+  /// Relation field → id string (handles raw id, expand map, or toString noise).
+  static String? _relationId(dynamic value) {
+    if (value == null) return null;
+    if (value is String) {
+      final s = value.trim();
+      if (s.isEmpty || s == 'null') return null;
+      return s;
+    }
+    if (value is Map) {
+      final id = value['id']?.toString().trim();
+      if (id != null && id.isNotEmpty && id != 'null') return id;
+    }
+    try {
+      final id = (value as dynamic).id?.toString().trim();
+      if (id != null && id.isNotEmpty && id != 'null') return id;
+    } catch (_) {}
+    final s = value.toString().trim();
+    if (s.isEmpty || s == 'null' || s.startsWith('Instance of')) return null;
+    return s;
+  }
+
+  static bool _isOrderAckFilename(String name) {
+    final n = name.toLowerCase();
+    return n.contains('ord_ack') ||
+        n.contains('order_ack') ||
+        n.contains('acknowledg') ||
+        n.contains('confirmation') ||
+        n.contains('confirm');
+  }
+
+  static bool _isImageOrLogoFilename(String name) {
+    final n = name.toLowerCase();
+    if (n.endsWith('.jpg') ||
+        n.endsWith('.jpeg') ||
+        n.endsWith('.png') ||
+        n.endsWith('.gif') ||
+        n.endsWith('.webp') ||
+        n.endsWith('.bmp') ||
+        n.endsWith('.svg') ||
+        n.endsWith('.ico')) {
+      return true;
+    }
+    return n.contains('logo') ||
+        n.contains('dgilog') ||
+        n.contains('signature') ||
+        n.contains('spacer') ||
+        n.contains('pixel');
+  }
+
+  static bool _isInvoiceFilename(String name) {
+    final n = name.toLowerCase();
+    if (_isOrderAckFilename(n) || _isImageOrLogoFilename(n)) return false;
+    if (n.contains('invoice') ||
+        n.contains('inv_') ||
+        n.startsWith('inv-') ||
+        n.startsWith('inv.')) {
+      return true;
+    }
+    // Live DGI: 3525554_in_….pdf
+    return RegExp(r'\d{5,12}_in[_\-.]').hasMatch(n);
+  }
+
+  /// When invoice PDFs exist, copy only those. Else non-ack PDFs. Else all.
+  static List<String> _preferInvoiceAttachmentNames(List<String> names) {
+    final docs = names.where((n) => !_isImageOrLogoFilename(n)).toList();
+    final invoices = docs.where(_isInvoiceFilename).toList();
+    if (invoices.isNotEmpty) return invoices;
+    final nonAck = docs.where((n) => !_isOrderAckFilename(n)).toList();
+    if (nonAck.isNotEmpty) return nonAck;
+    return docs.isNotEmpty ? docs : names;
+  }
+
+  static String? _invoiceFromAttachmentNames(List<String> names) {
+    for (final name in names) {
+      final m = RegExp(
+        r'(?:invoice|inv)[_\s.\-]*#?\s*(\d{5,12})',
+        caseSensitive: false,
+      ).firstMatch(name);
+      if (m != null) return m.group(1);
+      final m2 = RegExp(r'(\d{5,12})_in[_\-.]', caseSensitive: false)
+          .firstMatch(name);
+      if (m2 != null) return m2.group(1);
+    }
+    return null;
+  }
+
+  Future<void> rejectPurchaseDraft(String draftId) async {
+    await updatePurchaseDraft(draftId, {'status': 'rejected'});
   }
 
   // ============================================================================
