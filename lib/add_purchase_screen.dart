@@ -74,6 +74,10 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
 
   bool _gstChecked = false;
   bool _pstChecked = false;
+  /// Vendor/invoice tax amounts (e.g. DGI $16.84). When set, prefer these over
+  /// rate × (items + shipping), which can be 1¢ off due to rounding.
+  double? _gstAmountOverride;
+  double? _pstAmountOverride;
   /// Invoice currency tag — no FX conversion (`CAD` default, `USD` for McMaster).
   String _currency = 'CAD';
 
@@ -86,6 +90,8 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
 
   String _money(double amount) =>
       '\$${amount.toStringAsFixed(2)} $_currency';
+
+  static double _round2(double v) => (v * 100).round() / 100;
 
   @override
   void initState() {
@@ -211,11 +217,20 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
         if (p != null && existingItemRecords.isNotEmpty) {
           _lineItems.clear();
           bool gst = false, pst = false;
+          double? gstAmt;
+          double? pstAmt;
           for (final record in existingItemRecords) {
             final item = PurchaseItem.fromRecord(record);
             if (item.lineType == 'tax') {
-              if (item.description == 'GST') gst = true;
-              if (item.description == 'PST') pst = true;
+              final d = (item.description ?? '').toUpperCase();
+              if (d.contains('GST')) {
+                gst = true;
+                if (item.unitCost != null) gstAmt = item.unitCost;
+              }
+              if (d.contains('PST') && !d.contains('GST')) {
+                pst = true;
+                if (item.unitCost != null) pstAmt = item.unitCost;
+              }
               continue;
             }
             final raw = item.lineType;
@@ -224,19 +239,45 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
                     raw == 'misc'
                 ? raw
                 : 'item';
+            // Resolve tool label from catalog when expand did not populate toolName
+            var toolName = item.toolName ?? '';
+            final toolId = item.toolId;
+            if (type == 'item' &&
+                toolName.isEmpty &&
+                toolId != null &&
+                toolId.isNotEmpty) {
+              for (final t in _tools) {
+                if (t.id != toolId) continue;
+                final model = (t.modelNumber ?? '').trim();
+                toolName = model.isEmpty
+                    ? t.toolName
+                    : '${t.toolName} ($model)';
+                break;
+              }
+            }
+            var shipDesc = (type == 'shipping') ? (item.description ?? '') : '';
+            if (type == 'shipping') {
+              final d = shipDesc.trim();
+              if (d.toLowerCase() == 'shipping') {
+                shipDesc = (item.unitCost != null &&
+                        (item.unitCost! - 34.95).abs() < 0.01)
+                    ? 'Next Day Air'
+                    : '';
+              }
+            }
             _lineItems.add({
               'type': type,
-              'toolId': item.toolId,
-              'toolName': item.toolName ?? '',
+              'toolId': toolId,
+              'toolName': toolName,
               'materialId': item.materialId,
               'materialLabel': item.materialLabel ?? '',
               'quantity': item.quantity,
               'unitCost': item.unitCost,
               'description': (type == 'shipping' || type == 'misc')
-                  ? (item.description ?? '')
+                  ? (type == 'shipping' ? shipDesc : (item.description ?? ''))
                   : '',
               'itemText': type == 'item'
-                  ? (item.toolName ?? '')
+                  ? toolName
                   : (type == 'material' ? (item.materialLabel ?? '') : ''),
               'heatLot': item.heatLot ?? '',
               'sourceItemId': item.id,
@@ -247,6 +288,8 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
           }
           _gstChecked = gst;
           _pstChecked = pst;
+          _gstAmountOverride = gstAmt;
+          _pstAmountOverride = pstAmt;
           if (_lineItems.isEmpty) {
             _lineItems.add(_newLineMap());
           }
@@ -483,14 +526,23 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
     return _subtotalItems() + _shippingTotal();
   }
 
+  double _computedGst() => _round2(_taxableBase() * _gstRate);
+
+  double _computedPst() => _round2(_taxableBase() * _pstRate);
+
+  /// Prefer invoice-stored GST when present; otherwise rate × taxable base.
+  double _gstAmount() {
+    if (!_gstChecked) return 0;
+    return _gstAmountOverride ?? _computedGst();
+  }
+
+  double _pstAmount() {
+    if (!_pstChecked) return 0;
+    return _pstAmountOverride ?? _computedPst();
+  }
+
   double _totalTaxAndShipping() {
-    double sum = 0;
-    final shipping = _shippingTotal();
-    sum += shipping;
-    final taxableBase = _taxableBase();
-    if (_gstChecked) sum += taxableBase * _gstRate;
-    if (_pstChecked) sum += taxableBase * _pstRate;
-    return sum;
+    return _shippingTotal() + _gstAmount() + _pstAmount();
   }
 
   Iterable<Tool> _filterTools(String text) {
@@ -582,10 +634,9 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
       await _hydrateLineMillCertsForSave();
       String id;
       final subtotal = _subtotalItems();
-      // Match on-screen GST/PST: tax base is items + shipping.
-      final taxable = _taxableBase();
-      final gstAmt = _gstChecked ? taxable * _gstRate : 0.0;
-      final pstAmt = _pstChecked ? taxable * _pstRate : 0.0;
+      // Prefer invoice GST/PST amounts when loaded; else rate × (items + shipping).
+      final gstAmt = _gstAmount();
+      final pstAmt = _pstAmount();
       final grandTotal = subtotal + _totalTaxAndShipping();
       if (widget.purchase != null) {
         id = widget.purchase!.id;
@@ -1681,15 +1732,20 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
                             children: [
                               Checkbox(
                                 value: _gstChecked,
-                                onChanged: (v) =>
-                                    setState(() => _gstChecked = v == true),
+                                onChanged: (v) => setState(() {
+                                  _gstChecked = v == true;
+                                  // Manual toggle drops invoice lock → use rate.
+                                  _gstAmountOverride = null;
+                                }),
                               ),
                               const Text('GST'),
                               const SizedBox(width: 16),
                               Checkbox(
                                 value: _pstChecked,
-                                onChanged: (v) =>
-                                    setState(() => _pstChecked = v == true),
+                                onChanged: (v) => setState(() {
+                                  _pstChecked = v == true;
+                                  _pstAmountOverride = null;
+                                }),
                               ),
                               const Text('PST'),
                               const SizedBox(width: 16),
@@ -1707,11 +1763,11 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
                           Text('Shipping: ${_money(_shippingTotal())}'),
                           if (_gstChecked)
                             Text(
-                              'GST: ${_money(_taxableBase() * _gstRate)}',
+                              'GST: ${_money(_gstAmount())}',
                             ),
                           if (_pstChecked)
                             Text(
-                              'PST: ${_money(_taxableBase() * _pstRate)}',
+                              'PST: ${_money(_pstAmount())}',
                             ),
                           const SizedBox(height: 4),
                           Text(

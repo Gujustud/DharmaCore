@@ -1,6 +1,8 @@
 // models.dart
 // Model classes for PocketBase records
 
+import 'dart:convert';
+
 class Tool {
   final String id;
   final String toolName;
@@ -625,8 +627,10 @@ class PurchaseItem {
     return PurchaseItem(
       id: record.id,
       purchaseId: data['purchase'] ?? '',
-      toolId: data['tool'],
-      materialId: data['material']?.toString(),
+      toolId: _relationIdFromData(data['tool']) ??
+          _relationIdFromExpand(record.expand?['tool']),
+      materialId: _relationIdFromData(data['material']) ??
+          _relationIdFromExpand(record.expand?['material']),
       quantity: quantity,
       unitCost: data['unit_cost']?.toDouble(),
       toolName: toolName,
@@ -651,4 +655,295 @@ List<String> _fileNamesFrom(dynamic v) {
   if (v == null) return [];
   final s = v.toString();
   return s.isEmpty ? [] : [s];
+}
+
+String? _relationIdFromData(dynamic v) {
+  if (v == null) return null;
+  if (v is String) {
+    final s = v.trim();
+    if (s.isEmpty || s == 'null') return null;
+    return s;
+  }
+  if (v is Map) {
+    final id = v['id']?.toString().trim();
+    if (id != null && id.isNotEmpty && id != 'null') return id;
+  }
+  try {
+    final id = (v as dynamic).id?.toString().trim();
+    if (id != null && id.isNotEmpty && id != 'null') return id;
+  } catch (_) {}
+  final s = v.toString().trim();
+  if (s.isEmpty || s == 'null' || s.startsWith('Instance of')) return null;
+  return s;
+}
+
+String? _relationIdFromExpand(dynamic expanded) {
+  if (expanded == null) return null;
+  final raw = (expanded is List && expanded.isNotEmpty) ? expanded[0] : expanded;
+  return _relationIdFromData(raw);
+}
+
+/// Pending email-ingest purchase draft (review queue).
+class PurchaseDraft {
+  final String id;
+  final DateTime? purchaseDate;
+  final String? supplierId;
+  final String? supplierName;
+  final String? vendorKey;
+  final String? vendorName;
+  final String? orderReference;
+  final String? invoice;
+  final String? notes;
+  final String? tracking;
+  final double? total;
+  final String currency;
+  final String status; // pending|approved|rejected
+  final String? parseNotes;
+  final List<String> attachmentNames;
+
+  PurchaseDraft({
+    required this.id,
+    this.purchaseDate,
+    this.supplierId,
+    this.supplierName,
+    this.vendorKey,
+    this.vendorName,
+    this.orderReference,
+    this.invoice,
+    this.notes,
+    this.tracking,
+    this.total,
+    this.currency = 'USD',
+    this.status = 'pending',
+    this.parseNotes,
+    this.attachmentNames = const [],
+  });
+
+  bool get isPending => status == 'pending';
+
+  String get displayVendor {
+    final n = vendorName?.trim();
+    if (n != null && n.isNotEmpty) return n;
+    final k = vendorKey?.trim();
+    if (k == null || k.isEmpty) return 'Email';
+    if (k == 'mcmaster') return 'McMaster-Carr';
+    if (k == 'dgi_supply') return 'DGI Supply';
+    return k;
+  }
+
+  factory PurchaseDraft.fromRecord(dynamic record) {
+    final data = record.data as Map<String, dynamic>? ?? {};
+    String? supplierName;
+    String? vendorName;
+    try {
+      if (record.expand != null) {
+        if (record.expand['supplier'] != null) {
+          final s = record.expand['supplier'];
+          final raw = (s is List && s.isNotEmpty) ? s[0] : s;
+          supplierName = raw.data?['company_name']?.toString();
+        }
+        if (record.expand['email_ingest_vendor'] != null) {
+          final v = record.expand['email_ingest_vendor'];
+          final raw = (v is List && v.isNotEmpty) ? v[0] : v;
+          vendorName = raw.data?['name']?.toString();
+        }
+      }
+    } catch (_) {}
+    final rawCurrency = (data['currency'] ?? 'USD').toString().trim().toUpperCase();
+    DateTime? purchaseDate;
+    final pd = data['purchase_date'];
+    if (pd != null) {
+      purchaseDate = DateTime.tryParse(pd.toString());
+    }
+    return PurchaseDraft(
+      id: record.id as String,
+      purchaseDate: purchaseDate,
+      supplierId: data['supplier']?.toString(),
+      supplierName: supplierName,
+      vendorKey: data['vendor_key']?.toString(),
+      vendorName: vendorName,
+      orderReference: data['order_reference']?.toString(),
+      invoice: data['invoice']?.toString(),
+      notes: data['notes']?.toString(),
+      tracking: data['tracking']?.toString(),
+      total: (data['total'] as num?)?.toDouble(),
+      currency: rawCurrency == 'CAD' ? 'CAD' : 'USD',
+      status: (data['status'] ?? 'pending').toString(),
+      parseNotes: data['parse_notes']?.toString(),
+      attachmentNames: _fileNamesFrom(data['attachments']),
+    );
+  }
+}
+
+class PurchaseDraftLine {
+  final String id;
+  final String draftId;
+  final String lineType;
+  final String? description;
+  final String? partNumber;
+  final num quantity;
+  final double? unitCost;
+  final String? heatLot;
+  final String matchStatus;
+  final String? matchedMaterialId;
+  final String? matchedMaterialLabel;
+  final String? matchedToolId;
+  final String? matchedToolLabel;
+  final String? materialProposalId;
+  final Map<String, dynamic>? proposedMaterial;
+  final List<String> candidateMaterialIds;
+  final int sortOrder;
+  /// Mill cert filenames on this draft line (`purchase_draft_lines.mill_certs`).
+  final List<String> millCertNames;
+
+  PurchaseDraftLine({
+    required this.id,
+    required this.draftId,
+    required this.lineType,
+    this.description,
+    this.partNumber,
+    required this.quantity,
+    this.unitCost,
+    this.heatLot,
+    this.matchStatus = 'n_a',
+    this.matchedMaterialId,
+    this.matchedMaterialLabel,
+    this.matchedToolId,
+    this.matchedToolLabel,
+    this.materialProposalId,
+    this.proposedMaterial,
+    this.candidateMaterialIds = const [],
+    this.sortOrder = 0,
+    this.millCertNames = const [],
+  });
+
+  factory PurchaseDraftLine.fromRecord(dynamic record) {
+    final data = record.data as Map<String, dynamic>? ?? {};
+    String? materialLabel;
+    String? toolLabel;
+    try {
+      if (record.expand != null && record.expand['matched_material'] != null) {
+        final m = record.expand['matched_material'];
+        final raw = (m is List && m.isNotEmpty) ? m[0] : m;
+        materialLabel = ShopMaterial.fromRecord(raw).displayLabel;
+      }
+    } catch (_) {}
+    try {
+      if (record.expand != null && record.expand['matched_tool'] != null) {
+        final t = record.expand['matched_tool'];
+        final raw = (t is List && t.isNotEmpty) ? t[0] : t;
+        final tool = Tool.fromRecord(raw);
+        final model = (tool.modelNumber ?? '').trim();
+        toolLabel = model.isEmpty
+            ? tool.toolName
+            : '${tool.toolName} ($model)';
+      }
+    } catch (_) {}
+
+    Map<String, dynamic>? proposed;
+    final rawProp = data['proposed_material_json']?.toString();
+    if (rawProp != null && rawProp.isNotEmpty) {
+      try {
+        // PocketBase stores JSON as text; decode lazily via dart:convert in callers if needed.
+        proposed = _tryDecodeJsonMap(rawProp);
+      } catch (_) {}
+    }
+
+    final candidates = <String>[];
+    final rawCand = data['candidate_material_ids']?.toString() ?? '';
+    if (rawCand.isNotEmpty) {
+      candidates.addAll(
+        rawCand.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty),
+      );
+    }
+
+    final qtyRaw = data['quantity'];
+    final quantity = qtyRaw is num ? qtyRaw : num.tryParse('$qtyRaw') ?? 0;
+
+    return PurchaseDraftLine(
+      id: record.id as String,
+      draftId: data['draft']?.toString() ?? '',
+      lineType: (data['line_type'] ?? 'misc').toString(),
+      description: data['description']?.toString(),
+      partNumber: data['part_number']?.toString(),
+      quantity: quantity,
+      unitCost: (data['unit_cost'] as num?)?.toDouble(),
+      heatLot: data['heat_lot']?.toString(),
+      matchStatus: (data['match_status'] ?? 'n_a').toString(),
+      matchedMaterialId: _relationIdFromData(data['matched_material']),
+      matchedMaterialLabel: materialLabel,
+      matchedToolId: _relationIdFromData(data['matched_tool']) ??
+          _relationIdFromExpand(record.expand?['matched_tool']),
+      matchedToolLabel: toolLabel,
+      materialProposalId: data['material_proposal']?.toString(),
+      proposedMaterial: proposed,
+      candidateMaterialIds: candidates,
+      sortOrder: (data['sort_order'] as num?)?.toInt() ?? 0,
+      millCertNames: _fileNamesFrom(data['mill_certs']),
+    );
+  }
+}
+
+class EmailIngestVendor {
+  final String id;
+  final String name;
+  final String vendorKey;
+  final String? supplierId;
+  final String? supplierName;
+  final String fromDomains;
+  final String defaultCurrency;
+  final String defaultLineKind;
+  final bool enabled;
+  final String adapterStatus;
+  final String? notes;
+
+  EmailIngestVendor({
+    required this.id,
+    required this.name,
+    required this.vendorKey,
+    this.supplierId,
+    this.supplierName,
+    required this.fromDomains,
+    this.defaultCurrency = 'USD',
+    this.defaultLineKind = 'auto',
+    this.enabled = false,
+    this.adapterStatus = 'stub',
+    this.notes,
+  });
+
+  factory EmailIngestVendor.fromRecord(dynamic record) {
+    final data = record.data as Map<String, dynamic>? ?? {};
+    String? supplierName;
+    try {
+      if (record.expand != null && record.expand['supplier'] != null) {
+        final s = record.expand['supplier'];
+        final raw = (s is List && s.isNotEmpty) ? s[0] : s;
+        supplierName = raw.data?['company_name']?.toString();
+      }
+    } catch (_) {}
+    return EmailIngestVendor(
+      id: record.id as String,
+      name: (data['name'] ?? '').toString(),
+      vendorKey: (data['vendor_key'] ?? '').toString(),
+      supplierId: data['supplier']?.toString(),
+      supplierName: supplierName,
+      fromDomains: (data['from_domains'] ?? '').toString(),
+      defaultCurrency: (data['default_currency'] ?? 'USD').toString(),
+      defaultLineKind: (data['default_line_kind'] ?? 'auto').toString(),
+      enabled: data['enabled'] == true,
+      adapterStatus: (data['adapter_status'] ?? 'stub').toString(),
+      notes: data['notes']?.toString(),
+    );
+  }
+}
+
+Map<String, dynamic>? _tryDecodeJsonMap(String raw) {
+  try {
+    final dynamic decoded = jsonDecode(raw);
+    if (decoded is Map<String, dynamic>) return decoded;
+    if (decoded is Map) {
+      return decoded.map((k, v) => MapEntry(k.toString(), v));
+    }
+  } catch (_) {}
+  return null;
 }

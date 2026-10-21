@@ -1,0 +1,942 @@
+"""Poll Gmail and upsert purchase drafts into PocketBase."""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+import time
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from adapters import ALL_ADAPTERS
+from adapters.base import EmailMessage, ParsedEmail, ParsedLine
+from gmail_client import GmailClient, fetch_attachment_bytes
+from matchers.materials import match_material_line
+from matchers.tools import match_tool_line
+from note_utils import merge_note_lines, merge_tracking_field
+from pb_client import PocketBaseClient, _ref_quality
+
+log = logging.getLogger("gmail_purchase_ingest")
+
+
+def build_domain_query(vendors: list[dict[str, Any]], *, newer_than_days: Optional[int]) -> str:
+    domains: list[str] = []
+    for v in vendors:
+        raw = (v.get("from_domains") or "").replace(";", ",")
+        for d in raw.split(","):
+            d = d.strip()
+            if d:
+                domains.append(d)
+    if not domains:
+        return ""
+    if len(domains) == 1:
+        from_q = f"from:{domains[0]}"
+    else:
+        inner = " OR ".join(domains)
+        from_q = f"from:({inner})"
+    if newer_than_days:
+        return f"{from_q} newer_than:{int(newer_than_days)}d"
+    return from_q
+
+
+def resolve_adapter(vendor: dict[str, Any]):
+    key = (vendor.get("vendor_key") or "").strip()
+    return ALL_ADAPTERS.get(key)
+
+
+def run_once(
+    pb: PocketBaseClient,
+    gmail: Optional[GmailClient] = None,
+    *,
+    force: bool = False,
+) -> dict[str, Any]:
+    settings = pb.get_settings()
+    enabled = bool(settings.get("email_ingest_enabled"))
+    if not enabled and not force:
+        return {"skipped": True, "reason": "email_ingest_enabled is false"}
+
+    poll_minutes = int(settings.get("email_ingest_poll_minutes") or 30)
+    if poll_minutes < 1:
+        poll_minutes = 1
+
+    vendors = pb.get_enabled_vendors()
+    if not vendors:
+        status = {
+            "ok": False,
+            "error": "No enabled email_ingest_vendors",
+            "at": _now_iso(),
+        }
+        pb.update_settings(
+            {
+                "email_ingest_last_sync_at": status["at"],
+                "email_ingest_last_sync_status": "error",
+                "email_ingest_last_error": status["error"],
+            }
+        )
+        return status
+
+    # Always constrain Gmail search — never scan the whole mailbox (quota blow-up).
+    lookback = int(settings.get("email_ingest_lookback_days") or 7)
+    if lookback < 1:
+        lookback = 1
+    if lookback > 30:
+        lookback = 30
+    query = build_domain_query(vendors, newer_than_days=lookback)
+    if not query:
+        return {"skipped": True, "reason": "no domains"}
+
+    if gmail is None:
+        gmail = GmailClient()
+        gmail.connect()
+
+    materials = pb.list_materials()
+    tools = pb.list_tools()
+    processed = 0
+    skipped_known = 0
+    errors: list[str] = []
+
+    try:
+        # Cap each cycle so we don't chew Gmail quota on big inboxes.
+        ids = gmail.list_message_ids(query, max_results=40)
+        for mid in ids:
+            if pb.find_message(mid):
+                skipped_known += 1
+                continue
+            try:
+                msg = gmail.get_message(mid)
+                # hydrate attachment bytes
+                for att in msg.attachments:
+                    aid = att.get("attachment_id")
+                    if aid and not att.get("data"):
+                        att["data"] = fetch_attachment_bytes(gmail, mid, aid)
+                _ingest_message(pb, msg, vendors, materials, tools)
+                processed += 1
+                # Small pause between full message fetches (quota units)
+                time.sleep(0.4)
+            except Exception as e:
+                log.exception("Failed message %s", mid)
+                errors.append(f"{mid}: {e}")
+                err_s = str(e)
+                try:
+                    pb.create(
+                        "email_ingest_messages",
+                        {
+                            "gmail_message_id": mid,
+                            "parse_status": "parse_error",
+                            "parse_error": err_s[:500],
+                            "subject": "",
+                            "snippet": "",
+                        },
+                    )
+                except Exception:
+                    pass
+                # Stop this cycle on rate limit; try again next poll
+                if "rateLimitExceeded" in err_s or "Quota exceeded" in err_s:
+                    break
+
+        # Collapse pending drafts that share customer PO / tracking
+        try:
+            for vk in ("mcmaster", "dgi_supply"):
+                consolidated = pb.consolidate_pending_by_customer_po(vk)
+                if consolidated:
+                    log.info("Consolidated %s pending %s draft(s)", consolidated, vk)
+                cleaned = pb.sanitize_pending_draft_display(vk)
+                if cleaned:
+                    log.info("Sanitized %s pending %s field(s)/dup lines", cleaned, vk)
+        except Exception:
+            log.exception("Draft consolidate/sanitize failed")
+
+        pb.update_settings(
+            {
+                "email_ingest_last_sync_at": _now_iso(),
+                "email_ingest_last_sync_status": "ok" if not errors else "partial",
+                "email_ingest_last_error": "; ".join(errors)[:1000] if errors else "",
+                "email_ingest_backfill_done": True,
+            }
+        )
+    except Exception as e:
+        log.exception("Poll failed")
+        pb.update_settings(
+            {
+                "email_ingest_last_sync_at": _now_iso(),
+                "email_ingest_last_sync_status": "error",
+                "email_ingest_last_error": str(e)[:1000],
+            }
+        )
+        raise
+
+    return {
+        "ok": True,
+        "processed": processed,
+        "skipped_known": skipped_known,
+        "errors": errors,
+        "poll_minutes": poll_minutes,
+        "lookback_days": lookback,
+        "query": query,
+    }
+
+
+def _ingest_message(
+    pb: PocketBaseClient,
+    msg: EmailMessage,
+    vendors: list[dict[str, Any]],
+    materials: list[dict[str, Any]],
+    tools: Optional[list[dict[str, Any]]] = None,
+) -> None:
+    vendor = _match_vendor(msg, vendors)
+    if not vendor:
+        pb.create(
+            "email_ingest_messages",
+            {
+                "gmail_message_id": msg.gmail_message_id,
+                "gmail_thread_id": msg.gmail_thread_id,
+                "from_address": msg.from_address[:200],
+                "subject": msg.subject[:500],
+                "received_at": msg.received_at,
+                "parse_status": "ignored",
+                "snippet": (msg.body_text or "")[:300],
+                "email_type": "other",
+            },
+        )
+        return
+
+    adapter = resolve_adapter(vendor)
+    if adapter is None:
+        pb.create(
+            "email_ingest_messages",
+            {
+                "gmail_message_id": msg.gmail_message_id,
+                "gmail_thread_id": msg.gmail_thread_id,
+                "vendor_key": vendor.get("vendor_key"),
+                "email_ingest_vendor": vendor.get("id"),
+                "from_address": msg.from_address[:200],
+                "subject": msg.subject[:500],
+                "received_at": msg.received_at,
+                "parse_status": "parse_error",
+                "parse_error": f"No adapter for vendor_key={vendor.get('vendor_key')}",
+                "snippet": (msg.body_text or "")[:300],
+            },
+        )
+        return
+
+    domains = [d.strip() for d in (vendor.get("from_domains") or "").split(",") if d.strip()]
+    parsed = adapter.parse(msg)
+    email_type = parsed.email_type or adapter.classify(msg)
+    corr = adapter.correlate_key(parsed, msg)
+
+    draft_id = None
+    if corr:
+        draft_id = _upsert_draft(
+            pb, vendor, parsed, corr, email_type, materials, msg, tools or []
+        )
+
+    pb.create(
+        "email_ingest_messages",
+        {
+            "gmail_message_id": msg.gmail_message_id,
+            "gmail_thread_id": msg.gmail_thread_id,
+            "vendor_key": vendor.get("vendor_key"),
+            "email_ingest_vendor": vendor.get("id"),
+            "from_address": msg.from_address[:200],
+            "subject": msg.subject[:500],
+            "received_at": msg.received_at,
+            "email_type": email_type,
+            "parse_status": "parsed" if parsed.ok else "parse_error",
+            "parse_error": (parsed.error or "")[:500],
+            "snippet": (msg.body_text or "")[:300],
+            "purchase_draft": draft_id,
+        },
+    )
+
+
+def _match_vendor(msg: EmailMessage, vendors: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    for v in vendors:
+        adapter = resolve_adapter(v)
+        domains = [d.strip() for d in (v.get("from_domains") or "").split(",") if d.strip()]
+        if adapter and adapter.detect(msg, domains):
+            return v
+        # Domain-only fallback when adapter missing
+        from adapters.base import from_domain_matches
+
+        if from_domain_matches(msg.from_address, domains):
+            return v
+    return None
+
+
+def _upsert_draft(
+    pb: PocketBaseClient,
+    vendor: dict[str, Any],
+    parsed: ParsedEmail,
+    order_ref: str,
+    email_type: str,
+    materials: list[dict[str, Any]],
+    msg: EmailMessage,
+    tools: Optional[list[dict[str, Any]]] = None,
+) -> Optional[str]:
+    tools = tools or []
+    customer_po = (getattr(parsed, "customer_po", None) or "").strip()
+    if not customer_po and parsed.notes:
+        m = re.search(r"\b([0-9]{3,4}A[A-Z0-9]{4,})\b", parsed.notes, re.I)
+        if m:
+            customer_po = m.group(1).upper()
+
+    existing = pb.find_pending_draft_for_merge(
+        vendor.get("vendor_key") or "",
+        order_ref,
+        purchase_date=parsed.purchase_date,
+        customer_po=customer_po or None,
+        tracking=parsed.tracking or None,
+    )
+    supplier_id = _supplier_id(pb, vendor)
+    currency = (
+        parsed.currency
+        or vendor.get("default_currency")
+        or "USD"
+    )
+
+    # Don't overwrite a real McMaster # with an MC-DAY-… / invoice-sized fallback
+    merged_ref = order_ref
+    inv = (parsed.invoice or "").strip()
+    # Never persist the supplier invoice # as order_reference
+    if inv and merged_ref == inv:
+        merged_ref = ""
+    if existing:
+        existing_ref = str(existing.get("order_reference") or "")
+        existing_is_invoice = bool(inv and existing_ref == inv)
+        # Drop invoice-as-ref on the existing draft whenever we can
+        if existing_is_invoice:
+            if order_ref and order_ref != inv:
+                merged_ref = order_ref
+            elif existing_ref == inv:
+                merged_ref = order_ref or ""
+        elif existing_ref.isdigit() and (
+            order_ref.startswith("MC-DAY-") or not order_ref.isdigit()
+        ):
+            # Keep real McMaster/DGI order # when incoming is a day-key fallback
+            if not order_ref.startswith("DGI-"):
+                merged_ref = existing_ref
+            else:
+                merged_ref = order_ref
+        elif order_ref.startswith("MC-DAY-") and existing_ref:
+            merged_ref = existing_ref
+        elif (
+            order_ref.isdigit()
+            and existing_ref.isdigit()
+            and _ref_quality(order_ref) > _ref_quality(existing_ref)
+        ):
+            merged_ref = order_ref
+        elif (
+            order_ref.isdigit()
+            and existing_ref.isdigit()
+            and _ref_quality(existing_ref) >= _ref_quality(order_ref)
+        ):
+            merged_ref = existing_ref
+    # If this email carries an invoice # equal to order_ref, keep existing order #
+    if (
+        existing
+        and inv
+        and order_ref
+        and order_ref == inv
+        and str(existing.get("order_reference") or "")
+        and str(existing.get("order_reference") or "") != inv
+    ):
+        merged_ref = str(existing.get("order_reference"))
+    if inv and merged_ref == inv:
+        merged_ref = ""
+
+    body: dict[str, Any] = {
+        "vendor_key": vendor.get("vendor_key"),
+        "email_ingest_vendor": vendor.get("id"),
+        "order_reference": merged_ref,
+        "status": "pending",
+        "currency": currency if currency in ("CAD", "USD") else "USD",
+    }
+    if supplier_id:
+        body["supplier"] = supplier_id
+    if parsed.purchase_date:
+        body["purchase_date"] = parsed.purchase_date
+    elif not existing:
+        body["purchase_date"] = _now_iso()[:10]
+    if parsed.invoice:
+        body["invoice"] = parsed.invoice
+    if parsed.total is not None:
+        body["total"] = parsed.total
+    if parsed.notes or parsed.parse_notes:
+        note = parsed.notes or parsed.parse_notes
+        body["notes"] = merge_note_lines(
+            (existing or {}).get("notes") or "",
+            note,
+        )
+
+    # Confirmation / cert+tracking / receipt all may carry tracking
+    if parsed.tracking and email_type in (
+        "shipping",
+        "certificate",
+        "invoice",
+        "order_confirmation",
+    ):
+        body["tracking"] = merge_tracking_field(
+            (existing or {}).get("tracking"),
+            parsed.tracking,
+        )
+    elif parsed.tracking and not existing:
+        body["tracking"] = parsed.tracking
+
+    if existing:
+        draft = pb.update("purchase_drafts", existing["id"], body)
+        draft_id = draft["id"]
+        if parsed.lines and email_type in (
+            "order_confirmation",
+            "invoice",
+            "other",
+        ):
+            existing_lines = pb.list(
+                "purchase_draft_lines",
+                filter=f'draft = "{draft_id}"',
+                per_page=100,
+            )
+            if not existing_lines:
+                _create_lines(pb, draft_id, parsed.lines, materials, tools)
+            else:
+                if email_type in ("order_confirmation", "invoice", "other"):
+                    _enrich_lines_from_confirmation(
+                        pb, existing_lines, parsed.lines, materials
+                    )
+                _enrich_tool_matches(pb, existing_lines, parsed.lines, tools)
+        # Receipt / late confirmation may carry shipping + tax when product lines exist
+        _ensure_shipping_line(pb, draft_id, parsed.lines)
+        _ensure_tax_lines(pb, draft_id, parsed.lines)
+        _refresh_dirty_descriptions(pb, draft_id, parsed.lines)
+    else:
+        if not body.get("purchase_date"):
+            body["purchase_date"] = _now_iso()[:10]
+        draft = pb.create("purchase_drafts", body)
+        draft_id = draft["id"]
+        if parsed.lines:
+            _create_lines(pb, draft_id, parsed.lines, materials, tools)
+
+    # Attach PDFs (mill certs prefer steel material lines when present)
+    _attach_files(pb, draft_id, parsed, msg, email_type=email_type)
+    return draft_id
+
+
+def _enrich_lines_from_confirmation(
+    pb: PocketBaseClient,
+    existing_lines: list[dict[str, Any]],
+    parsed_lines: list[ParsedLine],
+    materials: list[dict[str, Any]],
+) -> None:
+    """Backfill unit_cost / richer description / form size when confirmation arrives late."""
+    by_part = {
+        str(l.get("part_number") or "").upper(): l
+        for l in existing_lines
+        if l.get("part_number")
+    }
+    for pl in parsed_lines:
+        pn = (pl.part_number or "").upper()
+        if not pn:
+            continue
+        existing = by_part.get(pn)
+        if not existing:
+            continue
+        patch: dict[str, Any] = {}
+        try:
+            cur_cost = float(existing.get("unit_cost") or 0)
+        except (TypeError, ValueError):
+            cur_cost = 0.0
+        if pl.unit_cost is not None and cur_cost <= 0:
+            patch["unit_cost"] = pl.unit_cost
+        cur_desc = str(existing.get("description") or "")
+        new_desc = (pl.description or "").strip()
+        if new_desc:
+            # Prefer a title that actually fits this part (fixes crossed DGI descs)
+            cur_u = cur_desc.upper()
+            new_u = new_desc.upper()
+            pn = pn  # already upper
+            better_fit = False
+            if pn and pn in new_u and pn not in cur_u:
+                better_fit = True
+            rest = pn[3:] if pn.startswith("HVT") and len(pn) > 3 else ""
+            if rest and rest in new_u and rest not in cur_u:
+                better_fit = True
+            if "KEYSEAT" in new_u and "BALL" in cur_u and "KEYSEAT" not in cur_u:
+                better_fit = True
+            if "BALL" in new_u and "KEYSEAT" in cur_u and "BALL" not in cur_u:
+                better_fit = True
+            if better_fit or len(new_desc) > len(cur_desc) + 5:
+                patch["description"] = new_desc[:500]
+        # Refresh material proposal hints when we now have better form/size
+        if pl.form or pl.size_label or pl.grade:
+            match = match_material_line(
+                materials=materials,
+                grade=pl.grade,
+                form=pl.form,
+                size_label=pl.size_label,
+                description=pl.description,
+                line_type=pl.line_type or "material",
+            )
+            if match.status != "n_a":
+                patch["match_status"] = match.status
+            if match.proposed:
+                patch["proposed_material_json"] = json.dumps(match.proposed)
+            if match.matched_material_id and not existing.get("matched_material"):
+                patch["matched_material"] = match.matched_material_id
+        if patch:
+            try:
+                pb.update("purchase_draft_lines", existing["id"], patch)
+            except Exception:
+                log.exception("Failed to enrich draft line %s", existing.get("id"))
+
+
+def _create_lines(
+    pb: PocketBaseClient,
+    draft_id: str,
+    lines: list[ParsedLine],
+    materials: list[dict[str, Any]],
+    tools: Optional[list[dict[str, Any]]] = None,
+) -> None:
+    tools = tools or []
+    for i, line in enumerate(lines):
+        match = match_material_line(
+            materials=materials,
+            grade=line.grade,
+            form=line.form,
+            size_label=line.size_label,
+            description=line.description,
+            line_type=line.line_type,
+        )
+        tool_match = match_tool_line(
+            tools=tools,
+            part_number=line.part_number or "",
+            description=line.description or "",
+            line_type=line.line_type,
+        )
+        proposal_id = None
+        proposed = dict(match.proposed) if match.proposed else None
+        if proposed and line.part_number:
+            proposed["notes"] = f"McMaster {line.part_number.upper()}"
+        if match.status == "propose_new" and proposed:
+            prop = pb.create_material_proposal(proposed, line.description)
+            proposal_id = prop["id"]
+
+        body: dict[str, Any] = {
+            "draft": draft_id,
+            "line_type": line.line_type if line.line_type in (
+                "item", "material", "misc", "tax", "shipping"
+            ) else "misc",
+            "description": (line.description or "")[:500],
+            "part_number": (line.part_number or "")[:100],
+            "quantity": line.quantity,
+            "sort_order": i * 10,
+            "match_status": match.status if match.status != "n_a" else "n_a",
+        }
+        if line.unit_cost is not None:
+            body["unit_cost"] = line.unit_cost
+        if line.heat_lot:
+            body["heat_lot"] = line.heat_lot
+        if match.matched_material_id:
+            body["matched_material"] = match.matched_material_id
+        if proposal_id:
+            body["material_proposal"] = proposal_id
+        if proposed:
+            body["proposed_material_json"] = json.dumps(proposed)
+        if match.candidate_ids:
+            body["candidate_material_ids"] = ",".join(match.candidate_ids)
+
+        # Tool / item lines (DGI): match catalog or leave unmatched for review pick
+        if line.line_type == "item":
+            body["match_status"] = tool_match.status
+            if tool_match.matched_tool_id:
+                body["matched_tool"] = tool_match.matched_tool_id
+            if tool_match.candidate_ids:
+                body["candidate_material_ids"] = ",".join(tool_match.candidate_ids)
+
+        # Shipping / tax lines are not material/tool matches
+        if line.line_type in ("shipping", "tax"):
+            body["match_status"] = "n_a"
+            body.pop("matched_material", None)
+            body.pop("matched_tool", None)
+            body.pop("material_proposal", None)
+            body.pop("proposed_material_json", None)
+            body.pop("candidate_material_ids", None)
+            if line.line_type == "tax" and not body.get("description"):
+                body["description"] = "Tax"
+            # shipping: keep parser description (e.g. Next Day Air) or empty — never force "Shipping"
+        try:
+            pb.create("purchase_draft_lines", body)
+        except Exception:
+            # Older PB without matched_tool field — retry without it
+            if "matched_tool" in body:
+                body.pop("matched_tool", None)
+                # Don't claim matched if we could not store the tool id
+                if body.get("match_status") == "matched":
+                    body["match_status"] = "none"
+                pb.create("purchase_draft_lines", body)
+            else:
+                raise
+
+
+def _enrich_tool_matches(
+    pb: PocketBaseClient,
+    existing_lines: list[dict[str, Any]],
+    parsed_lines: list[ParsedLine],
+    tools: list[dict[str, Any]],
+) -> None:
+    """Backfill tool matches when a later email has cleaner part numbers."""
+    by_part = {
+        str(l.get("part_number") or "").upper(): l
+        for l in existing_lines
+        if l.get("part_number") and l.get("line_type") == "item"
+    }
+    for pl in parsed_lines:
+        if pl.line_type != "item":
+            continue
+        pn = (pl.part_number or "").upper()
+        if not pn:
+            continue
+        existing = by_part.get(pn)
+        if not existing or existing.get("matched_tool"):
+            continue
+        tm = match_tool_line(
+            tools=tools,
+            part_number=pl.part_number or "",
+            description=pl.description or existing.get("description") or "",
+            line_type="item",
+        )
+        patch: dict[str, Any] = {}
+        if tm.status != "n_a":
+            patch["match_status"] = tm.status
+        if tm.matched_tool_id:
+            patch["matched_tool"] = tm.matched_tool_id
+        if tm.candidate_ids:
+            patch["candidate_material_ids"] = ",".join(tm.candidate_ids)
+        if pl.description and len(pl.description) > len(str(existing.get("description") or "")) + 5:
+            patch["description"] = pl.description[:500]
+        if pl.unit_cost is not None:
+            try:
+                cur = float(existing.get("unit_cost") or 0)
+            except (TypeError, ValueError):
+                cur = 0.0
+            if cur <= 0:
+                patch["unit_cost"] = pl.unit_cost
+        if not patch:
+            continue
+        try:
+            pb.update("purchase_draft_lines", existing["id"], patch)
+        except Exception:
+            patch.pop("matched_tool", None)
+            if patch:
+                try:
+                    pb.update("purchase_draft_lines", existing["id"], patch)
+                except Exception:
+                    log.exception("Failed to enrich tool match on %s", existing.get("id"))
+
+
+def _ensure_shipping_line(
+    pb: PocketBaseClient,
+    draft_id: str,
+    parsed_lines: list[ParsedLine],
+) -> None:
+    """Add a shipping draft line when a later email has shipping and the draft does not."""
+    ship = next((l for l in parsed_lines if l.line_type == "shipping" and l.unit_cost), None)
+    if ship is None or ship.unit_cost is None:
+        return
+    try:
+        existing = pb.list(
+            "purchase_draft_lines",
+            filter=f'draft = "{draft_id}" && line_type = "shipping"',
+            per_page=5,
+        )
+        ship_desc = (ship.description or "").strip()
+        if existing:
+            for row in existing:
+                try:
+                    cur = float(row.get("unit_cost") or 0)
+                except (TypeError, ValueError):
+                    cur = 0.0
+                patch: dict[str, Any] = {}
+                if cur <= 0 and float(ship.unit_cost) > 0:
+                    patch["unit_cost"] = float(ship.unit_cost)
+                    patch["quantity"] = 1
+                # Upgrade generic "Shipping" / empty → Next Day Air etc.
+                cur_desc = str(row.get("description") or "").strip()
+                if ship_desc and (
+                    not cur_desc or cur_desc.lower() == "shipping"
+                ):
+                    patch["description"] = ship_desc[:500]
+                if patch:
+                    pb.update("purchase_draft_lines", row["id"], patch)
+            return
+        pb.create(
+            "purchase_draft_lines",
+            {
+                "draft": draft_id,
+                "line_type": "shipping",
+                "description": ship_desc[:500],
+                "quantity": 1,
+                "unit_cost": float(ship.unit_cost),
+                "sort_order": 9000,
+                "match_status": "n_a",
+            },
+        )
+    except Exception:
+        log.exception("Failed to ensure shipping line on draft %s", draft_id)
+
+
+def _ensure_tax_lines(
+    pb: PocketBaseClient,
+    draft_id: str,
+    parsed_lines: list[ParsedLine],
+) -> None:
+    """Add GST/HST (etc.) draft lines from a later receipt when missing."""
+    taxes = [l for l in parsed_lines if l.line_type == "tax" and l.unit_cost]
+    if not taxes:
+        return
+    try:
+        existing = pb.list(
+            "purchase_draft_lines",
+            filter=f'draft = "{draft_id}" && line_type = "tax"',
+            per_page=10,
+        )
+        existing_amts: list[float] = []
+        for row in existing:
+            try:
+                existing_amts.append(float(row.get("unit_cost") or 0))
+            except (TypeError, ValueError):
+                pass
+        for i, tax in enumerate(taxes):
+            amt = float(tax.unit_cost or 0)
+            if amt <= 0:
+                continue
+            if any(abs(amt - e) < 0.01 for e in existing_amts):
+                continue
+            pb.create(
+                "purchase_draft_lines",
+                {
+                    "draft": draft_id,
+                    "line_type": "tax",
+                    "description": (tax.description or "Tax")[:500],
+                    "quantity": 1,
+                    "unit_cost": amt,
+                    "sort_order": 8000 + i,
+                    "match_status": "n_a",
+                },
+            )
+            existing_amts.append(amt)
+    except Exception:
+        log.exception("Failed to ensure tax lines on draft %s", draft_id)
+
+
+def _refresh_dirty_descriptions(
+    pb: PocketBaseClient,
+    draft_id: str,
+    parsed_lines: list[ParsedLine],
+) -> None:
+    """Replace receipt-header dumps with clean product titles when a later email has them."""
+    noise = re.compile(
+        r"(?:billed\s+to|shipped\s+to|invoice\s+\d|credit\s+card|your\s+account|"
+        r"cle\.sales@|@mcmaster\.com|\(fax\))",
+        re.I,
+    )
+    by_part = {
+        (l.part_number or "").upper(): l
+        for l in parsed_lines
+        if l.part_number
+        and l.line_type in ("material", "item")
+        and l.description
+    }
+    if not by_part:
+        return
+    try:
+        existing = pb.list(
+            "purchase_draft_lines",
+            filter=f'draft = "{draft_id}" && (line_type = "material" || line_type = "item")',
+            per_page=50,
+        )
+        for row in existing:
+            pn = str(row.get("part_number") or "").upper()
+            pl = by_part.get(pn)
+            if not pl or not pl.description:
+                continue
+            cur = str(row.get("description") or "")
+            new = pl.description
+            if noise.search(cur) and not noise.search(new) and len(new) < len(cur):
+                pb.update(
+                    "purchase_draft_lines",
+                    row["id"],
+                    {"description": new[:500]},
+                )
+    except Exception:
+        log.exception("Failed to refresh descriptions on draft %s", draft_id)
+
+
+def _prefer_mill_cert_line(lines: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    """Prefer steel / metal material lines for mill certs (not Delrin/plastic)."""
+    if not lines:
+        return None
+
+    def _score(row: dict[str, Any]) -> int:
+        blob = " ".join(
+            str(row.get(k) or "")
+            for k in ("description", "part_number", "proposed_material_json")
+        ).lower()
+        score = 0
+        if any(
+            k in blob
+            for k in (
+                "steel",
+                "1018",
+                "1045",
+                "4140",
+                "4340",
+                "a36",
+                "stainless",
+                "aluminum",
+                "aluminium",
+                "6061",
+                "7075",
+            )
+        ):
+            score += 50
+        if any(k in blob for k in ("delrin", "acetal", "nylon", "uhmw", "ptfe", "plastic", "resin")):
+            score -= 40
+        return score
+
+    ranked = sorted(lines, key=_score, reverse=True)
+    return ranked[0]
+
+
+def _attach_files(
+    pb: PocketBaseClient,
+    draft_id: str,
+    parsed: ParsedEmail,
+    msg: EmailMessage,
+    email_type: str = "",
+) -> None:
+    mill_certs = []
+    other_files = []
+    for att in msg.attachments:
+        data = att.get("data") or b""
+        filename = att.get("filename") or "attachment.pdf"
+        if not data:
+            continue
+        mime = (att.get("mime_type") or "application/pdf").lower()
+        fn_l = filename.lower()
+        # Skip logos / signature images (e.g. dgilog_….jpg)
+        if mime.startswith("image/") or any(
+            fn_l.endswith(ext)
+            for ext in (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg")
+        ):
+            continue
+        if any(k in fn_l for k in ("logo", "dgilog", "signature", "spacer", "pixel")):
+            continue
+        role = parsed.attachment_roles.get(filename) or parsed.attachment_roles.get(
+            filename.lower(), ""
+        )
+        item = (filename, data, mime or "application/pdf")
+        if role == "mill_cert" or (
+            email_type == "certificate" and fn_l.endswith(".pdf")
+        ):
+            mill_certs.append(item)
+        elif role in ("invoice", "confirmation") or fn_l.endswith(".pdf"):
+            other_files.append(item)
+
+    # Prefer attaching mill certs onto steel/metal material draft lines
+    if mill_certs:
+        attached_to_line = False
+        try:
+            lines = pb.list(
+                "purchase_draft_lines",
+                filter=f'draft = "{draft_id}" && line_type = "material"',
+                sort="sort_order",
+                per_page=20,
+            )
+            target = _prefer_mill_cert_line(lines)
+            if target:
+                pb.upload_files(
+                    "purchase_draft_lines",
+                    target["id"],
+                    "mill_certs",
+                    mill_certs[:8],
+                )
+                attached_to_line = True
+        except Exception:
+            log.exception("Failed to upload mill certs to draft line")
+        if not attached_to_line:
+            other_files = mill_certs + other_files
+
+    if other_files:
+        try:
+            # attachments+ appends so invoice PDF is kept alongside order ack;
+            # approve prefers invoice / non-ack when copying to the purchase.
+            pb.upload_files(
+                "purchase_drafts", draft_id, "attachments+", other_files[:12]
+            )
+        except Exception:
+            log.exception("Failed to upload draft attachments")
+
+
+def _supplier_id(pb: PocketBaseClient, vendor: dict[str, Any]) -> Optional[str]:
+    """Resolve supplier from vendor relation, else name match (McMaster-Carr, …)."""
+    s = vendor.get("supplier")
+    if isinstance(s, str) and s:
+        return s
+    expand = vendor.get("expand") or {}
+    sup = expand.get("supplier")
+    if isinstance(sup, dict) and sup.get("id"):
+        return str(sup["id"])
+
+    # Fallback: match suppliers.company_name to vendor display name / key
+    names: list[str] = []
+    for key in ("name", "vendor_key"):
+        raw = (vendor.get(key) or "").strip()
+        if raw:
+            names.append(raw)
+    vk = (vendor.get("vendor_key") or "").strip().lower()
+    if vk == "mcmaster":
+        names.extend(["McMaster-Carr", "McMaster", "McMaster Carr"])
+    elif vk == "dgi_supply":
+        names.extend(["DGI Supply", "DGI Supply Canada", "DGI"])
+
+    seen: set[str] = set()
+    for name in names:
+        needle = name.strip().lower()
+        if not needle or needle in seen:
+            continue
+        seen.add(needle)
+        try:
+            # Prefer exact-ish contains match via PocketBase filter
+            safe = name.replace('"', "").replace("'", "")
+            if not safe:
+                continue
+            hit = pb.get_first(
+                "suppliers",
+                filter=f'company_name ~ "{safe}"',
+            )
+            if hit and hit.get("id"):
+                return str(hit["id"])
+        except Exception:
+            log.debug("Supplier name lookup failed for %s", name, exc_info=True)
+    return None
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def run_loop(pb: PocketBaseClient, gmail: GmailClient) -> None:
+    while True:
+        try:
+            result = run_once(pb, gmail)
+            log.info("Poll result: %s", result)
+            minutes = int(result.get("poll_minutes") or 30)
+        except Exception:
+            log.exception("Poll cycle error")
+            try:
+                settings = pb.get_settings()
+                minutes = int(settings.get("email_ingest_poll_minutes") or 30)
+            except Exception:
+                minutes = 30
+        minutes = max(1, minutes)
+        time.sleep(minutes * 60)

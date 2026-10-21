@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'pocketbase_service.dart';
 import 'models.dart';
 import 'add_purchase_screen.dart';
+import 'purchase_draft_review_screen.dart';
 import 'drawer_behavior.dart';
 import 'list_toolbar_widgets.dart';
 import 'ui_breakpoints.dart';
@@ -19,6 +20,7 @@ class PurchasesScreen extends StatefulWidget {
 class _PurchasesScreenState extends State<PurchasesScreen> with AutoOpenDrawerMixin {
   List<Purchase> _purchases = [];
   List<Purchase> _filteredPurchases = [];
+  List<PurchaseDraft> _drafts = [];
   final TextEditingController _purchaseSearchController = TextEditingController();
   String _purchaseSearchQuery = '';
   bool _isLoading = true;
@@ -30,10 +32,14 @@ class _PurchasesScreenState extends State<PurchasesScreen> with AutoOpenDrawerMi
   /// Wide layout: right panel is creating a new purchase.
   bool _creatingNew = false;
 
+  /// Wide layout: reviewing an email draft in the right panel.
+  PurchaseDraft? _selectedDraft;
+
   @override
   GlobalKey<ScaffoldState> get scaffoldKey => _scaffoldKey;
 
-  bool get _panelOpen => _creatingNew || _selectedPurchase != null;
+  bool get _panelOpen =>
+      _creatingNew || _selectedPurchase != null || _selectedDraft != null;
 
   @override
   void initState() {
@@ -64,9 +70,18 @@ class _PurchasesScreenState extends State<PurchasesScreen> with AutoOpenDrawerMi
     try {
       final pbService = PocketBaseService();
       final records = await pbService.getPurchases();
+      List<dynamic> draftRecords = [];
+      Object? draftLoadError;
+      try {
+        draftRecords = await pbService.getPendingPurchaseDrafts();
+      } catch (e) {
+        draftLoadError = e;
+        draftRecords = [];
+      }
       setState(() {
         _purchases = records.map((r) => Purchase.fromRecord(r)).toList();
         _filteredPurchases = _applyPurchaseSearchFilter(_purchases);
+        _drafts = draftRecords.map((r) => PurchaseDraft.fromRecord(r)).toList();
         // Keep selection if the purchase still exists after reload.
         if (_selectedPurchase != null) {
           final id = _selectedPurchase!.id;
@@ -80,8 +95,27 @@ class _PurchasesScreenState extends State<PurchasesScreen> with AutoOpenDrawerMi
           _selectedPurchase = stillThere;
           if (_selectedPurchase == null) _creatingNew = false;
         }
+        if (_selectedDraft != null) {
+          final id = _selectedDraft!.id;
+          PurchaseDraft? still;
+          for (final d in _drafts) {
+            if (d.id == id) {
+              still = d;
+              break;
+            }
+          }
+          _selectedDraft = still;
+        }
         _isLoading = false;
       });
+      if (draftLoadError != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Could not load email drafts: $draftLoadError'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+          ),
+        );
+      }
     } catch (e) {
       setState(() => _isLoading = false);
       if (mounted) {
@@ -98,19 +132,43 @@ class _PurchasesScreenState extends State<PurchasesScreen> with AutoOpenDrawerMi
   void _closePanel() {
     setState(() {
       _selectedPurchase = null;
+      _selectedDraft = null;
       _creatingNew = false;
     });
   }
 
-  void _onPanelClosed(bool saved) {
+  void _onPanelClosed(bool saved, {String? approvedPurchaseId}) {
     _closePanel();
+    if (approvedPurchaseId != null && approvedPurchaseId.isNotEmpty) {
+      _openApprovedPurchase(approvedPurchaseId);
+      return;
+    }
     if (saved) _loadPurchases();
+  }
+
+  Future<void> _openApprovedPurchase(String purchaseId) async {
+    await _loadPurchases();
+    if (!mounted) return;
+    try {
+      final rec = await PocketBaseService().getPurchase(purchaseId);
+      final purchase = Purchase.fromRecord(rec);
+      if (!mounted) return;
+      final width = MediaQuery.sizeOf(context).width;
+      final usePanel = width >= kWorkspaceWideBreakpointPx;
+      await _openPurchase(purchase, usePanel: usePanel);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Purchase created, but could not open it: $e')),
+      );
+    }
   }
 
   Future<void> _openPurchase(Purchase purchase, {required bool usePanel}) async {
     if (usePanel) {
       setState(() {
         _selectedPurchase = purchase;
+        _selectedDraft = null;
         _creatingNew = false;
       });
       return;
@@ -124,10 +182,33 @@ class _PurchasesScreenState extends State<PurchasesScreen> with AutoOpenDrawerMi
     _loadPurchases();
   }
 
+  Future<void> _openDraft(PurchaseDraft draft, {required bool usePanel}) async {
+    if (usePanel) {
+      setState(() {
+        _selectedDraft = draft;
+        _selectedPurchase = null;
+        _creatingNew = false;
+      });
+      return;
+    }
+    final result = await Navigator.push<Object?>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PurchaseDraftReviewScreen(draft: draft),
+      ),
+    );
+    if (result is String && result.isNotEmpty) {
+      await _openApprovedPurchase(result);
+    } else if (result == true) {
+      _loadPurchases();
+    }
+  }
+
   Future<void> _openAddPurchase({required bool usePanel}) async {
     if (usePanel) {
       setState(() {
         _selectedPurchase = null;
+        _selectedDraft = null;
         _creatingNew = true;
       });
       return;
@@ -202,7 +283,10 @@ class _PurchasesScreenState extends State<PurchasesScreen> with AutoOpenDrawerMi
     final scheme = theme.colorScheme;
     final textTheme = theme.textTheme;
 
-    if (_filteredPurchases.isEmpty) {
+    final showDrafts =
+        _drafts.isNotEmpty && _purchaseSearchQuery.trim().isEmpty;
+
+    if (_filteredPurchases.isEmpty && !showDrafts) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -229,11 +313,58 @@ class _PurchasesScreenState extends State<PurchasesScreen> with AutoOpenDrawerMi
     // date/total move to a hover tooltip so the form gets more width.
     final compactMaster = usePanel && _panelOpen;
 
+    final draftHeader = showDrafts ? 1 : 0;
+    final draftCount = showDrafts ? _drafts.length : 0;
+    final purchaseHeader =
+        showDrafts && _filteredPurchases.isNotEmpty ? 1 : 0;
+    final itemCount =
+        draftHeader + draftCount + purchaseHeader + _filteredPurchases.length;
+
     return ListView.builder(
       padding: const EdgeInsets.all(8),
-      itemCount: _filteredPurchases.length,
+      itemCount: itemCount,
       itemBuilder: (context, index) {
-        final p = _filteredPurchases[index];
+        if (showDrafts && index == 0) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+            child: Row(
+              children: [
+                Icon(Icons.mark_email_unread_outlined,
+                    size: 18, color: scheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  'Needs review (${_drafts.length})',
+                  style: textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: scheme.primary,
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+        if (showDrafts && index <= draftCount) {
+          final d = _drafts[index - 1];
+          return _buildDraftCard(
+            d,
+            usePanel: usePanel,
+            titleStyle: titleStyle,
+            muted: muted,
+            selected: usePanel && _selectedDraft?.id == d.id,
+          );
+        }
+        final afterDrafts = draftHeader + draftCount;
+        if (purchaseHeader == 1 && index == afterDrafts) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(8, 16, 8, 8),
+            child: Text(
+              'Purchases',
+              style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+            ),
+          );
+        }
+        final purchaseIndex = index - afterDrafts - purchaseHeader;
+        final p = _filteredPurchases[purchaseIndex];
         final supplier = p.supplierName ?? 'No supplier';
         final dateText = DateFormat.yMMMd().format(p.purchaseDate);
         final refRaw = p.orderReference?.trim();
@@ -379,9 +510,85 @@ class _PurchasesScreenState extends State<PurchasesScreen> with AutoOpenDrawerMi
     );
   }
 
+  Widget _buildDraftCard(
+    PurchaseDraft d, {
+    required bool usePanel,
+    required TextStyle? titleStyle,
+    required TextStyle? muted,
+    required bool selected,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    final supplier = d.supplierName ?? d.displayVendor;
+    final dateText = d.purchaseDate != null
+        ? DateFormat.yMMMd().format(d.purchaseDate!)
+        : '—';
+    final refRaw = d.orderReference?.trim();
+    final invRaw = d.invoice?.trim();
+    final refText =
+        (refRaw != null && refRaw.isNotEmpty) ? 'Order: $refRaw' : null;
+    final invText =
+        (invRaw != null && invRaw.isNotEmpty) ? 'Invoice: $invRaw' : null;
+    final cur = d.currency == 'USD' ? 'USD' : 'CAD';
+    final totalText = d.total != null
+        ? 'Total: \$${d.total!.toStringAsFixed(2)} $cur'
+        : cur;
+
+    return Card(
+      color: selected
+          ? scheme.secondaryContainer
+          : scheme.primaryContainer.withValues(alpha: 0.35),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => _openDraft(d, usePanel: usePanel),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              Icon(Icons.inbox_outlined, color: scheme.primary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(supplier, style: titleStyle),
+                    const SizedBox(height: 2),
+                    Text(
+                      [
+                        d.displayVendor,
+                        dateText,
+                        if (refText != null) refText,
+                        if (invText != null) invText,
+                        if (totalText.isNotEmpty) totalText,
+                      ].join(' · '),
+                      style: muted,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              Chip(
+                label: const Text('Review'),
+                visualDensity: VisualDensity.compact,
+                backgroundColor: scheme.primaryContainer,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildDetailPanel() {
     if (!_panelOpen) {
       return const SizedBox.shrink();
+    }
+    if (_selectedDraft != null) {
+      return PurchaseDraftReviewScreen(
+        key: ValueKey('draft-${_selectedDraft!.id}'),
+        draft: _selectedDraft!,
+        embedded: true,
+        onClosed: _onPanelClosed,
+      );
     }
     return AddPurchaseScreen(
       key: ValueKey(
@@ -389,7 +596,7 @@ class _PurchasesScreenState extends State<PurchasesScreen> with AutoOpenDrawerMi
       ),
       purchase: _creatingNew ? null : _selectedPurchase,
       embedded: true,
-      onClosed: _onPanelClosed,
+      onClosed: (saved) => _onPanelClosed(saved),
     );
   }
 

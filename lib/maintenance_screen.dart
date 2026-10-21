@@ -1,11 +1,175 @@
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+
 import 'auth_service.dart';
 import 'drawer_behavior.dart';
 import 'list_toolbar_widgets.dart';
 import 'maintenance_schedule_utils.dart';
+import 'part_images_panel.dart';
 import 'pocketbase_service.dart';
 import 'workspace_layout.dart';
 import 'workspace_scaffold.dart';
+
+class _PendingPhoto {
+  final String name;
+  final Uint8List bytes;
+
+  const _PendingPhoto({required this.name, required this.bytes});
+}
+
+List<http.MultipartFile> _pendingPhotoMultipart(List<_PendingPhoto> photos) {
+  return [
+    for (final p in photos)
+      http.MultipartFile.fromBytes('photos', p.bytes, filename: p.name),
+  ];
+}
+
+Future<void> _pickPendingPhotos({
+  required List<_PendingPhoto> current,
+  required void Function(List<_PendingPhoto>) onChanged,
+  int maxFiles = 8,
+}) async {
+  if (current.length >= maxFiles) return;
+  final result = await FilePicker.pickFiles(
+    type: FileType.custom,
+    allowedExtensions: const ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+    allowMultiple: true,
+    withData: true,
+  );
+  if (result == null || result.files.isEmpty) return;
+  final next = List<_PendingPhoto>.from(current);
+  for (final file in result.files) {
+    if (next.length >= maxFiles) break;
+    final bytes = file.bytes;
+    if (bytes == null || bytes.isEmpty) continue;
+    final name = (file.name.trim().isNotEmpty)
+        ? file.name.trim()
+        : 'photo-${DateTime.now().millisecondsSinceEpoch}.jpg';
+    next.add(_PendingPhoto(name: name, bytes: bytes));
+  }
+  onChanged(next);
+}
+
+Widget _buildPendingPhotosSection({
+  required List<_PendingPhoto> photos,
+  required void Function(List<_PendingPhoto>) onChanged,
+  int maxFiles = 8,
+}) {
+  final canAdd = photos.length < maxFiles;
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Align(
+        alignment: Alignment.centerLeft,
+        child: Text(
+          'Photos',
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.grey.shade700,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ),
+      const SizedBox(height: 8),
+      if (photos.isEmpty)
+        InkWell(
+          onTap: () => _pickPendingPhotos(
+            current: photos,
+            onChanged: onChanged,
+            maxFiles: maxFiles,
+          ),
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey.shade400),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              'Click to add photos\n(Max $maxFiles)',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey[600], fontSize: 13),
+            ),
+          ),
+        )
+      else
+        SizedBox(
+          height: 96,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            itemCount: photos.length + (canAdd ? 1 : 0),
+            separatorBuilder: (_, _) => const SizedBox(width: 8),
+            itemBuilder: (context, index) {
+              if (canAdd && index == photos.length) {
+                return InkWell(
+                  onTap: () => _pickPendingPhotos(
+                    current: photos,
+                    onChanged: onChanged,
+                    maxFiles: maxFiles,
+                  ),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    width: 96,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey.shade400),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.add, color: Colors.grey[600]),
+                        Text(
+                          'Add',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
+              final photo = photos[index];
+              return Stack(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.memory(
+                      photo.bytes,
+                      width: 96,
+                      height: 96,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  Positioned(
+                    top: 2,
+                    right: 2,
+                    child: Material(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(4),
+                      child: InkWell(
+                        onTap: () {
+                          final next = List<_PendingPhoto>.from(photos)
+                            ..removeAt(index);
+                          onChanged(next);
+                        },
+                        child: const Padding(
+                          padding: EdgeInsets.all(2),
+                          child: Icon(Icons.close, size: 16, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+    ],
+  );
+}
 
 /// Shop maintenance: completion log + recurring schedules with due alerts.
 class MaintenanceScreen extends StatefulWidget {
@@ -233,60 +397,71 @@ class _MaintenanceScreenState extends State<MaintenanceScreen>
     final data = _data(schedule);
     final dateCtrl = TextEditingController(text: formatMaintenanceDate(todayDate()));
     final noteCtrl = TextEditingController();
+    var pendingPhotos = <_PendingPhoto>[];
     final ok = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Mark done: ${data['name'] ?? ''}'),
-        content: SizedBox(
-          width: 400,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: dateCtrl,
-                readOnly: true,
-                decoration: InputDecoration(
-                  labelText: 'Completed date',
-                  suffixIcon: IconButton(
-                    icon: const Icon(Icons.calendar_today_outlined),
-                    onPressed: () async {
-                      var initial = todayDate();
-                      try {
-                        initial = DateTime.parse(dateCtrl.text);
-                      } catch (_) {}
-                      final picked = await showDatePicker(
-                        context: context,
-                        initialDate: initial,
-                        firstDate: DateTime(2020),
-                        lastDate: DateTime(2100),
-                      );
-                      if (picked != null) {
-                        dateCtrl.text = formatMaintenanceDate(picked);
-                      }
-                    },
+      builder: (context) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          title: Text('Mark done: ${data['name'] ?? ''}'),
+          content: SizedBox(
+            width: 400,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: dateCtrl,
+                    readOnly: true,
+                    decoration: InputDecoration(
+                      labelText: 'Completed date',
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.calendar_today_outlined),
+                        onPressed: () async {
+                          var initial = todayDate();
+                          try {
+                            initial = DateTime.parse(dateCtrl.text);
+                          } catch (_) {}
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: initial,
+                            firstDate: DateTime(2020),
+                            lastDate: DateTime(2100),
+                          );
+                          if (picked != null) {
+                            dateCtrl.text = formatMaintenanceDate(picked);
+                          }
+                        },
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: noteCtrl,
+                    decoration:
+                        const InputDecoration(labelText: 'Note (optional)'),
+                    minLines: 2,
+                    maxLines: 4,
+                  ),
+                  const SizedBox(height: 16),
+                  _buildPendingPhotosSection(
+                    photos: pendingPhotos,
+                    onChanged: (next) => setLocal(() => pendingPhotos = next),
+                  ),
+                ],
               ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: noteCtrl,
-                decoration: const InputDecoration(labelText: 'Note (optional)'),
-                minLines: 2,
-                maxLines: 4,
-              ),
-            ],
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Mark done'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Mark done'),
-          ),
-        ],
       ),
     );
     if (ok != true) return;
@@ -306,6 +481,9 @@ class _MaintenanceScreenState extends State<MaintenanceScreen>
         leadDays: leadDaysOf(data),
         active: scheduleIsActive(data),
         updatedByEmail: AuthService.instance.email,
+        photoFiles: pendingPhotos.isEmpty
+            ? null
+            : _pendingPhotoMultipart(pendingPhotos),
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -747,6 +925,8 @@ class _MaintenanceScreenState extends State<MaintenanceScreen>
         final date = formatMaintenanceDateLabel(data['completed_date']);
         final machine = _machineNameOf(record);
         final note = '${data['note'] ?? ''}'.trim();
+        final photoCount =
+            PartImagesPanel.normalizeFilenames(data['photos']).length;
         return Material(
           color: scheme.surface,
           shape: RoundedRectangleBorder(
@@ -777,6 +957,8 @@ class _MaintenanceScreenState extends State<MaintenanceScreen>
                           [
                             date,
                             if (machine.isNotEmpty) machine,
+                            if (photoCount > 0)
+                              '$photoCount photo${photoCount == 1 ? '' : 's'}',
                           ].join(' · '),
                           style: TextStyle(
                             color: scheme.onSurfaceVariant,
@@ -798,6 +980,15 @@ class _MaintenanceScreenState extends State<MaintenanceScreen>
                       ],
                     ),
                   ),
+                  if (photoCount > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 4, top: 2),
+                      child: Icon(
+                        Icons.photo_library_outlined,
+                        size: 18,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
                   PopupMenuButton<String>(
                     onSelected: (v) {
                       if (v == 'edit') {
@@ -845,6 +1036,8 @@ class _MaintenanceScreenState extends State<MaintenanceScreen>
         final status = dueStatusOf(data);
         final machine = _machineNameOf(schedule);
         final note = '${data['note'] ?? ''}'.trim();
+        final photoCount =
+            PartImagesPanel.normalizeFilenames(data['photos']).length;
         final statusColor = _statusColor(status, scheme);
 
         return Material(
@@ -878,6 +1071,15 @@ class _MaintenanceScreenState extends State<MaintenanceScreen>
                           ),
                         ),
                       ),
+                      if (photoCount > 0)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6, top: 2),
+                          child: Icon(
+                            Icons.photo_library_outlined,
+                            size: 18,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 8,
@@ -930,6 +1132,8 @@ class _MaintenanceScreenState extends State<MaintenanceScreen>
                       machine.isEmpty ? '—' : machine,
                       frequencyLabel(data),
                       'Next ${formatMaintenanceDateLabel(data['next_due_date'])}',
+                      if (photoCount > 0)
+                        '$photoCount photo${photoCount == 1 ? '' : 's'}',
                     ].join(' · '),
                     style: TextStyle(
                       color: scheme.onSurfaceVariant,
@@ -991,6 +1195,9 @@ class _MaintenanceRecordDialogState extends State<_MaintenanceRecordDialog> {
   String? _machineId;
   bool _saving = false;
   List<dynamic> _machines = [];
+  List<String> _photoFilenames = [];
+  List<_PendingPhoto> _pendingPhotos = [];
+  bool _photosDirty = false;
 
   bool get _isEdit => widget.record != null;
 
@@ -1013,6 +1220,7 @@ class _MaintenanceRecordDialogState extends State<_MaintenanceRecordDialog> {
     _machineId = (mid != null && mid.isNotEmpty)
         ? mid
         : (_machines.isNotEmpty ? _machines.first.id as String : null);
+    _photoFilenames = PartImagesPanel.normalizeFilenames(data['photos']);
   }
 
   @override
@@ -1083,9 +1291,12 @@ class _MaintenanceRecordDialogState extends State<_MaintenanceRecordDialog> {
           completedDate: _date.text.trim(),
           note: _note.text,
           updatedByEmail: email,
+          photoFiles: _pendingPhotos.isEmpty
+              ? null
+              : _pendingPhotoMultipart(_pendingPhotos),
         );
       }
-      if (mounted) Navigator.pop(context, true);
+      if (mounted) _close(true);
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);
@@ -1094,6 +1305,50 @@ class _MaintenanceRecordDialogState extends State<_MaintenanceRecordDialog> {
         );
       }
     }
+  }
+
+  Widget _buildPhotosSection() {
+    if (_isEdit) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Photos',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          PartImagesPanel(
+            recordId: widget.record.id as String?,
+            collectionName: 'maintenance_records',
+            fieldName: 'photos',
+            filenames: _photoFilenames,
+            maxFiles: 8,
+            allowedExtensions: const ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+            emptyHint: 'Click to add photos.',
+            addTileLabel: 'Add photo',
+            onFilenamesChanged: (list) => setState(() {
+              _photoFilenames = list;
+              _photosDirty = true;
+            }),
+          ),
+        ],
+      );
+    }
+    return _buildPendingPhotosSection(
+      photos: _pendingPhotos,
+      onChanged: (next) => setState(() => _pendingPhotos = next),
+    );
+  }
+
+  void _close([bool saved = false]) {
+    Navigator.pop(context, saved || _photosDirty);
   }
 
   @override
@@ -1161,13 +1416,15 @@ class _MaintenanceRecordDialogState extends State<_MaintenanceRecordDialog> {
                 maxLines: 5,
                 textCapitalization: TextCapitalization.sentences,
               ),
+              const SizedBox(height: 16),
+              _buildPhotosSection(),
             ],
           ),
         ),
       ),
       actions: [
         TextButton(
-          onPressed: _saving ? null : () => Navigator.pop(context, false),
+          onPressed: _saving ? null : () => _close(false),
           child: const Text('Cancel'),
         ),
         ElevatedButton(
@@ -1212,6 +1469,9 @@ class _MaintenanceScheduleDialogState extends State<_MaintenanceScheduleDialog> 
   bool _active = true;
   bool _saving = false;
   List<dynamic> _machines = [];
+  List<String> _photoFilenames = [];
+  List<_PendingPhoto> _pendingPhotos = [];
+  bool _photosDirty = false;
 
   bool get _isEdit => widget.schedule != null;
 
@@ -1242,6 +1502,7 @@ class _MaintenanceScheduleDialogState extends State<_MaintenanceScheduleDialog> 
     _machineId = (mid != null && mid.isNotEmpty)
         ? mid
         : (_machines.isNotEmpty ? _machines.first.id as String : null);
+    _photoFilenames = PartImagesPanel.normalizeFilenames(data['photos']);
   }
 
   @override
@@ -1329,9 +1590,12 @@ class _MaintenanceScheduleDialogState extends State<_MaintenanceScheduleDialog> 
           leadDays: lead.clamp(0, 3650),
           active: _active,
           updatedByEmail: email,
+          photoFiles: _pendingPhotos.isEmpty
+              ? null
+              : _pendingPhotoMultipart(_pendingPhotos),
         );
       }
-      if (mounted) Navigator.pop(context, true);
+      if (mounted) _close(true);
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);
@@ -1340,6 +1604,50 @@ class _MaintenanceScheduleDialogState extends State<_MaintenanceScheduleDialog> 
         );
       }
     }
+  }
+
+  Widget _buildPhotosSection() {
+    if (_isEdit) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              'Photos',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey.shade700,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          PartImagesPanel(
+            recordId: widget.schedule.id as String?,
+            collectionName: 'maintenance_schedules',
+            fieldName: 'photos',
+            filenames: _photoFilenames,
+            maxFiles: 8,
+            allowedExtensions: const ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+            emptyHint: 'Click to add photos.',
+            addTileLabel: 'Add photo',
+            onFilenamesChanged: (list) => setState(() {
+              _photoFilenames = list;
+              _photosDirty = true;
+            }),
+          ),
+        ],
+      );
+    }
+    return _buildPendingPhotosSection(
+      photos: _pendingPhotos,
+      onChanged: (next) => setState(() => _pendingPhotos = next),
+    );
+  }
+
+  void _close([bool saved = false]) {
+    Navigator.pop(context, saved || _photosDirty);
   }
 
   @override
@@ -1459,13 +1767,15 @@ class _MaintenanceScheduleDialogState extends State<_MaintenanceScheduleDialog> 
                 maxLines: 5,
                 textCapitalization: TextCapitalization.sentences,
               ),
+              const SizedBox(height: 16),
+              _buildPhotosSection(),
             ],
           ),
         ),
       ),
       actions: [
         TextButton(
-          onPressed: _saving ? null : () => Navigator.pop(context, false),
+          onPressed: _saving ? null : () => _close(false),
           child: const Text('Cancel'),
         ),
         ElevatedButton(

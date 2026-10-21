@@ -6,6 +6,7 @@ import 'workspace_layout.dart';
 import 'workspace_scaffold.dart';
 import 'tool_import_config_screen.dart'; // NEW
 import 'quote_management_settings_screen.dart';
+import 'email_ingest_settings_screen.dart';
 import 'app_theme.dart';
 import 'theme_controller.dart';
 import 'drawer_behavior.dart';
@@ -542,6 +543,38 @@ class _SettingsScreenState extends State<SettingsScreen> with AutoOpenDrawerMixi
                           context,
                           MaterialPageRoute(
                             builder: (context) => const QuoteManagementSettingsScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Padding(
+                    padding: EdgeInsets.only(left: 4),
+                    child: Text(
+                      'PURCHASE EMAIL INGEST',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.mail_outline, color: Colors.blue),
+                      title: const Text('Email purchase ingest'),
+                      subtitle: const Text(
+                        'Gmail poll, vendors, review drafts on Purchases',
+                      ),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const EmailIngestSettingsScreen(),
                           ),
                         );
                       },
