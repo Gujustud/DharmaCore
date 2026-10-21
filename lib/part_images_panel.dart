@@ -8,21 +8,40 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'pocketbase_service.dart';
 
-/// Upload / view `part_images` on quotes or jobs (DharmaCore `PartImages.jsx`).
+/// Upload / view files on a PocketBase file field (e.g. `part_images`, `photos`).
 class PartImagesPanel extends StatefulWidget {
   final String? recordId;
   final String collectionName;
+  final String fieldName;
   final List<String> filenames;
   final ValueChanged<List<String>> onFilenamesChanged;
   final bool fillHeight;
+  final int maxFiles;
+  final List<String> allowedExtensions;
+  final String emptyHint;
+  final String saveFirstHint;
+  final String addTileLabel;
 
   const PartImagesPanel({
     super.key,
     required this.recordId,
     required this.collectionName,
+    this.fieldName = 'part_images',
     required this.filenames,
     required this.onFilenamesChanged,
     this.fillHeight = false,
+    this.maxFiles = 10,
+    this.allowedExtensions = const [
+      'png',
+      'jpg',
+      'jpeg',
+      'gif',
+      'webp',
+      'pdf',
+    ],
+    this.emptyHint = 'Click to add images or PDFs.',
+    this.saveFirstHint = 'Save this record first to upload files.',
+    this.addTileLabel = 'Add image\nor PDF',
   });
 
   static List<String> normalizeFilenames(dynamic value) {
@@ -39,10 +58,10 @@ class PartImagesPanel extends StatefulWidget {
 }
 
 class _PartImagesPanelState extends State<PartImagesPanel> {
-  static const _maxFiles = 10;
-
   bool _uploading = false;
   RecordModel? _record;
+
+  int get _maxFiles => widget.maxFiles;
 
   @override
   void initState() {
@@ -87,7 +106,7 @@ class _PartImagesPanelState extends State<PartImagesPanel> {
   void _applyRecord(RecordModel updated) {
     setState(() => _record = updated);
     widget.onFilenamesChanged(
-      PartImagesPanel.normalizeFilenames(updated.data['part_images']),
+      PartImagesPanel.normalizeFilenames(updated.data[widget.fieldName]),
     );
   }
 
@@ -101,7 +120,7 @@ class _PartImagesPanelState extends State<PartImagesPanel> {
 
     final result = await FilePicker.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf'],
+      allowedExtensions: widget.allowedExtensions,
       allowMultiple: true,
       withData: true,
     );
@@ -123,7 +142,7 @@ class _PartImagesPanelState extends State<PartImagesPanel> {
           id,
           files: [
             http.MultipartFile.fromBytes(
-              'part_images+',
+              '${widget.fieldName}+',
               bytes,
               filename: name,
             ),
@@ -187,7 +206,7 @@ class _PartImagesPanelState extends State<PartImagesPanel> {
     try {
       final updated = await PocketBaseService().pb.collection(widget.collectionName).update(
         id,
-        body: {'part_images-': filename},
+        body: {'${widget.fieldName}-': filename},
       );
       _applyRecord(updated);
       if (mounted) _snack('File deleted', success: true);
@@ -261,7 +280,7 @@ class _PartImagesPanelState extends State<PartImagesPanel> {
         child: Text(
           _uploading
               ? 'Uploading…'
-              : 'Click to add images or PDFs.\n(Max $_maxFiles files)',
+              : '${widget.emptyHint}\n(Max $_maxFiles files)',
           textAlign: TextAlign.center,
           style: TextStyle(color: Colors.grey[600], fontSize: 13),
         ),
@@ -270,7 +289,6 @@ class _PartImagesPanelState extends State<PartImagesPanel> {
   }
 
   Widget _saveFirstHint() {
-    final label = widget.collectionName == 'quotes' ? 'quote' : 'job';
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(24),
@@ -279,7 +297,7 @@ class _PartImagesPanelState extends State<PartImagesPanel> {
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
-        'Save this $label first to upload images or PDFs.',
+        widget.saveFirstHint,
         textAlign: TextAlign.center,
         style: TextStyle(color: Colors.grey[600], fontSize: 13),
       ),
@@ -382,7 +400,7 @@ class _PartImagesPanelState extends State<PartImagesPanel> {
             Icon(Icons.add, size: 32, color: Colors.grey[600]),
             const SizedBox(height: 4),
             Text(
-              'Add image\nor PDF',
+              widget.addTileLabel,
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 11, color: Colors.grey[600]),
             ),

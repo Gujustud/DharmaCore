@@ -704,6 +704,7 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
                     collectionName: 'quotes',
                     filenames: PartImagesPanel.normalizeFilenames(_quote?['part_images']),
                     fillHeight: true,
+                    saveFirstHint: 'Save this quote first to upload images or PDFs.',
                     onFilenamesChanged: (list) => _patchQuote({'part_images': list}),
                   ),
                 ],
