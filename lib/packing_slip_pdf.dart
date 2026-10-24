@@ -138,11 +138,7 @@ pw.Widget _header(pw.MemoryImage logo, PackingSlipData data) {
           children: [
             pw.Image(logo, width: 220, height: 55, fit: pw.BoxFit.contain),
             pw.SizedBox(height: 8),
-            pw.Text(
-              PackingSlipCompany.name,
-              style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold),
-              textAlign: pw.TextAlign.right,
-            ),
+            // Logo artwork already includes the company name.
             ...PackingSlipCompany.addressLines.map(
               (l) => pw.Text(
                 l,
