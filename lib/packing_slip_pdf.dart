@@ -80,15 +80,21 @@ Future<Uint8List> buildPackingSlipPdf(PackingSlipData data) async {
         _metaRow(data, dateFmt),
         pw.SizedBox(height: 16),
         _itemsTable(data),
-        pw.SizedBox(height: 28),
-        _packedByFooter(data, dateFmt),
       ],
-      footer: (context) => pw.Align(
-        alignment: pw.Alignment.centerRight,
-        child: pw.Text(
-          'PAGE: ${context.pageNumber}/${context.pagesCount}',
-          style: const pw.TextStyle(fontSize: 9),
-        ),
+      footer: (context) => pw.Column(
+        mainAxisSize: pw.MainAxisSize.min,
+        crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+        children: [
+          _packedByFooter(data, dateFmt),
+          pw.SizedBox(height: 8),
+          pw.Align(
+            alignment: pw.Alignment.centerRight,
+            child: pw.Text(
+              'PAGE: ${context.pageNumber}/${context.pagesCount}',
+              style: const pw.TextStyle(fontSize: 9),
+            ),
+          ),
+        ],
       ),
     ),
   );
@@ -214,9 +220,9 @@ pw.Widget _itemsTable(PackingSlipData data) {
     headerStyle: pw.TextStyle(
       fontWeight: pw.FontWeight.bold,
       fontSize: 9,
-      color: PdfColors.white,
+      color: PdfColors.black,
     ),
-    headerDecoration: const pw.BoxDecoration(color: PdfColors.grey800),
+    headerDecoration: const pw.BoxDecoration(color: PdfColors.white),
     cellStyle: const pw.TextStyle(fontSize: 9),
     cellAlignments: {
       0: pw.Alignment.center,
@@ -237,54 +243,42 @@ pw.Widget _itemsTable(PackingSlipData data) {
 }
 
 pw.Widget _packedByFooter(PackingSlipData data, DateFormat dateFmt) {
+  pw.Widget signedBlock(String value, String label) {
+    return pw.Expanded(
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.center,
+        children: [
+          pw.Text(
+            value,
+            style: const pw.TextStyle(fontSize: 11),
+            textAlign: pw.TextAlign.center,
+          ),
+          pw.Container(
+            width: 180,
+            decoration: const pw.BoxDecoration(
+              border: pw.Border(top: pw.BorderSide(width: 0.7)),
+            ),
+            padding: const pw.EdgeInsets.only(top: 2),
+            child: pw.Text(
+              label,
+              style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700),
+              textAlign: pw.TextAlign.center,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   return pw.Row(
     crossAxisAlignment: pw.CrossAxisAlignment.end,
     children: [
-      pw.Expanded(
-        child: pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [
-            pw.Text(
-              data.packedBy.isEmpty ? '-' : data.packedBy,
-              style: const pw.TextStyle(fontSize: 11),
-            ),
-            pw.Container(
-              width: 180,
-              decoration: const pw.BoxDecoration(
-                border: pw.Border(top: pw.BorderSide(width: 0.7)),
-              ),
-              padding: const pw.EdgeInsets.only(top: 2),
-              child: pw.Text(
-                'Packed by',
-                style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700),
-              ),
-            ),
-          ],
-        ),
+      signedBlock(
+        data.packedBy.isEmpty ? '-' : data.packedBy,
+        'Packed by',
       ),
       pw.SizedBox(width: 24),
-      pw.Expanded(
-        child: pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [
-            pw.Text(
-              dateFmt.format(data.packedDate),
-              style: const pw.TextStyle(fontSize: 11),
-            ),
-            pw.Container(
-              width: 180,
-              decoration: const pw.BoxDecoration(
-                border: pw.Border(top: pw.BorderSide(width: 0.7)),
-              ),
-              padding: const pw.EdgeInsets.only(top: 2),
-              child: pw.Text(
-                'Date',
-                style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey700),
-              ),
-            ),
-          ],
-        ),
-      ),
+      signedBlock(dateFmt.format(data.packedDate), 'Date'),
     ],
   );
 }
