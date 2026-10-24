@@ -375,11 +375,20 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
         _record = null;
       }
 
-      final results = await Future.wait([
-        pb.getCustomers(),
-        pb.getQuotes(),
-        pb.getSuppliers(),
-      ]);
+      // Load related lists independently so one missing collection (e.g. local
+      // demo without suppliers) does not skip job lines / ship-tos.
+      List<dynamic> customers = [];
+      List<dynamic> quotes = [];
+      List<dynamic> suppliers = [];
+      try {
+        customers = await pb.getCustomers();
+      } catch (_) {}
+      try {
+        quotes = await pb.getQuotes();
+      } catch (_) {}
+      try {
+        suppliers = await pb.getSuppliers();
+      } catch (_) {}
       List<dynamic> shipTos = [];
       List<Map<String, dynamic>> jobLines = [];
       final customerId = _customerId;
@@ -402,9 +411,9 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
       }
       if (mounted) {
         setState(() {
-          _customers = results[0];
-          _quotes = results[1];
-          _suppliers = results[2];
+          _customers = customers;
+          _quotes = quotes;
+          _suppliers = suppliers;
           _shipTos = shipTos;
           _jobLines = jobLines;
           _loading = false;
@@ -656,7 +665,11 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
             PocketBaseService.partsDescriptionFromJobLines(_jobLines);
       }
       await pb.updateJob(jobId, body);
-      await pb.replaceJobLineItems(jobId: jobId, lines: _jobLines);
+      // Only rewrite lines when the form has them; an empty list would wipe
+      // server rows if related-data load failed (e.g. missing suppliers).
+      if (_jobLines.isNotEmpty) {
+        await pb.replaceJobLineItems(jobId: jobId, lines: _jobLines);
+      }
       if (!mounted) return;
       setState(() => _isSaving = false);
       await Navigator.push<void>(
