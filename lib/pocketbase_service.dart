@@ -750,8 +750,91 @@ class PocketBaseService {
     }
   }
 
+  // ============================================================================
+  // CUSTOMER SHIP-TO SITES
+  // ============================================================================
+
+  Future<List<dynamic>> getCustomerShipTos(String customerId) async {
+    try {
+      return await pb.collection('customer_ship_tos').getFullList(
+        filter: 'customer = "$customerId"',
+        sort: '-is_default,label',
+      );
+    } catch (e) {
+      print('Error getting customer ship-tos: $e');
+      rethrow;
+    }
+  }
+
+  Future<dynamic> getCustomerShipTo(String id) async {
+    try {
+      return await pb.collection('customer_ship_tos').getOne(id);
+    } catch (e) {
+      print('Error getting customer ship-to: $e');
+      rethrow;
+    }
+  }
+
+  Future<dynamic?> getDefaultCustomerShipTo(String customerId) async {
+    try {
+      final list = await pb.collection('customer_ship_tos').getFullList(
+        filter: 'customer = "$customerId" && is_default = true',
+        sort: 'label',
+      );
+      if (list.isNotEmpty) return list.first;
+      final all = await getCustomerShipTos(customerId);
+      return all.isEmpty ? null : all.first;
+    } catch (e) {
+      print('Error getting default ship-to: $e');
+      return null;
+    }
+  }
+
+  Future<dynamic> createCustomerShipTo(Map<String, dynamic> body) async {
+    try {
+      return await pb.collection('customer_ship_tos').create(body: body);
+    } catch (e) {
+      print('Error creating customer ship-to: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> updateCustomerShipTo(String id, Map<String, dynamic> body) async {
+    try {
+      await pb.collection('customer_ship_tos').update(id, body: body);
+    } catch (e) {
+      print('Error updating customer ship-to: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> deleteCustomerShipTo(String id) async {
+    try {
+      await pb.collection('customer_ship_tos').delete(id);
+    } catch (e) {
+      print('Error deleting customer ship-to: $e');
+      rethrow;
+    }
+  }
+
+  /// When [isDefault] is true, clear is_default on other sites for this customer.
+  Future<void> setCustomerShipToDefault({
+    required String customerId,
+    required String shipToId,
+  }) async {
+    final sites = await getCustomerShipTos(customerId);
+    for (final site in sites) {
+      final id = site.id as String;
+      final want = id == shipToId;
+      final current = site.data['is_default'] == true;
+      if (want != current) {
+        await updateCustomerShipTo(id, {'is_default': want});
+      }
+    }
+  }
+
   static const String _jobExpand =
-      'quote,customer,material_source_vendor,'
+      'quote,customer,ship_to,material_source_vendor,'
       'material_purchase_item,material_purchase_item.material,'
       'material_purchase_item.purchase,material_purchase_item.purchase.supplier';
 
@@ -805,6 +888,124 @@ class PocketBaseService {
       print('Error deleting job: $e');
       rethrow;
     }
+  }
+
+  // ============================================================================
+  // JOB LINE ITEMS
+  // ============================================================================
+
+  Future<List<dynamic>> getJobLineItems(String jobId) async {
+    try {
+      return await pb.collection('job_line_items').getFullList(
+        filter: 'job = "$jobId"',
+        sort: 'sort_order,created',
+      );
+    } catch (e) {
+      print('Error getting job line items: $e');
+      rethrow;
+    }
+  }
+
+  Future<dynamic> createJobLineItem(Map<String, dynamic> body) async {
+    try {
+      return await pb.collection('job_line_items').create(body: body);
+    } catch (e) {
+      print('Error creating job line item: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> updateJobLineItem(String id, Map<String, dynamic> body) async {
+    try {
+      await pb.collection('job_line_items').update(id, body: body);
+    } catch (e) {
+      print('Error updating job line item: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> deleteJobLineItem(String id) async {
+    try {
+      await pb.collection('job_line_items').delete(id);
+    } catch (e) {
+      print('Error deleting job line item: $e');
+      rethrow;
+    }
+  }
+
+  /// Build the human-readable parts snapshot from structured job lines.
+  static String partsDescriptionFromJobLines(List<Map<String, dynamic>> lines) {
+    if (lines.isEmpty) return '';
+    return lines.map((item) {
+      final label = '${item['description'] ?? ''}'.trim();
+      final name = label.isEmpty ? 'Unnamed Part' : label;
+      final qty = item['quantity'] ?? 1;
+      return '• $name (qty $qty)';
+    }).join('\n');
+  }
+
+  /// Replace all job lines and sync `jobs.parts_description`.
+  Future<void> replaceJobLineItems({
+    required String jobId,
+    required List<Map<String, dynamic>> lines,
+  }) async {
+    final existing = await getJobLineItems(jobId);
+    final keepIds = lines
+        .map((l) => l['id'])
+        .whereType<String>()
+        .toSet();
+    for (final old in existing) {
+      final id = old.id as String;
+      if (!keepIds.contains(id)) {
+        await deleteJobLineItem(id);
+      }
+    }
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i];
+      final body = <String, dynamic>{
+        'job': jobId,
+        'description': '${line['description'] ?? ''}'.trim(),
+        'quantity': line['quantity'] ?? 1,
+        'sort_order': i,
+        if (line['packed_quantity'] != null) 'packed_quantity': line['packed_quantity'],
+        if (line['quote_line_item'] != null) 'quote_line_item': line['quote_line_item'],
+      };
+      final id = line['id'];
+      if (id is String && id.isNotEmpty) {
+        await updateJobLineItem(id, body);
+      } else {
+        final created = await createJobLineItem(body);
+        lines[i]['id'] = created.id;
+      }
+    }
+    await updateJob(jobId, {
+      'parts_description': partsDescriptionFromJobLines(lines),
+    });
+  }
+
+  /// Allocate next packing slip number (PS3000+) and persist counter.
+  /// If [jobId] is set and the job already has a number, returns it unchanged.
+  Future<String> allocatePackingSlipNumber({String? jobId}) async {
+    if (jobId != null && jobId.isNotEmpty) {
+      try {
+        final job = await getJob(jobId);
+        final existing = '${job.data['packing_slip_number'] ?? ''}'.trim();
+        if (existing.isNotEmpty) return existing;
+      } catch (_) {}
+    }
+
+    final settings = await getAppSettings();
+    final settingsId = settings.id as String;
+    var next = (settings.data['next_packing_slip_number'] as num?)?.toInt() ?? 3000;
+    if (next < 3000) next = 3000;
+    final assigned = 'PS$next';
+    await pb.collection('app_settings').update(settingsId, body: {
+      'next_packing_slip_number': next + 1,
+    });
+    if (jobId != null && jobId.isNotEmpty) {
+      await updateJob(jobId, {'packing_slip_number': assigned});
+    }
+    return assigned;
   }
 
   Future<List<dynamic>> getQuotes() async {
@@ -1147,6 +1348,7 @@ class PocketBaseService {
         final defaultSettings = await pb.collection('app_settings').create(body: {
           'show_all_inventory_in_menu': true,
           'keep_drawer_open': false,
+          'next_packing_slip_number': 3000,
         });
         return defaultSettings;
       }

@@ -10,6 +10,7 @@ import 'exchange_rate.dart';
 import 'pocketbase_service.dart';
 import 'quote_calculations.dart';
 import 'part_images_panel.dart';
+import 'quote_job_line_picker.dart';
 import 'quote_line_item_card.dart';
 import 'quote_sidebar.dart';
 import 'quote_totals_panel.dart';
@@ -344,7 +345,7 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
         }
       }
 
-      final calculated = _calculatedLines;
+      var calculated = _calculatedLines;
       for (var i = 0; i < calculated.length; i++) {
         final item = calculated[i];
         final payload = _linePayload(item, quoteId, i);
@@ -355,25 +356,81 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
           _lineItems[i]['id'] = created.id;
         }
       }
+      // Refresh so newly created line ids are available for job line links.
+      calculated = _calculatedLines;
 
       var jobCreated = false;
       if ('${quote['status']}' == 'won' && _jobId == null) {
-        String? firstVendor;
-        for (final i in _lineItems) {
-          firstVendor = _relationId(i['material_vendor']);
-          if (firstVendor != null) break;
+        // Pause saving spinner state for the picker dialog.
+        if (!mounted) return;
+        setState(() => _saving = false);
+        final selected = await showQuoteJobLinePicker(
+          context: context,
+          quoteLines: calculated
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList(),
+        );
+        if (selected == null) {
+          // User cancelled job creation; quote lines were already saved.
+          if (mounted) {
+            final messenger = ScaffoldMessenger.of(context);
+            Navigator.pop(context, true);
+            messenger.showSnackBar(
+              const SnackBar(
+                content: Text('Quote saved (job not created)'),
+                backgroundColor: Colors.green,
+              ),
+            );
+          }
+          return;
         }
+        if (mounted) setState(() => _saving = true);
+
+        String? firstVendor;
+        for (final s in selected) {
+          if (s.materialVendorId != null) {
+            firstVendor = s.materialVendorId;
+            break;
+          }
+        }
+
+        String? defaultShipToId;
+        try {
+          final ship = await pb.getDefaultCustomerShipTo(customerId);
+          defaultShipToId = ship?.id as String?;
+        } catch (_) {}
+
+        final partsDesc = PocketBaseService.partsDescriptionFromJobLines([
+          for (final s in selected)
+            {'description': s.description, 'quantity': s.quantity},
+        ]);
+
         final job = await pb.createJob({
           'quote': quoteId,
           'job_number': quote['job_number'],
           'customer': customerId,
           'customer_name': quote['customer_name'] ?? '',
-          'parts_description': generatePartsDescription(calculated),
+          'parts_description': partsDesc,
           'status': 'planning',
           'po_number': quote['po_number'] ?? '',
           if (firstVendor != null) 'material_source_vendor': firstVendor,
+          if (defaultShipToId != null) 'ship_to': defaultShipToId,
         });
         _jobId = job.id as String?;
+        if (_jobId != null) {
+          await pb.replaceJobLineItems(
+            jobId: _jobId!,
+            lines: [
+              for (final s in selected)
+                {
+                  'description': s.description,
+                  'quantity': s.quantity,
+                  if (s.quoteLineItemId != null)
+                    'quote_line_item': s.quoteLineItemId,
+                },
+            ],
+          );
+        }
         jobCreated = true;
       }
 
