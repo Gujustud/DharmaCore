@@ -669,36 +669,46 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
     );
   }
 
-  Widget _shipTosCard() {
+  /// Ship-to list embedded under Bill-to inside Details (not a separate card).
+  Widget _shipTosSection() {
     if (_isNew) return const SizedBox.shrink();
-    return QuoteSidebarCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Expanded(child: _sectionTitle('Ship-to addresses')),
-              TextButton.icon(
-                onPressed: _editShipToDialog,
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('Add'),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Ship-to addresses',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.grey[700],
+                ),
               ),
-            ],
-          ),
+            ),
+            TextButton.icon(
+              onPressed: _editShipToDialog,
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Add'),
+            ),
+          ],
+        ),
+        Text(
+          'Saved destinations for packing slips. Jobs pick one of these.',
+          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+        ),
+        const SizedBox(height: 8),
+        if (_shipTos.isEmpty)
           Text(
-            'Saved destinations for packing slips. Jobs pick one of these.',
-            style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-          ),
-          const SizedBox(height: 8),
-          if (_shipTos.isEmpty)
-            Text(
-              'No ship-to sites yet. Add one, or it will fall back to the address above.',
-              style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-            )
-          else
-            ..._shipTos.map(_shipToTile),
-        ],
-      ),
+            'No ship-to sites yet. Add one, or packing slips fall back to bill-to above.',
+            style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+          )
+        else
+          ..._shipTos.map(_shipToTile),
+        const SizedBox(height: 8),
+      ],
     );
   }
 
@@ -968,6 +978,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
             ],
           ),
           _field(controller: _addressController, label: 'Bill-to / default address', maxLines: 2),
+          _shipTosSection(),
           _resizableNotesField(),
           const SizedBox(height: 4),
           Row(
@@ -1050,8 +1061,6 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _detailsCard(),
-        const SizedBox(height: 16),
-        _shipTosCard(),
         const SizedBox(height: 16),
         QuoteSidebarCard(
           child: Column(
