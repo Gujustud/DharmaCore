@@ -86,14 +86,16 @@ Future<Uint8List> buildPackingSlipPdf(PackingSlipData data) async {
         crossAxisAlignment: pw.CrossAxisAlignment.stretch,
         children: [
           _packedByFooter(data, dateFmt),
-          pw.SizedBox(height: 8),
-          pw.Align(
-            alignment: pw.Alignment.centerRight,
-            child: pw.Text(
-              'PAGE: ${context.pageNumber}/${context.pagesCount}',
-              style: const pw.TextStyle(fontSize: 9),
+          if (context.pagesCount > 1) ...[
+            pw.SizedBox(height: 8),
+            pw.Align(
+              alignment: pw.Alignment.centerRight,
+              child: pw.Text(
+                'PAGE: ${context.pageNumber}/${context.pagesCount}',
+                style: const pw.TextStyle(fontSize: 9),
+              ),
             ),
-          ),
+          ],
         ],
       ),
     ),

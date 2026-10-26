@@ -669,46 +669,42 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
     );
   }
 
-  /// Ship-to list embedded under Bill-to inside Details (not a separate card).
+  /// Ship-to list under Bill-to — same outlined box style as other Details fields.
   Widget _shipTosSection() {
     if (_isNew) return const SizedBox.shrink();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const SizedBox(height: 8),
-        Row(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: InputDecorator(
+        decoration: const InputDecoration(
+          labelText: 'Ship-to addresses',
+          border: OutlineInputBorder(),
+          floatingLabelBehavior: FloatingLabelBehavior.always,
+          contentPadding: EdgeInsets.fromLTRB(12, 16, 8, 8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(
-              child: Text(
-                'Ship-to addresses',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.grey[700],
-                ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: _editShipToDialog,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Add'),
               ),
             ),
-            TextButton.icon(
-              onPressed: _editShipToDialog,
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('Add'),
-            ),
+            if (_shipTos.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8, left: 4),
+                child: Text(
+                  'None yet',
+                  style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                ),
+              )
+            else
+              ..._shipTos.map(_shipToTile),
           ],
         ),
-        Text(
-          'Saved destinations for packing slips. Jobs pick one of these.',
-          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-        ),
-        const SizedBox(height: 8),
-        if (_shipTos.isEmpty)
-          Text(
-            'No ship-to sites yet. Add one, or packing slips fall back to bill-to above.',
-            style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-          )
-        else
-          ..._shipTos.map(_shipToTile),
-        const SizedBox(height: 8),
-      ],
+      ),
     );
   }
 
@@ -716,11 +712,13 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
     final d = site.data as Map<String, dynamic>? ?? {};
     final label = '${d['label'] ?? ''}'.trim();
     final address = '${d['address'] ?? ''}'.trim();
-    final attn = '${d['attn'] ?? ''}'.trim();
     final isDefault = d['is_default'] == true;
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
       child: ListTile(
+        dense: true,
         title: Row(
           children: [
             Expanded(child: Text(label.isEmpty ? 'Ship-to' : label)),
@@ -741,13 +739,8 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
               ),
           ],
         ),
-        subtitle: Text(
-          [
-            if (address.isNotEmpty) address,
-            if (attn.isNotEmpty) (attn.toUpperCase().startsWith('ATTN') ? attn : 'ATTN: $attn'),
-          ].join('\n'),
-        ),
-        isThreeLine: address.contains('\n') || attn.isNotEmpty,
+        subtitle: address.isEmpty ? null : Text(address),
+        isThreeLine: address.contains('\n'),
         trailing: PopupMenuButton<String>(
           onSelected: (value) async {
             if (value == 'edit') {
@@ -816,17 +809,21 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
     final id = _customerId;
     if (id == null) return;
     final d = existing?.data as Map<String, dynamic>? ?? {};
+    // Prefill: prefer existing label, else legacy attn, else company name.
+    final existingLabel = '${d['label'] ?? ''}'.trim();
+    final legacyAttn = '${d['attn'] ?? ''}'.trim();
     final labelC = TextEditingController(
-      text: '${d['label'] ?? ''}'.trim().isEmpty && existing == null
-          ? _companyController.text.trim()
-          : '${d['label'] ?? ''}',
+      text: existingLabel.isNotEmpty
+          ? existingLabel
+          : (legacyAttn.isNotEmpty
+              ? legacyAttn
+              : (existing == null ? _companyController.text.trim() : '')),
     );
     final addressC = TextEditingController(
       text: '${d['address'] ?? ''}'.trim().isEmpty && existing == null
           ? _addressController.text.trim()
           : '${d['address'] ?? ''}',
     );
-    final attnC = TextEditingController(text: '${d['attn'] ?? ''}');
     var isDefault = d['is_default'] == true || (_shipTos.isEmpty && existing == null);
 
     final saved = await showDialog<bool>(
@@ -844,7 +841,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
                     TextField(
                       controller: labelC,
                       decoration: const InputDecoration(
-                        labelText: 'Label *',
+                        labelText: 'Name / ATTN *',
                         border: OutlineInputBorder(),
                         isDense: true,
                       ),
@@ -855,15 +852,6 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
                       maxLines: 4,
                       decoration: const InputDecoration(
                         labelText: 'Address *',
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: attnC,
-                      decoration: const InputDecoration(
-                        labelText: 'ATTN (optional)',
                         border: OutlineInputBorder(),
                         isDense: true,
                       ),
@@ -896,26 +884,25 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
 
     final label = labelC.text.trim();
     final address = addressC.text.trim();
-    final attn = attnC.text.trim();
     labelC.dispose();
     addressC.dispose();
-    attnC.dispose();
     if (saved != true) return;
     if (label.isEmpty || address.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Label and address are required')),
+        const SnackBar(content: Text('Name / ATTN and address are required')),
       );
       return;
     }
 
     try {
       final pb = PocketBaseService();
+      // Keep attn in sync with label (single name field in the UI).
       final body = <String, dynamic>{
         'customer': id,
         'label': label,
         'address': address,
-        'attn': attn,
+        'attn': label,
         'is_default': isDefault,
       };
       if (existing == null) {

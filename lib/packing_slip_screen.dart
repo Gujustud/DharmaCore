@@ -164,13 +164,14 @@ class _PackingSlipScreenState extends State<PackingSlipScreen> {
 
     if (shipData != null) {
       final lines = <String>[];
+      // Label and ATTN are the same in the UI — prefer label, fall back to attn.
+      final name = '${shipData['label'] ?? ''}'.trim().isNotEmpty
+          ? '${shipData['label']}'.trim()
+          : '${shipData['attn'] ?? ''}'.trim();
+      if (name.isNotEmpty) lines.add(name);
       final addr = '${shipData['address'] ?? ''}'.trim();
       if (addr.isNotEmpty) {
         lines.addAll(addr.split(RegExp(r'\r?\n')).where((l) => l.trim().isNotEmpty));
-      }
-      final attn = '${shipData['attn'] ?? ''}'.trim();
-      if (attn.isNotEmpty) {
-        lines.add(attn.toUpperCase().startsWith('ATTN') ? attn : 'ATTN: $attn');
       }
       if (lines.isNotEmpty) return lines;
     }
