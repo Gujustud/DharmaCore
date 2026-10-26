@@ -898,7 +898,9 @@ class PocketBaseService {
     try {
       return await pb.collection('job_line_items').getFullList(
         filter: 'job = "$jobId"',
-        sort: 'sort_order,created',
+        // Prefer sort_order only — older job_line_items rows may lack
+        // system `created` until autodate migration runs (400 otherwise).
+        sort: 'sort_order',
       );
     } catch (e) {
       print('Error getting job line items: $e');

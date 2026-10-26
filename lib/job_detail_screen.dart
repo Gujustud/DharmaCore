@@ -397,6 +397,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
           shipTos = await pb.getCustomerShipTos(customerId);
         } catch (_) {}
       }
+      String? linesLoadError;
       if (!_isNew && widget.job != null) {
         try {
           final rawLines = await pb.getJobLineItems(widget.job.id as String);
@@ -407,7 +408,40 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
                 ...Map<String, dynamic>.from(row.data as Map<String, dynamic>? ?? {}),
               },
           ];
-        } catch (_) {}
+        } catch (e) {
+          linesLoadError = e.toString();
+        }
+
+        // No saved job lines yet: seed from the linked quote so you only
+        // delete anything that was not ordered (instead of retyping).
+        if (jobLines.isEmpty &&
+            _quoteId != null &&
+            _quoteId!.isNotEmpty &&
+            linesLoadError == null) {
+          try {
+            final quoteLines = await pb.getQuoteLineItems(_quoteId!);
+            jobLines = [
+              for (var i = 0; i < quoteLines.length; i++)
+                () {
+                  final d = quoteLines[i].data as Map<String, dynamic>? ?? {};
+                  final part = '${d['part_number'] ?? ''}'.trim();
+                  return <String, dynamic>{
+                    'description': part.isEmpty ? 'Unnamed Part' : part,
+                    'quantity': d['part_quantity'] ?? 1,
+                    'sort_order': i,
+                    'quote_line_item': quoteLines[i].id,
+                  };
+                }(),
+            ];
+          } catch (_) {}
+        }
+
+        // Last resort: parse the text snapshot into editable rows.
+        if (jobLines.isEmpty && linesLoadError == null) {
+          jobLines = _jobLinesFromPartsDescription(
+            _partsDescriptionController.text,
+          );
+        }
       }
       if (mounted) {
         setState(() {
@@ -418,6 +452,14 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
           _jobLines = jobLines;
           _loading = false;
         });
+        if (linesLoadError != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error loading job parts: $linesLoadError'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -427,6 +469,28 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
         );
       }
     }
+  }
+
+  /// Parse `parts_description` bullets into editable job-line maps.
+  List<Map<String, dynamic>> _jobLinesFromPartsDescription(String raw) {
+    final out = <Map<String, dynamic>>[];
+    var i = 0;
+    for (final line in raw.split('\n')) {
+      final t = line.trim();
+      if (t.isEmpty) continue;
+      final cleaned = t.replaceFirst(RegExp(r'^•\s*'), '');
+      final m = RegExp(r'^(.*)\s*\(qty\s*([^)]+)\)\s*$', caseSensitive: false)
+          .firstMatch(cleaned);
+      final desc = (m?.group(1) ?? cleaned).trim();
+      final qty = num.tryParse('${m?.group(2) ?? 1}'.trim()) ?? 1;
+      if (desc.isEmpty) continue;
+      out.add({
+        'description': desc,
+        'quantity': qty,
+        'sort_order': i++,
+      });
+    }
+    return out;
   }
 
   String _quoteLabel(dynamic quote) {
@@ -1400,7 +1464,6 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
   }
 
   Widget _dharmaRightColumn(BuildContext context) {
-    final parts = _partsDescriptionController.text.trim();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1450,34 +1513,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
                   style: const TextStyle(fontSize: 14),
                   decoration: QuoteSidebarTheme.fieldDecoration(context),
                 ),
-                if (parts.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    'Parts in this job',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      color: Theme.of(context).brightness == Brightness.dark
-                          ? const Color(0xFF9CA3AF)
-                          : const Color(0xFF6B7280),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).brightness == Brightness.dark
-                          ? const Color(0xFF374151)
-                          : const Color(0xFFF9FAFB),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: SelectableText(
-                      parts,
-                      style: const TextStyle(fontSize: 14, height: 1.35),
-                    ),
-                  ),
-                ],
+                const SizedBox(height: 16),
+                _jobPartsEditor(context, compact: true),
               ],
             ),
           ),
@@ -1492,8 +1529,6 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
       children: [
         _existingJobHeaderBar(context),
         const SizedBox(height: 20),
-        _jobLinesCard(context),
-        const SizedBox(height: 16),
         if (wide)
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1876,98 +1911,113 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
     );
   }
 
+  /// Editable job parts list (seeded from quote / snapshot). [compact] for
+  /// the existing-job notes column.
+  Widget _jobPartsEditor(BuildContext context, {bool compact = false}) {
+    final titleStyle = compact
+        ? TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+            color: Theme.of(context).brightness == Brightness.dark
+                ? const Color(0xFF9CA3AF)
+                : const Color(0xFF6B7280),
+          )
+        : Theme.of(context).textTheme.titleMedium;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(child: Text('Parts in this job', style: titleStyle)),
+            TextButton.icon(
+              onPressed: () {
+                setState(() {
+                  _jobLines.add({
+                    'description': '',
+                    'quantity': 1,
+                    'sort_order': _jobLines.length,
+                  });
+                });
+              },
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Add'),
+            ),
+          ],
+        ),
+        Text(
+          _quoteId != null && _quoteId!.isNotEmpty
+              ? 'Copied from the quote — delete any lines that were not ordered.'
+              : 'Parts for scheduling and packing slips.',
+          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+        ),
+        const SizedBox(height: 8),
+        if (_jobLines.isEmpty)
+          Text(
+            'No parts yet. Add one, or link a quote.',
+            style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+          )
+        else
+          ...List.generate(_jobLines.length, (i) {
+            final line = _jobLines[i];
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Text('${i + 1}.'),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: compact ? 56 : 72,
+                    child: TextFormField(
+                      key: ValueKey('job_line_qty_${line['id'] ?? 'new'}_$i'),
+                      initialValue: '${line['quantity'] ?? 1}',
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Qty',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      onChanged: (v) {
+                        final n = num.tryParse(v.trim()) ?? 1;
+                        _jobLines[i]['quantity'] = n;
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextFormField(
+                      key: ValueKey('job_line_desc_${line['id'] ?? 'new'}_$i'),
+                      initialValue: '${line['description'] ?? ''}',
+                      decoration: const InputDecoration(
+                        labelText: 'Description',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      onChanged: (v) => _jobLines[i]['description'] = v,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Remove (not ordered)',
+                    onPressed: () => setState(() => _jobLines.removeAt(i)),
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                ],
+              ),
+            );
+          }),
+      ],
+    );
+  }
+
   Widget _jobLinesCard(BuildContext context) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Parts on this job',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ),
-                TextButton.icon(
-                  onPressed: () {
-                    setState(() {
-                      _jobLines.add({
-                        'description': '',
-                        'quantity': 1,
-                        'sort_order': _jobLines.length,
-                      });
-                    });
-                  },
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Add part'),
-                ),
-              ],
-            ),
-            Text(
-              'Ordered parts for scheduling and packing slips. Uncheck/remove anything not ordered.',
-              style: TextStyle(fontSize: 13, color: Colors.grey[600]),
-            ),
-            const SizedBox(height: 12),
-            if (_jobLines.isEmpty)
-              Text(
-                'No structured parts yet. Add parts here, or create the job from a won quote.',
-                style: TextStyle(fontSize: 14, color: Colors.grey[600]),
-              )
-            else
-              ...List.generate(_jobLines.length, (i) {
-                final line = _jobLines[i];
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.only(top: 12),
-                        child: Text('${i + 1}.'),
-                      ),
-                      const SizedBox(width: 8),
-                      SizedBox(
-                        width: 72,
-                        child: TextFormField(
-                          initialValue: '${line['quantity'] ?? 1}',
-                          keyboardType: TextInputType.number,
-                          decoration: const InputDecoration(
-                            labelText: 'Qty',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
-                          onChanged: (v) {
-                            final n = num.tryParse(v.trim()) ?? 1;
-                            _jobLines[i]['quantity'] = n;
-                          },
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextFormField(
-                          initialValue: '${line['description'] ?? ''}',
-                          decoration: const InputDecoration(
-                            labelText: 'Description',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
-                          onChanged: (v) => _jobLines[i]['description'] = v,
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'Remove',
-                        onPressed: () => setState(() => _jobLines.removeAt(i)),
-                        icon: const Icon(Icons.delete_outline),
-                      ),
-                    ],
-                  ),
-                );
-              }),
-          ],
-        ),
+        child: _jobPartsEditor(context),
       ),
     );
   }
