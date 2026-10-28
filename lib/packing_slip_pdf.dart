@@ -12,8 +12,8 @@ class PackingSlipCompany {
     '106 – 1101 Commercial Place',
     'Squamish, BC, V8B 1B5',
   ];
-  static const phone = 'T: 604.277.4077';
-  static const email = 'E: amish@sscadcam.com';
+  static const phone = '604.277.4077';
+  static const email = 'amish@sscadcam.com';
 }
 
 class PackingSlipLine {
@@ -119,11 +119,6 @@ pw.Widget _header(pw.MemoryImage logo, PackingSlipData data) {
                 fontWeight: pw.FontWeight.bold,
               ),
             ),
-            pw.SizedBox(height: 4),
-            pw.Text(
-              data.packingSlipNumber,
-              style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold),
-            ),
             pw.SizedBox(height: 10),
             pw.Text(
               'Ship To:',
@@ -200,6 +195,7 @@ pw.Widget _metaRow(PackingSlipData data, DateFormat dateFmt) {
           data.purchaseOrder.isEmpty ? '-' : data.purchaseOrder,
         ),
         metaCell('TRACKING', data.tracking.isEmpty ? '-' : data.tracking),
+        metaCell('PACKING SLIP', data.packingSlipNumber),
       ],
     ),
   );
