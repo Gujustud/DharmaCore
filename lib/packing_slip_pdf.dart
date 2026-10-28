@@ -78,13 +78,27 @@ Future<Uint8List> buildPackingSlipPdf(PackingSlipData data) async {
         // Subtle left-edge ticks at 1/3 and 2/3 for trifold into a clear sleeve.
         buildBackground: (context) => _trifoldMarks(),
       ),
-      build: (context) => [
-        _header(logo, data),
-        pw.SizedBox(height: 16),
-        _metaRow(data, dateFmt),
-        pw.SizedBox(height: 16),
-        _itemsTable(data),
-      ],
+      build: (context) {
+        // Keep header + meta in the top trifold panel so the items table
+        // starts below the first fold tick (hidden when folded into a sleeve).
+        final topPanelH =
+            PdfPageFormat.letter.height / 3 - 0.5 * PdfPageFormat.inch;
+        return [
+          pw.SizedBox(
+            height: topPanelH,
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+              children: [
+                _header(logo, data),
+                pw.SizedBox(height: 16),
+                _metaRow(data, dateFmt),
+              ],
+            ),
+          ),
+          pw.SizedBox(height: 8),
+          _itemsTable(data),
+        ];
+      },
       footer: (context) => pw.Column(
         mainAxisSize: pw.MainAxisSize.min,
         crossAxisAlignment: pw.CrossAxisAlignment.stretch,
