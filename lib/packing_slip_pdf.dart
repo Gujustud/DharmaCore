@@ -71,9 +71,13 @@ Future<Uint8List> buildPackingSlipPdf(PackingSlipData data) async {
 
   doc.addPage(
     pw.MultiPage(
-      pageFormat: PdfPageFormat.letter,
-      margin: const pw.EdgeInsets.all(0.5 * PdfPageFormat.inch),
-      theme: theme,
+      pageTheme: pw.PageTheme(
+        pageFormat: PdfPageFormat.letter,
+        margin: const pw.EdgeInsets.all(0.5 * PdfPageFormat.inch),
+        theme: theme,
+        // Subtle left-edge ticks at 1/3 and 2/3 for trifold into a clear sleeve.
+        buildBackground: (context) => _trifoldMarks(),
+      ),
       build: (context) => [
         _header(logo, data),
         pw.SizedBox(height: 16),
@@ -102,6 +106,33 @@ Future<Uint8List> buildPackingSlipPdf(PackingSlipData data) async {
   );
 
   return doc.save();
+}
+
+/// Hairline fold ticks on the left edge (letter → three equal panels).
+pw.Widget _trifoldMarks() {
+  const markLen = 10.0;
+  const markThickness = 0.45;
+  final pageH = PdfPageFormat.letter.height;
+
+  pw.Widget tick(double fromTop) => pw.Positioned(
+        left: 0,
+        top: fromTop - markThickness / 2,
+        child: pw.Container(
+          width: markLen,
+          height: markThickness,
+          color: PdfColors.grey400,
+        ),
+      );
+
+  return pw.FullPage(
+    ignoreMargins: true,
+    child: pw.Stack(
+      children: [
+        tick(pageH / 3),
+        tick(2 * pageH / 3),
+      ],
+    ),
+  );
 }
 
 pw.Widget _header(pw.MemoryImage logo, PackingSlipData data) {
