@@ -332,6 +332,7 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
           _selected = null;
           _historyRecords = [];
           _pieces = [];
+          _piecesUnavailable = false;
         }
       });
       await _loadMaterials();
