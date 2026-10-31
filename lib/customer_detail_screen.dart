@@ -44,6 +44,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
   bool _loadingRelated = false;
   List<dynamic> _jobs = [];
   List<dynamic> _quotes = [];
+  List<dynamic> _shipTos = [];
 
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   static final _dateDisplay = DateFormat.yMMMd();
@@ -84,11 +85,13 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
         pb.getCustomer(id),
         pb.getJobsForCustomer(id),
         pb.getQuotesForCustomer(id),
+        pb.getCustomerShipTos(id),
       ]);
       if (!mounted) return;
       final customer = results[0];
       final jobs = results[1] as List<dynamic>;
       final quotes = List<dynamic>.from(results[2] as List<dynamic>);
+      final shipTos = List<dynamic>.from(results[3] as List<dynamic>);
       quotes.sort((a, b) {
         final ad = a.data as Map<String, dynamic>? ?? {};
         final bd = b.data as Map<String, dynamic>? ?? {};
@@ -103,6 +106,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
         _applyFormFromData(customer.data as Map<String, dynamic>? ?? {});
         _jobs = jobs;
         _quotes = quotes;
+        _shipTos = shipTos;
         _loadingRelated = false;
       });
     } catch (e) {
@@ -665,6 +669,268 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
     );
   }
 
+  /// Ship-to list under Bill-to — same outlined box style as other Details fields.
+  Widget _shipTosSection() {
+    if (_isNew) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: InputDecorator(
+        decoration: const InputDecoration(
+          labelText: 'Ship-to addresses',
+          border: OutlineInputBorder(),
+          floatingLabelBehavior: FloatingLabelBehavior.always,
+          contentPadding: EdgeInsets.fromLTRB(12, 16, 8, 8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: _editShipToDialog,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Add'),
+              ),
+            ),
+            if (_shipTos.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8, left: 4),
+                child: Text(
+                  'None yet',
+                  style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                ),
+              )
+            else
+              ..._shipTos.map(_shipToTile),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _shipToTile(dynamic site) {
+    final d = site.data as Map<String, dynamic>? ?? {};
+    final label = '${d['label'] ?? ''}'.trim();
+    final address = '${d['address'] ?? ''}'.trim();
+    final isDefault = d['is_default'] == true;
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      elevation: 0,
+      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+      child: ListTile(
+        dense: true,
+        title: Row(
+          children: [
+            Expanded(child: Text(label.isEmpty ? 'Ship-to' : label)),
+            if (isDefault)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  'Default',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  ),
+                ),
+              ),
+          ],
+        ),
+        subtitle: address.isEmpty ? null : Text(address),
+        isThreeLine: address.contains('\n'),
+        trailing: PopupMenuButton<String>(
+          onSelected: (value) async {
+            if (value == 'edit') {
+              await _editShipToDialog(existing: site);
+            } else if (value == 'default') {
+              await _setDefaultShipTo(site.id as String);
+            } else if (value == 'delete') {
+              await _deleteShipTo(site);
+            }
+          },
+          itemBuilder: (context) => [
+            const PopupMenuItem(value: 'edit', child: Text('Edit')),
+            if (!isDefault)
+              const PopupMenuItem(value: 'default', child: Text('Set as default')),
+            const PopupMenuItem(value: 'delete', child: Text('Delete')),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _setDefaultShipTo(String shipToId) async {
+    final id = _customerId;
+    if (id == null) return;
+    try {
+      await PocketBaseService().setCustomerShipToDefault(
+        customerId: id,
+        shipToId: shipToId,
+      );
+      await _loadRelated();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  Future<void> _deleteShipTo(dynamic site) async {
+    final d = site.data as Map<String, dynamic>? ?? {};
+    final label = '${d['label'] ?? 'this ship-to'}';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete ship-to'),
+        content: Text('Delete "$label"?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await PocketBaseService().deleteCustomerShipTo(site.id as String);
+      await _loadRelated();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  Future<void> _editShipToDialog({dynamic existing}) async {
+    final id = _customerId;
+    if (id == null) return;
+    final d = existing?.data as Map<String, dynamic>? ?? {};
+    // Prefill: prefer existing label, else legacy attn, else company name.
+    final existingLabel = '${d['label'] ?? ''}'.trim();
+    final legacyAttn = '${d['attn'] ?? ''}'.trim();
+    final labelC = TextEditingController(
+      text: existingLabel.isNotEmpty
+          ? existingLabel
+          : (legacyAttn.isNotEmpty
+              ? legacyAttn
+              : (existing == null ? _companyController.text.trim() : '')),
+    );
+    final addressC = TextEditingController(
+      text: '${d['address'] ?? ''}'.trim().isEmpty && existing == null
+          ? _addressController.text.trim()
+          : '${d['address'] ?? ''}',
+    );
+    var isDefault = d['is_default'] == true || (_shipTos.isEmpty && existing == null);
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setLocal) {
+            return AlertDialog(
+              title: Text(existing == null ? 'Add ship-to' : 'Edit ship-to'),
+              content: SizedBox(
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: labelC,
+                      decoration: const InputDecoration(
+                        labelText: 'Name / ATTN *',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: addressC,
+                      maxLines: 4,
+                      decoration: const InputDecoration(
+                        labelText: 'Address *',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: isDefault,
+                      onChanged: (v) => setLocal(() => isDefault = v ?? false),
+                      title: const Text('Default for new jobs'),
+                      controlAffinity: ListTileControlAffinity.leading,
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    final label = labelC.text.trim();
+    final address = addressC.text.trim();
+    labelC.dispose();
+    addressC.dispose();
+    if (saved != true) return;
+    if (label.isEmpty || address.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Name / ATTN and address are required')),
+      );
+      return;
+    }
+
+    try {
+      final pb = PocketBaseService();
+      // Keep attn in sync with label (single name field in the UI).
+      final body = <String, dynamic>{
+        'customer': id,
+        'label': label,
+        'address': address,
+        'attn': label,
+        'is_default': isDefault,
+      };
+      if (existing == null) {
+        final created = await pb.createCustomerShipTo(body);
+        if (isDefault) {
+          await pb.setCustomerShipToDefault(
+            customerId: id,
+            shipToId: created.id as String,
+          );
+        }
+      } else {
+        await pb.updateCustomerShipTo(existing.id as String, body);
+        if (isDefault) {
+          await pb.setCustomerShipToDefault(
+            customerId: id,
+            shipToId: existing.id as String,
+          );
+        }
+      }
+      await _loadRelated();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
   Widget _detailsCard() {
     return QuoteSidebarCard(
       child: Column(
@@ -698,7 +964,8 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
               ),
             ],
           ),
-          _field(controller: _addressController, label: 'Address', maxLines: 2),
+          _field(controller: _addressController, label: 'Bill-to / default address', maxLines: 2),
+          _shipTosSection(),
           _resizableNotesField(),
           const SizedBox(height: 4),
           Row(
