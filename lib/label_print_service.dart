@@ -177,6 +177,110 @@ class LabelPrintService {
     await _channel.invokeMethod<void>('printLabel', {'imageBytes': pngBytes.toList()});
   }
 
+  /// QR payload for a material piece — stable id, not human length text.
+  static String materialPieceQrPayload(String pieceId) => 'dharma://piece/$pieceId';
+
+  /// Material piece label: code + grade/form/size + length, QR = piece id.
+  static Uint8List generateMaterialLabelImage({
+    required String labelCode,
+    required String identityLine,
+    required String lengthLine,
+    required String pieceId,
+    int? width,
+    int? height,
+  }) {
+    const leftMargin = 14;
+    const rightMargin = 16;
+    const qrVerticalMargin = 6;
+
+    final imageHeight = height ?? labelHeightPx;
+    final qrMaxSide = imageHeight - 2 * qrVerticalMargin;
+
+    final qrData = materialPieceQrPayload(pieceId);
+    final qrCode = QrCode(
+      payload: QrPayload.fromString(qrData),
+      errorCorrectLevel: QrErrorCorrectLevel.low,
+    );
+    final qrImage = QrImage(qrCode);
+    final qrModuleCount = qrImage.moduleCount;
+    final qrModulePixel = (qrMaxSide / qrModuleCount).floor().clamp(1, 20);
+    final qrSize = qrModuleCount * qrModulePixel;
+    final qrY = (imageHeight - qrSize) ~/ 2;
+
+    final computedWidth = leftMargin + 280 + 8 + qrSize + rightMargin;
+    final imageWidth = (width ?? computedWidth).clamp(0, maxLabelWidthPx);
+
+    final image = img.Image(width: imageWidth, height: imageHeight);
+    final white = img.ColorRgba8(255, 255, 255, 255);
+    final black = img.ColorRgba8(0, 0, 0, 255);
+    img.fill(image, color: white);
+
+    final font = img.arial24;
+    const lineHeight = 28;
+    const maxChars = 28;
+
+    String trimLine(String s) {
+      final t = s.trim();
+      if (t.length <= maxChars) return t;
+      return '${t.substring(0, maxChars - 1)}…';
+    }
+
+    final lines = <String>[
+      trimLine(labelCode),
+      trimLine(identityLine),
+      trimLine(lengthLine),
+    ];
+
+    var y = 10;
+    for (final line in lines) {
+      img.drawString(
+        image,
+        line,
+        font: font,
+        x: leftMargin,
+        y: y,
+        color: black,
+      );
+      y += lineHeight;
+    }
+
+    final qrX = imageWidth - qrSize - rightMargin;
+    for (var row = 0; row < qrModuleCount; row++) {
+      for (var col = 0; col < qrModuleCount; col++) {
+        if (qrImage.isDark(row, col)) {
+          for (var dy = 0; dy < qrModulePixel; dy++) {
+            for (var dx = 0; dx < qrModulePixel; dx++) {
+              final x = qrX + col * qrModulePixel + dx;
+              final py = qrY + row * qrModulePixel + dy;
+              if (x < imageWidth && py < imageHeight) {
+                image.setPixel(x, py, black);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return Uint8List.fromList(img.encodePng(image));
+  }
+
+  static Future<void> printMaterialLabel({
+    required String labelCode,
+    required String identityLine,
+    required String lengthLine,
+    required String pieceId,
+  }) async {
+    final pngBytes = generateMaterialLabelImage(
+      labelCode: labelCode,
+      identityLine: identityLine,
+      lengthLine: lengthLine,
+      pieceId: pieceId,
+    );
+    await _channel.invokeMethod<void>('printLabel', {
+      'imageBytes': pngBytes.toList(),
+    });
+  }
+
   /// DEBUG: Export a sample label PNG to disk so it can be inspected without printing.
   /// Writes `sample_label.png` into the platform's documents directory and returns the full path.
   static Future<String> exportSampleLabelPng({

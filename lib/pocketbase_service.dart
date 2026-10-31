@@ -2797,6 +2797,159 @@ class PocketBaseService {
     }
   }
 
+  // ============================================================================
+  // MATERIAL PIECES (shelf stock)
+  // ============================================================================
+
+  String _newMaterialLabelCode() {
+    final t = DateTime.now().microsecondsSinceEpoch.toRadixString(36).toUpperCase();
+    final tail = t.length <= 5 ? t : t.substring(t.length - 5);
+    return 'P-$tail';
+  }
+
+  Future<List<dynamic>> getMaterialPiecesForMaterial(
+    String materialId, {
+    bool onShelfOnly = false,
+  }) async {
+    try {
+      final filter = onShelfOnly
+          ? 'material = "$materialId" && status = "on_shelf"'
+          : 'material = "$materialId"';
+      return await pb.collection('material_pieces').getFullList(
+        filter: filter,
+        sort: '-length_in,label_code',
+      );
+    } catch (e) {
+      print('Error getting material pieces: $e');
+      rethrow;
+    }
+  }
+
+  Future<dynamic> createMaterialPiece({
+    required String materialId,
+    required double lengthIn,
+    String source = 'legacy',
+    String? locationNote,
+    String? heatLot,
+    String? purchaseItemId,
+    String? notes,
+    String? labelCode,
+  }) async {
+    try {
+      final code = (labelCode != null && labelCode.trim().isNotEmpty)
+          ? labelCode.trim().toUpperCase()
+          : _newMaterialLabelCode();
+      final body = <String, dynamic>{
+        'material': materialId,
+        'label_code': code,
+        'length_in': lengthIn,
+        'original_length_in': lengthIn,
+        'status': 'on_shelf',
+        'source': source,
+      };
+      if (locationNote != null && locationNote.trim().isNotEmpty) {
+        body['location_note'] = locationNote.trim();
+      }
+      if (heatLot != null && heatLot.trim().isNotEmpty) {
+        body['heat_lot'] = heatLot.trim();
+      }
+      if (purchaseItemId != null && purchaseItemId.trim().isNotEmpty) {
+        body['purchase_item'] = purchaseItemId.trim();
+      }
+      if (notes != null && notes.trim().isNotEmpty) {
+        body['notes'] = notes.trim();
+      }
+      final created = await pb.collection('material_pieces').create(body: body);
+      final email = pb.authStore.record?.getStringValue('email') ?? '';
+      await pb.collection('material_events').create(body: {
+        'piece': created.id,
+        'event_type': 'intake',
+        'length_before': lengthIn,
+        'length_after': lengthIn,
+        if (email.isNotEmpty) 'created_by_email': email,
+        if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+      });
+      return created;
+    } catch (e) {
+      print('Error creating material piece: $e');
+      rethrow;
+    }
+  }
+
+  Future<dynamic> cutMaterialPiece({
+    required String pieceId,
+    required double cutLengthIn,
+    String? jobRef,
+    String? notes,
+  }) async {
+    try {
+      final current = await pb.collection('material_pieces').getOne(pieceId);
+      final data = current.data as Map<String, dynamic>? ?? {};
+      final before = (data['length_in'] as num?)?.toDouble() ?? 0;
+      if (cutLengthIn <= 0) {
+        throw Exception('Cut length must be greater than zero');
+      }
+      if (cutLengthIn > before + 0.001) {
+        throw Exception(
+          'Cut length (${cutLengthIn.toStringAsFixed(1)} in) exceeds '
+          'remaining (${before.toStringAsFixed(1)} in)',
+        );
+      }
+      final after = (before - cutLengthIn);
+      final status = after <= 0.001 ? 'depleted' : 'on_shelf';
+      final lengthAfter = after <= 0.001 ? 0.0 : after;
+      final updated = await pb.collection('material_pieces').update(
+        pieceId,
+        body: {
+          'length_in': lengthAfter,
+          'status': status,
+        },
+      );
+      final email = pb.authStore.record?.getStringValue('email') ?? '';
+      await pb.collection('material_events').create(body: {
+        'piece': pieceId,
+        'event_type': 'cut',
+        'length_before': before,
+        'length_after': lengthAfter,
+        'cut_length': cutLengthIn,
+        if (jobRef != null && jobRef.trim().isNotEmpty) 'job_ref': jobRef.trim(),
+        if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+        if (email.isNotEmpty) 'created_by_email': email,
+      });
+      return updated;
+    } catch (e) {
+      print('Error cutting material piece: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> scrapMaterialPiece(String pieceId, {String? notes}) async {
+    try {
+      final current = await pb.collection('material_pieces').getOne(pieceId);
+      final data = current.data as Map<String, dynamic>? ?? {};
+      final before = (data['length_in'] as num?)?.toDouble() ?? 0;
+      await pb.collection('material_pieces').update(
+        pieceId,
+        body: {
+          'status': 'scrap',
+          'length_in': 0,
+        },
+      );
+      final email = pb.authStore.record?.getStringValue('email') ?? '';
+      await pb.collection('material_events').create(body: {
+        'piece': pieceId,
+        'event_type': 'scrap',
+        'length_before': before,
+        'length_after': 0,
+        if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+        if (email.isNotEmpty) 'created_by_email': email,
+      });
+    } catch (e) {
+      print('Error scrapping material piece: $e');
+      rethrow;
+    }
+  }
+
   Future<dynamic> uploadPurchaseAttachments(
     String purchaseId,
     List<http.MultipartFile> files,
