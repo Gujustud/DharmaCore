@@ -541,35 +541,6 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     return nums.last;
   }
 
-  /// Round-bar / tube / hex cross-section diameter (first number when 2+ dims).
-  double? _diameterInchesFromSize(ShopMaterial m) {
-    final form = m.form.toLowerCase();
-    if (form != 'bar' && form != 'tube' && form != 'hex') return null;
-    final nums = _parseSizeNumbers(m.sizeLabel);
-    if (nums.length < 2) return null;
-    return nums.first;
-  }
-
-  double _densityLbPerCuIn(String grade) {
-    final g = grade.toLowerCase();
-    if (RegExp(r'6061|7075|2024|5052|5083|alumin|alum\b').hasMatch(g)) {
-      return 0.098;
-    }
-    if (RegExp(r'titanium|\bti[- ]?6').hasMatch(g)) return 0.163;
-    if (RegExp(r'brass|bronze|copper|\bcop\b').hasMatch(g)) return 0.307;
-    // Default: steel / stainless / unknown alloys
-    return 0.283;
-  }
-
-  double? _estimateWeightLbs(ShopMaterial m) {
-    final dia = _diameterInchesFromSize(m);
-    final len = _lengthInchesFromSize(m.sizeLabel);
-    if (dia == null || len == null || dia <= 0 || len <= 0) return null;
-    final r = dia / 2;
-    final volume = 3.141592653589793 * r * r * len;
-    return volume * _densityLbPerCuIn(m.grade);
-  }
-
   double? _costPerInch({
     required ShopMaterial m,
     required double unitCost,
@@ -584,29 +555,40 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     return null;
   }
 
-  String _unitLabel(String unit) {
+  /// Price unit suffix for display. Empty for each (default) so we don't say
+  /// both "each" and "/ea".
+  String _priceUnitSuffix(String unit) {
     switch (unit.trim().toLowerCase()) {
+      case '':
       case 'ea':
-        return 'each';
+        return '';
       case 'ft':
-        return 'feet';
+        return '/ft';
       case 'in':
-        return 'inches';
+        return '/in';
       case 'lb':
-        return 'pounds';
+        return '/lb';
       case 'kg':
-        return 'kilograms';
+        return '/kg';
       default:
-        return unit.isEmpty ? 'each' : unit;
+        return '/${unit.trim()}';
     }
   }
 
-  List<String> _materialSummaryParts(ShopMaterial m) {
-    final parts = <String>[];
+  String _identityTitle(ShopMaterial m) {
     final grade = m.grade.trim();
-    if (grade.isNotEmpty) parts.add(grade);
-    parts.add(_unitLabel(m.unit));
+    final form = materialFormLabel(m.form);
+    final size = m.sizeLabel.trim();
+    final parts = <String>[
+      if (grade.isNotEmpty) grade,
+      form,
+      if (size.isNotEmpty) size,
+    ];
+    return parts.join(' · ');
+  }
 
+  /// Last / avg / $/in for the detail header price column. Null when no costs.
+  _MaterialPriceSummary? _priceSummary(ShopMaterial m) {
     final costs = <double>[];
     for (final record in _historyRecords) {
       final item = PurchaseItem.fromRecord(record);
@@ -614,40 +596,26 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
         costs.add(item.unitCost!);
       }
     }
-    if (costs.isNotEmpty) {
-      final last = costs.first; // history sorted newest-first
-      parts.add('last ${_money.format(last)}/${m.unit.trim().isEmpty ? 'ea' : m.unit}');
-      final perIn = _costPerInch(m: m, unitCost: last);
-      if (perIn != null) {
-        parts.add('${_money.format(perIn)}/"');
-      }
-      if (costs.length > 1) {
-        final avg = costs.reduce((a, b) => a + b) / costs.length;
-        if ((avg - last).abs() / last > 0.02) {
-          parts.add('avg ${_money.format(avg)}');
-        }
+    if (costs.isEmpty) return null;
+
+    final last = costs.first; // history sorted newest-first
+    double? avg;
+    if (costs.length > 1) {
+      final computed = costs.reduce((a, b) => a + b) / costs.length;
+      if ((computed - last).abs() / last > 0.02) {
+        avg = computed;
       }
     }
-
-    final weight = _estimateWeightLbs(m);
-    if (weight != null) {
-      final w = weight >= 100
-          ? weight.round().toString()
-          : weight.toStringAsFixed(weight >= 10 ? 0 : 1);
-      parts.add('~$w lb est.');
-    }
-
-    final n = _historyRecords.length;
-    if (n > 0) {
-      parts.add('$n purchase${n == 1 ? '' : 's'}');
-    }
-
-    final lots = _lotsFor(m);
-    if (lots.isNotEmpty) {
-      parts.add('${lots.length} lot${lots.length == 1 ? '' : 's'}');
-    }
-
-    return parts;
+    final unit = m.unit.trim().toLowerCase();
+    // Avoid "Last $4.00/in" plus a duplicate "$4.00/in" line.
+    final perInch =
+        unit == 'in' ? null : _costPerInch(m: m, unitCost: last);
+    return _MaterialPriceSummary(
+      last: last,
+      avg: avg,
+      perInch: perInch,
+      unitSuffix: _priceUnitSuffix(m.unit),
+    );
   }
 
   Widget _buildHistoryPane(ColorScheme scheme) {
@@ -664,8 +632,14 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     }
 
     final selected = _selected!;
-    final summaryParts = _materialSummaryParts(selected);
+    final prices = _priceSummary(selected);
     final notes = (selected.notes ?? '').trim();
+    final muted = Theme.of(context).textTheme.bodyMedium?.copyWith(
+          color: scheme.onSurfaceVariant,
+        );
+    final priceValueStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
+          fontWeight: FontWeight.w600,
+        );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -680,12 +654,19 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                 children: [
                   Expanded(
                     child: Text(
-                      '${materialFormLabel(selected.form)} · ${selected.sizeLabel}',
+                      _identityTitle(selected),
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
                             fontWeight: FontWeight.w600,
                           ),
                     ),
                   ),
+                  const SizedBox(width: 16),
+                  if (prices != null)
+                    _buildPriceColumn(
+                      prices,
+                      labelStyle: muted,
+                      valueStyle: priceValueStyle,
+                    ),
                   TextButton.icon(
                     onPressed: () => _editMaterial(selected),
                     icon: const Icon(Icons.edit_outlined, size: 18),
@@ -700,15 +681,6 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                   ),
                 ],
               ),
-              if (summaryParts.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text(
-                  summaryParts.join(' · '),
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                ),
-              ],
               if (mcmasterProductUrl(selected.notes) != null) ...[
                 const SizedBox(height: 4),
                 InkWell(
@@ -912,6 +884,42 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     );
   }
 
+  Widget _buildPriceColumn(
+    _MaterialPriceSummary prices, {
+    required TextStyle? labelStyle,
+    required TextStyle? valueStyle,
+  }) {
+    Widget row(String label, String value) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 48,
+              child: Text(label, style: labelStyle),
+            ),
+            Text(value, style: valueStyle),
+          ],
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          row('Last', '${_money.format(prices.last)}${prices.unitSuffix}'),
+          if (prices.avg != null)
+            row('Avg', '${_money.format(prices.avg!)}${prices.unitSuffix}'),
+          if (prices.perInch != null)
+            row('\$/in', _money.format(prices.perInch!)),
+        ],
+      ),
+    );
+  }
+
   Future<void> _openMillCert(dynamic record, String filename) async {
     final url = PocketBaseService().pb.files.getUrl(record, filename);
     final uri = Uri.parse(url.toString());
@@ -922,4 +930,18 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
       );
     }
   }
+}
+
+class _MaterialPriceSummary {
+  const _MaterialPriceSummary({
+    required this.last,
+    required this.avg,
+    required this.perInch,
+    required this.unitSuffix,
+  });
+
+  final double last;
+  final double? avg;
+  final double? perInch;
+  final String unitSuffix;
 }
