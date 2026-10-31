@@ -7,6 +7,7 @@ import 'workspace_scaffold.dart';
 import 'auth_service.dart';
 import 'drawer_behavior.dart';
 import 'material_lot_picker.dart';
+import 'packing_slip_screen.dart';
 import 'part_images_panel.dart';
 import 'pocketbase_service.dart';
 import 'quote_detail_screen.dart';
@@ -56,13 +57,18 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
   final _materialLotController = TextEditingController();
   final _materialSourceController = TextEditingController();
   final _projectNotesController = TextEditingController();
+  final _shipToOverrideController = TextEditingController();
 
   List<dynamic> _customers = [];
   List<dynamic> _quotes = [];
   List<dynamic> _suppliers = [];
+  List<dynamic> _shipTos = [];
+  List<Map<String, dynamic>> _jobLines = [];
   String? _customerId;
   String? _quoteId;
+  String? _shipToId;
   String? _materialSourceVendorId;
+  String? _packingSlipNumber;
   /// Linked purchase line for mill cert PDFs (`jobs.material_purchase_item`).
   String? _materialPurchaseItemId;
   MaterialLotPick? _materialLotPick;
@@ -133,6 +139,10 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
     _materialLotController.text = '${d['material_lot'] ?? ''}';
     _materialSourceController.text = '${d['material_source'] ?? ''}';
     _projectNotesController.text = '${d['project_notes'] ?? ''}';
+    _shipToId = _relationId(d['ship_to']);
+    _shipToOverrideController.text = '${d['ship_to_override'] ?? ''}';
+    _packingSlipNumber = '${d['packing_slip_number'] ?? ''}'.trim();
+    if (_packingSlipNumber!.isEmpty) _packingSlipNumber = null;
     _partImages = PartImagesPanel.normalizeFilenames(d['part_images']);
     _showTracking2 = _trackingNumber2Controller.text.trim().isNotEmpty;
     _hydrateMaterialLotFromRecord(d);
@@ -337,6 +347,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
       _materialLotController,
       _materialSourceController,
       _projectNotesController,
+      _shipToOverrideController,
     ]) {
       c.dispose();
     }
@@ -364,18 +375,91 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
         _record = null;
       }
 
-      final results = await Future.wait([
-        pb.getCustomers(),
-        pb.getQuotes(),
-        pb.getSuppliers(),
-      ]);
+      // Load related lists independently so one missing collection (e.g. local
+      // demo without suppliers) does not skip job lines / ship-tos.
+      List<dynamic> customers = [];
+      List<dynamic> quotes = [];
+      List<dynamic> suppliers = [];
+      try {
+        customers = await pb.getCustomers();
+      } catch (_) {}
+      try {
+        quotes = await pb.getQuotes();
+      } catch (_) {}
+      try {
+        suppliers = await pb.getSuppliers();
+      } catch (_) {}
+      List<dynamic> shipTos = [];
+      List<Map<String, dynamic>> jobLines = [];
+      final customerId = _customerId;
+      if (customerId != null && customerId.isNotEmpty) {
+        try {
+          shipTos = await pb.getCustomerShipTos(customerId);
+        } catch (_) {}
+      }
+      String? linesLoadError;
+      if (!_isNew && widget.job != null) {
+        try {
+          final rawLines = await pb.getJobLineItems(widget.job.id as String);
+          jobLines = [
+            for (final row in rawLines)
+              {
+                'id': row.id,
+                ...Map<String, dynamic>.from(row.data as Map<String, dynamic>? ?? {}),
+              },
+          ];
+        } catch (e) {
+          linesLoadError = e.toString();
+        }
+
+        // No saved job lines yet: seed from the linked quote so you only
+        // delete anything that was not ordered (instead of retyping).
+        if (jobLines.isEmpty &&
+            _quoteId != null &&
+            _quoteId!.isNotEmpty &&
+            linesLoadError == null) {
+          try {
+            final quoteLines = await pb.getQuoteLineItems(_quoteId!);
+            jobLines = [
+              for (var i = 0; i < quoteLines.length; i++)
+                () {
+                  final d = quoteLines[i].data as Map<String, dynamic>? ?? {};
+                  final part = '${d['part_number'] ?? ''}'.trim();
+                  return <String, dynamic>{
+                    'description': part.isEmpty ? 'Unnamed Part' : part,
+                    'quantity': d['part_quantity'] ?? 1,
+                    'sort_order': i,
+                    'quote_line_item': quoteLines[i].id,
+                  };
+                }(),
+            ];
+          } catch (_) {}
+        }
+
+        // Last resort: parse the text snapshot into editable rows.
+        if (jobLines.isEmpty && linesLoadError == null) {
+          jobLines = _jobLinesFromPartsDescription(
+            _partsDescriptionController.text,
+          );
+        }
+      }
       if (mounted) {
         setState(() {
-          _customers = results[0];
-          _quotes = results[1];
-          _suppliers = results[2];
+          _customers = customers;
+          _quotes = quotes;
+          _suppliers = suppliers;
+          _shipTos = shipTos;
+          _jobLines = jobLines;
           _loading = false;
         });
+        if (linesLoadError != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error loading job parts: $linesLoadError'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -385,6 +469,28 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
         );
       }
     }
+  }
+
+  /// Parse `parts_description` bullets into editable job-line maps.
+  List<Map<String, dynamic>> _jobLinesFromPartsDescription(String raw) {
+    final out = <Map<String, dynamic>>[];
+    var i = 0;
+    for (final line in raw.split('\n')) {
+      final t = line.trim();
+      if (t.isEmpty) continue;
+      final cleaned = t.replaceFirst(RegExp(r'^•\s*'), '');
+      final m = RegExp(r'^(.*)\s*\(qty\s*([^)]+)\)\s*$', caseSensitive: false)
+          .firstMatch(cleaned);
+      final desc = (m?.group(1) ?? cleaned).trim();
+      final qty = num.tryParse('${m?.group(2) ?? 1}'.trim()) ?? 1;
+      if (desc.isEmpty) continue;
+      out.add({
+        'description': desc,
+        'quantity': qty,
+        'sort_order': i++,
+      });
+    }
+    return out;
   }
 
   String _quoteLabel(dynamic quote) {
@@ -538,6 +644,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
       'material_purchase_item': _materialPurchaseItemId,
       'material_source': _optText(_materialSourceController),
       'project_notes': _optText(_projectNotesController),
+      'ship_to': _shipToId,
+      'ship_to_override': _optText(_shipToOverrideController),
     };
   }
 
@@ -572,10 +680,21 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
     try {
       final pb = PocketBaseService();
       final body = _buildBody();
+      // Prefer structured lines for the searchable snapshot when present.
+      if (_jobLines.isNotEmpty) {
+        body['parts_description'] =
+            PocketBaseService.partsDescriptionFromJobLines(_jobLines);
+      }
+      String jobId;
       if (_isNew) {
-        await pb.createJob(body);
+        final created = await pb.createJob(body);
+        jobId = created.id as String;
       } else {
-        await pb.updateJob(widget.job.id, body);
+        jobId = widget.job.id as String;
+        await pb.updateJob(jobId, body);
+      }
+      if (_jobLines.isNotEmpty || !_isNew) {
+        await pb.replaceJobLineItems(jobId: jobId, lines: _jobLines);
       }
       if (mounted) {
         Navigator.pop(context, true);
@@ -594,6 +713,64 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
         );
       }
     }
+  }
+
+  Future<void> _openPackingSlip() async {
+    if (_isNew || widget.job == null) return;
+    // Persist ship-to / lines first so the slip matches the form.
+    if (_isSaving) return;
+    setState(() => _isSaving = true);
+    try {
+      final pb = PocketBaseService();
+      final jobId = widget.job.id as String;
+      final body = _buildBody();
+      if (_jobLines.isNotEmpty) {
+        body['parts_description'] =
+            PocketBaseService.partsDescriptionFromJobLines(_jobLines);
+      }
+      await pb.updateJob(jobId, body);
+      // Only rewrite lines when the form has them; an empty list would wipe
+      // server rows if related-data load failed (e.g. missing suppliers).
+      if (_jobLines.isNotEmpty) {
+        await pb.replaceJobLineItems(jobId: jobId, lines: _jobLines);
+      }
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PackingSlipScreen(jobId: jobId),
+        ),
+      );
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open packing slip: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  Future<void> _reloadShipTosForCustomer(String? customerId) async {
+    if (customerId == null || customerId.isEmpty) {
+      setState(() {
+        _shipTos = [];
+        _shipToId = null;
+      });
+      return;
+    }
+    try {
+      final sites = await PocketBaseService().getCustomerShipTos(customerId);
+      if (!mounted) return;
+      setState(() {
+        _shipTos = sites;
+        if (_shipToId != null &&
+            !sites.any((s) => s.id == _shipToId)) {
+          _shipToId = null;
+        }
+      });
+    } catch (_) {}
   }
 
   Future<void> _openLinkedQuote() async {
@@ -976,6 +1153,14 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
     final narrow = MediaQuery.sizeOf(context).width < 640;
 
     final actions = [
+      if (!_isNew)
+        _headerActionButton(
+          context,
+          label: _packingSlipNumber == null
+              ? 'Packing slip'
+              : 'Packing slip ($_packingSlipNumber)',
+          onPressed: _isSaving ? null : _openPackingSlip,
+        ),
       if (!AuthService.instance.isJobsOnly &&
           _quoteId != null &&
           _quoteId!.isNotEmpty)
@@ -1078,6 +1263,52 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
                 children: _trackingStatusOptions
                     .map((o) => _jobTrackingPill(context, o.$1, o.$2))
                     .toList(),
+              ),
+            ),
+            _notionRow(
+              context,
+              'Ship To',
+              DropdownButtonFormField<String?>(
+                // ignore: deprecated_member_use
+                value: _shipTos.any((s) => s.id == _shipToId) ? _shipToId : null,
+                decoration: QuoteSidebarTheme.fieldDecoration(context).copyWith(
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                ),
+                items: [
+                  const DropdownMenuItem<String?>(
+                    value: null,
+                    child: Text('— Customer address / override —'),
+                  ),
+                  for (final site in _shipTos)
+                    DropdownMenuItem<String?>(
+                      value: site.id as String,
+                      child: Text(
+                        () {
+                          final d = site.data as Map<String, dynamic>? ?? {};
+                          final label = '${d['label'] ?? ''}'.trim();
+                          final def = d['is_default'] == true ? ' (default)' : '';
+                          return label.isEmpty ? site.id.toString() : '$label$def';
+                        }(),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                onChanged: (v) => setState(() => _shipToId = v),
+              ),
+            ),
+            _notionRow(
+              context,
+              'Ship override',
+              TextField(
+                controller: _shipToOverrideController,
+                maxLines: 3,
+                style: const TextStyle(fontSize: 14),
+                decoration: QuoteSidebarTheme.fieldDecoration(context).copyWith(
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  hintText: 'One-off address (optional)',
+                ),
               ),
             ),
             _notionRow(
@@ -1233,7 +1464,6 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
   }
 
   Widget _dharmaRightColumn(BuildContext context) {
-    final parts = _partsDescriptionController.text.trim();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1283,34 +1513,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
                   style: const TextStyle(fontSize: 14),
                   decoration: QuoteSidebarTheme.fieldDecoration(context),
                 ),
-                if (parts.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                    'Parts in this job',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      color: Theme.of(context).brightness == Brightness.dark
-                          ? const Color(0xFF9CA3AF)
-                          : const Color(0xFF6B7280),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).brightness == Brightness.dark
-                          ? const Color(0xFF374151)
-                          : const Color(0xFFF9FAFB),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: SelectableText(
-                      parts,
-                      style: const TextStyle(fontSize: 14, height: 1.35),
-                    ),
-                  ),
-                ],
+                const SizedBox(height: 16),
+                _jobPartsEditor(context, compact: true),
               ],
             ),
           ),
@@ -1348,6 +1552,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _headerCard(context),
+        const SizedBox(height: 16),
+        _jobLinesCard(context),
         const SizedBox(height: 16),
         _datesCard(context),
         const SizedBox(height: 16),
@@ -1480,6 +1686,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
                               } catch (_) {}
                             }
                           });
+                          _reloadShipTosForCustomer(id);
                         },
                       ),
                     ],
@@ -1613,6 +1820,48 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
               }).toList(),
             ),
             const SizedBox(height: 12),
+            Text(
+              'Ship to',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: _labelColor(context),
+              ),
+            ),
+            const SizedBox(height: 4),
+            DropdownButtonFormField<String?>(
+              // ignore: deprecated_member_use
+              value: _shipTos.any((s) => s.id == _shipToId) ? _shipToId : null,
+              decoration: _dropdownDecoration(context),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('— Use customer address / override —'),
+                ),
+                for (final site in _shipTos)
+                  DropdownMenuItem<String?>(
+                    value: site.id as String,
+                    child: Text(
+                      () {
+                        final d = site.data as Map<String, dynamic>? ?? {};
+                        final label = '${d['label'] ?? ''}'.trim();
+                        final def = d['is_default'] == true ? ' (default)' : '';
+                        return label.isEmpty ? site.id.toString() : '$label$def';
+                      }(),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+              onChanged: (v) => setState(() => _shipToId = v),
+            ),
+            const SizedBox(height: 12),
+            _labeledField(
+              context,
+              label: 'Ship-to override (one-off; leaves saved sites unchanged)',
+              controller: _shipToOverrideController,
+              maxLines: 3,
+            ),
+            const SizedBox(height: 12),
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1658,6 +1907,117 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Editable job parts list (seeded from quote / snapshot). [compact] for
+  /// the existing-job notes column.
+  Widget _jobPartsEditor(BuildContext context, {bool compact = false}) {
+    final titleStyle = compact
+        ? TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+            color: Theme.of(context).brightness == Brightness.dark
+                ? const Color(0xFF9CA3AF)
+                : const Color(0xFF6B7280),
+          )
+        : Theme.of(context).textTheme.titleMedium;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(child: Text('Parts in this job', style: titleStyle)),
+            TextButton.icon(
+              onPressed: () {
+                setState(() {
+                  _jobLines.add({
+                    'description': '',
+                    'quantity': 1,
+                    'sort_order': _jobLines.length,
+                  });
+                });
+              },
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Add'),
+            ),
+          ],
+        ),
+        Text(
+          _quoteId != null && _quoteId!.isNotEmpty
+              ? 'Copied from the quote — delete any lines that were not ordered.'
+              : 'Parts for scheduling and packing slips.',
+          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+        ),
+        const SizedBox(height: 8),
+        if (_jobLines.isEmpty)
+          Text(
+            'No parts yet. Add one, or link a quote.',
+            style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+          )
+        else
+          ...List.generate(_jobLines.length, (i) {
+            final line = _jobLines[i];
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Text('${i + 1}.'),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: compact ? 56 : 72,
+                    child: TextFormField(
+                      key: ValueKey('job_line_qty_${line['id'] ?? 'new'}_$i'),
+                      initialValue: '${line['quantity'] ?? 1}',
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Qty',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      onChanged: (v) {
+                        final n = num.tryParse(v.trim()) ?? 1;
+                        _jobLines[i]['quantity'] = n;
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextFormField(
+                      key: ValueKey('job_line_desc_${line['id'] ?? 'new'}_$i'),
+                      initialValue: '${line['description'] ?? ''}',
+                      decoration: const InputDecoration(
+                        labelText: 'Description',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      onChanged: (v) => _jobLines[i]['description'] = v,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Remove (not ordered)',
+                    onPressed: () => setState(() => _jobLines.removeAt(i)),
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                ],
+              ),
+            );
+          }),
+      ],
+    );
+  }
+
+  Widget _jobLinesCard(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: _jobPartsEditor(context),
       ),
     );
   }

@@ -43,11 +43,14 @@ dependencies:
   http_parser: ^4.1.2
   package_info_plus: ^10.1.0
   url_launcher: ^6.2.5
-  qr: ^4.0.0
+  # pdf/barcode require qr ^3; keep aligned for packing-slip PDFs.
+  qr: ^3.0.2
   image: ^4.1.7
   flutter_markdown: ^0.7.7+1
   markdown: ^7.3.0
   google_fonts: ^8.2.1
+  pdf: ^3.11.3
+  printing: ^5.14.2
 
 dev_dependencies:
   flutter_test:
@@ -73,11 +76,17 @@ flutter:
 
   assets:
     - assets/certs/cribhub.pem
+    - assets/ss_cadcam_logo.png
 
   fonts:
     - family: Polaris
       fonts:
         - asset: fonts/Polaris.otf
+    - family: NotoSans
+      fonts:
+        - asset: fonts/NotoSans-Regular.ttf
+        - asset: fonts/NotoSans-Bold.ttf
+          weight: 700
 
   # To add assets to your application, add an assets section, like this:
   #   - images/a_dot_burr.jpeg
