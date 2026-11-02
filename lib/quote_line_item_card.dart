@@ -1,5 +1,20 @@
 import 'package:flutter/material.dart';
+
+import 'material_form_icons.dart';
+import 'models.dart';
 import 'quote_calculations.dart';
+
+/// Resolved material source for a quote line (falls back from vendor_supplied).
+String quoteMaterialSourceOf(Map<String, dynamic> item) {
+  final src = '${item['material_source'] ?? ''}'.trim();
+  if (src == 'buy' || src == 'shop_stock' || src == 'customer_supplied') {
+    return src;
+  }
+  if ('${item['vendor_supplied'] ?? ''}'.toLowerCase() == 'yes') {
+    return 'customer_supplied';
+  }
+  return 'buy';
+}
 
 class _QuoteSection extends StatefulWidget {
   final String title;
@@ -60,6 +75,7 @@ class QuoteLineItemCard extends StatefulWidget {
   final Map<String, dynamic> quoteSettings;
   final Map<String, dynamic>? calculated;
   final List<dynamic> suppliers;
+  final List<ShopMaterial> materials;
   final List<String> alloySuggestions;
   final int lineIndex;
   final Widget? dragHandle;
@@ -74,6 +90,7 @@ class QuoteLineItemCard extends StatefulWidget {
     required this.quoteSettings,
     required this.calculated,
     required this.suppliers,
+    this.materials = const [],
     required this.alloySuggestions,
     required this.lineIndex,
     required this.onChanged,
@@ -276,6 +293,112 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
 
   void _patch(Map<String, dynamic> updates) {
     widget.onChanged({...widget.lineItem, ...updates});
+  }
+
+  ShopMaterial? _linkedMaterial(Map<String, dynamic> item) {
+    final id = '${item['material'] ?? ''}'.trim();
+    if (id.isEmpty || id == 'null') return null;
+    for (final m in widget.materials) {
+      if (m.id == id) return m;
+    }
+    return null;
+  }
+
+  void _setMaterialSource(String source) {
+    _patch({
+      'material_source': source,
+      'vendor_supplied': source == 'customer_supplied' ? 'yes' : 'no',
+      if (source != 'buy') 'material_vendor': null,
+    });
+  }
+
+  void _onAlloyTyped(String value) {
+    final linked = _linkedMaterial(widget.lineItem);
+    // Free-type one-off alloy: clear catalog link if text no longer matches grade.
+    if (linked != null &&
+        value.trim().toLowerCase() != linked.grade.trim().toLowerCase()) {
+      _patch({'alloy': value, 'material': null});
+      return;
+    }
+    _patch({'alloy': value});
+  }
+
+  void _onAlloyPicked(ShopMaterial m) {
+    _alloy.text = m.grade;
+    final stockEmpty = _str(widget.lineItem['stock_size_per_part']).isEmpty;
+    _patch({
+      'alloy': m.grade,
+      'material': m.id,
+      if (stockEmpty) 'stock_size_per_part': m.sizeLabel,
+    });
+    if (stockEmpty) {
+      _stockSize.text = m.sizeLabel;
+    }
+  }
+
+  Widget _alloyCatalogField(Map<String, dynamic> item) {
+    return Autocomplete<ShopMaterial>(
+      displayStringForOption: (m) => m.displayLabel,
+      optionsBuilder: (textEditingValue) {
+        final q = textEditingValue.text.trim().toLowerCase();
+        if (q.isEmpty) {
+          return widget.materials.take(40);
+        }
+        return widget.materials.where((m) {
+          return m.grade.toLowerCase().contains(q) ||
+              m.sizeLabel.toLowerCase().contains(q) ||
+              m.displayLabel.toLowerCase().contains(q) ||
+              materialFormLabel(m.form).toLowerCase().contains(q);
+        }).take(40);
+      },
+      onSelected: _onAlloyPicked,
+      fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
+        // Keep parent controller as source of truth when not focused.
+        if (!focusNode.hasFocus && controller.text != _alloy.text) {
+          controller.text = _alloy.text;
+          controller.selection =
+              TextSelection.collapsed(offset: controller.text.length);
+        }
+        return TextField(
+          controller: controller,
+          focusNode: focusNode,
+          decoration: _dec('Alloy / material (type or pick catalog)'),
+          onChanged: (v) {
+            _alloy.text = v;
+            _onAlloyTyped(v);
+          },
+          onSubmitted: (_) => onFieldSubmitted(),
+        );
+      },
+      optionsViewBuilder: (context, onSelected, options) {
+        final opts = options.toList();
+        return Align(
+          alignment: Alignment.topLeft,
+          child: Material(
+            elevation: 4,
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 240, maxWidth: 480),
+              child: ListView.builder(
+                padding: EdgeInsets.zero,
+                shrinkWrap: true,
+                itemCount: opts.length,
+                itemBuilder: (context, index) {
+                  final m = opts[index];
+                  return ListTile(
+                    dense: true,
+                    title: Text(m.grade),
+                    subtitle: Text(
+                      '${materialFormLabel(m.form)} · ${m.sizeLabel}',
+                    ),
+                    onTap: () => onSelected(m),
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 
   String _str(dynamic v) => v == null ? '' : v.toString();
@@ -563,11 +686,22 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                       ],
                     ),
                     const SizedBox(height: 8),
-                    TextField(
-                      controller: _alloy,
-                      decoration: _dec('Alloy'),
-                      onChanged: (v) => _patch({'alloy': v}),
-                    ),
+                    _alloyCatalogField(item),
+                    if (_linkedMaterial(item) != null) ...[
+                      const SizedBox(height: 6),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: InputChip(
+                          avatar: const Icon(Icons.link, size: 16),
+                          label: Text(
+                            '${materialFormLabel(_linkedMaterial(item)!.form)} · ${_linkedMaterial(item)!.sizeLabel}',
+                          ),
+                          onDeleted: () => _patch({
+                            'material': null,
+                          }),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 8),
                     Row(
                       children: [
@@ -600,45 +734,43 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                       onChanged: (v) => _patch({'ordered_length': v}),
                     ),
                     const SizedBox(height: 8),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
+                    Text('Material source',
+                        style: TextStyle(
+                            fontSize: 12, color: Colors.grey[700])),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
                       children: [
-                        Expanded(
-                          child: supplierDropdown(
-                              'material_vendor', 'Material supplier'),
-                        ),
-                        const SizedBox(width: 12),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('Vendor supplied',
-                                style: TextStyle(fontSize: 12)),
-                            const SizedBox(height: 4),
-                            Row(
-                              children: [
-                                ChoiceChip(
-                                  label: const Text('Yes'),
-                                  selected: _str(item['vendor_supplied'])
-                                          .toLowerCase() ==
-                                      'yes',
-                                  onSelected: (_) =>
-                                      _patch({'vendor_supplied': 'yes'}),
-                                ),
-                                const SizedBox(width: 4),
-                                ChoiceChip(
-                                  label: const Text('No'),
-                                  selected: _str(item['vendor_supplied'])
-                                          .toLowerCase() ==
-                                      'no',
-                                  onSelected: (_) =>
-                                      _patch({'vendor_supplied': 'no'}),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
+                        for (final opt in const [
+                          ('buy', 'Buy'),
+                          ('shop_stock', 'Shop stock'),
+                          ('customer_supplied', 'Customer supplied'),
+                        ])
+                          ChoiceChip(
+                            label: Text(opt.$2),
+                            selected: quoteMaterialSourceOf(item) == opt.$1,
+                            onSelected: (_) => _setMaterialSource(opt.$1),
+                          ),
                       ],
                     ),
+                    if (quoteMaterialSourceOf(item) == 'buy') ...[
+                      const SizedBox(height: 8),
+                      supplierDropdown(
+                          'material_vendor', 'Material supplier'),
+                    ],
+                    if (quoteMaterialSourceOf(item) == 'shop_stock') ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        _linkedMaterial(item) == null
+                            ? 'Pick a catalog material above to match rack stock later.'
+                            : 'Will use shop stock of this catalog material.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 8),
                     TextField(
                       controller: _materialNote,

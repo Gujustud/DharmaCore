@@ -7,6 +7,7 @@ import 'job_detail_screen.dart';
 import 'jobs_only_guard.dart';
 import 'erp_quote_defaults.dart';
 import 'exchange_rate.dart';
+import 'models.dart';
 import 'pocketbase_service.dart';
 import 'quote_calculations.dart';
 import 'part_images_panel.dart';
@@ -38,6 +39,7 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
   List<Map<String, dynamic>> _lineItems = [];
   List<dynamic> _customers = [];
   List<dynamic> _suppliers = [];
+  List<ShopMaterial> _materials = [];
   bool _loading = true;
   bool _saving = false;
   bool _settingsOpen = true;
@@ -70,6 +72,9 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
 
   Map<String, dynamic> _lineFromRecord(dynamic record) {
     final m = _recordToMap(record);
+    if (m['material'] is Map) {
+      m['material'] = m['material']['id'];
+    }
     if (m['material_vendor'] is Map) {
       m['material_vendor'] = m['material_vendor']['id'];
     }
@@ -79,6 +84,16 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
     if (m['subcontractor_2'] is Map) {
       m['subcontractor_2'] = m['subcontractor_2']['id'];
     }
+    // Prefer expand.material id when relation stored as string already.
+    try {
+      final expanded = record.expand?['material'];
+      final matRec = (expanded is List && expanded.isNotEmpty)
+          ? expanded.first
+          : expanded;
+      if (matRec != null && matRec.id != null) {
+        m['material'] = matRec.id.toString();
+      }
+    } catch (_) {}
     return m;
   }
 
@@ -95,6 +110,13 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
       final pb = PocketBaseService();
       final customers = await pb.getCustomers();
       final suppliers = await pb.getSuppliers();
+      List<ShopMaterial> materials = [];
+      try {
+        final matRecords = await pb.getMaterials();
+        materials = matRecords.map(ShopMaterial.fromRecord).toList();
+      } catch (_) {
+        materials = [];
+      }
 
       Map<String, dynamic> quote;
       List<Map<String, dynamic>> lines;
@@ -115,6 +137,8 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
             'line_number': 1,
             'local_key': 'tmp_new_1',
             'part_quantity': 1,
+            'material_source': 'buy',
+            'vendor_supplied': 'no',
           },
         ];
       }
@@ -125,6 +149,8 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
             'line_number': 1,
             'local_key': 'tmp_empty_1',
             'part_quantity': 1,
+            'material_source': 'buy',
+            'vendor_supplied': 'no',
           },
         ];
       } else {
@@ -142,6 +168,7 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
         setState(() {
           _customers = customers;
           _suppliers = suppliers;
+          _materials = materials;
           _quote = quote;
           _lineItems = lines;
           _loading = false;
@@ -156,6 +183,8 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
               'line_number': 1,
               'local_key': _newLocalLineKey(),
               'part_quantity': 1,
+              'material_source': 'buy',
+              'vendor_supplied': 'no',
             },
           ];
           _loading = false;
@@ -255,7 +284,8 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
     final fromLines = _lineItems
         .map((i) => '${i['alloy'] ?? ''}'.trim())
         .where((s) => s.isNotEmpty);
-    return {...fromLines}.toList()..sort();
+    final fromCatalog = _materials.map((m) => m.grade.trim()).where((s) => s.isNotEmpty);
+    return {...fromLines, ...fromCatalog}.toList()..sort();
   }
 
   String? _relationId(dynamic v) {
@@ -483,9 +513,24 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
       'ordered_length': item['ordered_length'],
       'pieces': item['pieces'],
       'material_note': item['material_note'],
-      if (_relationId(item['material_vendor']) != null)
-        'material_vendor': _relationId(item['material_vendor']),
-      'vendor_supplied': item['vendor_supplied'],
+      // Empty string clears optional relations on update.
+      'material': _relationId(item['material']) ?? '',
+      'material_vendor': _relationId(item['material_vendor']) ?? '',
+      'material_source': () {
+        final src = '${item['material_source'] ?? ''}'.trim();
+        if (src.isNotEmpty) return src;
+        return '${item['vendor_supplied'] ?? ''}'.toLowerCase() == 'yes'
+            ? 'customer_supplied'
+            : 'buy';
+      }(),
+      'vendor_supplied': () {
+        final src = '${item['material_source'] ?? ''}'.trim();
+        if (src == 'customer_supplied' ||
+            '${item['vendor_supplied'] ?? ''}'.toLowerCase() == 'yes') {
+          return 'yes';
+        }
+        return 'no';
+      }(),
       'usd_cost': quoteRound2(_num(item['usd_cost'])) ?? 0,
       'usd_shipping_cost': quoteRound2(_num(item['usd_shipping_cost'])) ?? 0,
       'material_shipping_cost': quoteRound2(materialShipping) ?? 0,
@@ -994,6 +1039,7 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
               quoteSettings: getQuoteSettings(_quote),
               calculated: calcLines[index],
               suppliers: _suppliers,
+              materials: _materials,
               alloySuggestions: _alloySuggestions,
               lineIndex: index,
               dragHandle: ReorderableDragStartListener(
@@ -1037,6 +1083,8 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
                     'line_number': _nextLineNumber(),
                     'local_key': _newLocalLineKey(),
                     'part_quantity': 1,
+                    'material_source': 'buy',
+                    'vendor_supplied': 'no',
                   });
                   _renumberLineItems();
                 });
