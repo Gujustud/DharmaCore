@@ -1048,11 +1048,20 @@ class PocketBaseService {
 
   Future<List<dynamic>> getQuoteLineItems(String quoteId) async {
     try {
-      return await pb.collection('quote_line_items').getFullList(
-        filter: 'quote = "$quoteId"',
-        sort: 'line_number',
-        expand: 'material_vendor,subcontractor_1,subcontractor_2',
-      );
+      try {
+        return await pb.collection('quote_line_items').getFullList(
+          filter: 'quote = "$quoteId"',
+          sort: 'line_number',
+          expand: 'material,material_vendor,subcontractor_1,subcontractor_2',
+        );
+      } catch (_) {
+        // material relation may be missing until migration 1776900000 is applied.
+        return await pb.collection('quote_line_items').getFullList(
+          filter: 'quote = "$quoteId"',
+          sort: 'line_number',
+          expand: 'material_vendor,subcontractor_1,subcontractor_2',
+        );
+      }
     } catch (e) {
       print('Error getting quote line items: $e');
       rethrow;

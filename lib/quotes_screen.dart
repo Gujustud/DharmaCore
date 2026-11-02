@@ -300,8 +300,17 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
           'ordered_length': d['ordered_length'],
           'pieces': d['pieces'],
           'material_note': d['material_note'],
+          if (_relationId(d['material']) != null)
+            'material': _relationId(d['material']),
           if (_relationId(d['material_vendor']) != null)
             'material_vendor': _relationId(d['material_vendor']),
+          'material_source': () {
+            final src = '${d['material_source'] ?? ''}'.trim();
+            if (src.isNotEmpty) return src;
+            return '${d['vendor_supplied'] ?? ''}'.toLowerCase() == 'yes'
+                ? 'customer_supplied'
+                : 'buy';
+          }(),
           'vendor_supplied': d['vendor_supplied'],
           'usd_cost': d['usd_cost'] ?? 0,
           'usd_shipping_cost': d['usd_shipping_cost'] ?? 0,
