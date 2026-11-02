@@ -686,22 +686,27 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                       ],
                     ),
                     const SizedBox(height: 8),
-                    _alloyCatalogField(item),
-                    if (_linkedMaterial(item) != null) ...[
-                      const SizedBox(height: 6),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: InputChip(
-                          avatar: const Icon(Icons.link, size: 16),
-                          label: Text(
-                            '${materialFormLabel(_linkedMaterial(item)!.form)} · ${_linkedMaterial(item)!.sizeLabel}',
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: _alloyCatalogField(item)),
+                        if (_linkedMaterial(item) != null) ...[
+                          const SizedBox(width: 8),
+                          Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: InputChip(
+                              avatar: const Icon(Icons.link, size: 16),
+                              label: Text(
+                                '${materialFormLabel(_linkedMaterial(item)!.form)} · ${_linkedMaterial(item)!.sizeLabel}',
+                              ),
+                              onDeleted: () => _patch({
+                                'material': null,
+                              }),
+                            ),
                           ),
-                          onDeleted: () => _patch({
-                            'material': null,
-                          }),
-                        ),
-                      ),
-                    ],
+                        ],
+                      ],
+                    ),
                     const SizedBox(height: 8),
                     Row(
                       children: [
@@ -711,6 +716,15 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                             decoration: _dec('Stock size per part'),
                             onChanged: (v) =>
                                 _patch({'stock_size_per_part': v}),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            controller: _orderedLength,
+                            decoration: _dec('Ordered length'),
+                            onChanged: (v) =>
+                                _patch({'ordered_length': v}),
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -726,12 +740,6 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                           ),
                         ),
                       ],
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _orderedLength,
-                      decoration: _dec('Ordered length'),
-                      onChanged: (v) => _patch({'ordered_length': v}),
                     ),
                     const SizedBox(height: 8),
                     Text('Material source',

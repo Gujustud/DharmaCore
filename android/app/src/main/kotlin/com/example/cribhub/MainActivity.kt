@@ -124,24 +124,36 @@ class MainActivity : FlutterActivity() {
                 return
             }
 
-            val pairedDevice = adapter.bondedDevices?.firstOrNull { device ->
+            // Prefer P910BT when paired; fall back to any Brother/PT device (e.g. P710BT).
+            val bonded = adapter.bondedDevices.orEmpty()
+            val pairedDevice = bonded.firstOrNull { device ->
+                (device.name ?: "").contains("P910", ignoreCase = true)
+            } ?: bonded.firstOrNull { device ->
                 val name = device.name ?: ""
                 name.contains("PT-", ignoreCase = true) || name.contains("Brother", ignoreCase = true)
             }
             if (pairedDevice == null) {
                 runOnUiThread { Toast.makeText(this, "No Brother/PT printer paired", Toast.LENGTH_LONG).show() }
-                result.error("NO_PRINTER", "Pair the PT-P710BT in Bluetooth settings first", null)
+                result.error("NO_PRINTER", "Pair the PT-P910BT (or PT-P710BT) in Bluetooth settings first", null)
                 return
             }
 
+            val deviceName = pairedDevice.name ?: ""
+            val model = when {
+                deviceName.contains("P910", ignoreCase = true) -> PrinterInfo.Model.PT_P910BT
+                deviceName.contains("P715", ignoreCase = true) -> PrinterInfo.Model.PT_P715eBT
+                deviceName.contains("P710", ignoreCase = true) -> PrinterInfo.Model.PT_P710BT
+                else -> PrinterInfo.Model.PT_P910BT
+            }
+
             val printerInfo = PrinterInfo().apply {
-                printerModel = PrinterInfo.Model.PT_P710BT
+                printerModel = model
                 port = PrinterInfo.Port.BLUETOOTH
                 macAddress = pairedDevice.address
                 workPath = cacheDir.absolutePath
                 printMode = PrinterInfo.PrintMode.FIT_TO_PAPER
                 isAutoCut = true
-                // Match 18mm TZe tape (PT-P710BT) to avoid ERROR_WRONG_LABEL
+                // 18mm TZe for all shop labels (tools + material).
                 labelNameIndex = LabelInfo.PT.W18.ordinal
                 printQuality = PrinterInfo.PrintQuality.HIGH_RESOLUTION
             }

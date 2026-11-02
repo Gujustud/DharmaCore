@@ -1,11 +1,19 @@
 import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import 'package:qr/qr.dart';
+
 import 'models.dart';
 
-/// Label printing for Brother PT-P710BT (18mm TZe tape).
-/// Label shows: line 1 = tool name, line 2 = BIN: &lt;bin number&gt; only (e.g. A-A-1-4), QR encodes bin number.
+/// Label printing for Brother PT-P910BT (18mm TZe; P710BT still supported on Android).
+/// Tool labels: line 1 = tool name, line 2 = BIN, QR = tool + BIN.
+/// Material labels: code / identity / length, QR = piece id.
+/// Android: Bluetooth via Brother SDK. Web/desktop Chrome: system print dialog.
 class LabelPrintService {
   static const _channel = MethodChannel('com.cribhub/label_printer');
 
@@ -40,11 +48,14 @@ class LabelPrintService {
     return pathToBinCode(getPathNames(location, allLocations));
   }
 
-  /// Pixels for 18mm tape width at 180 dpi (PT-P710BT). This is the max label height across the tape.
+  /// Pixels for 18mm tape width at 180 dpi. Max label height across the tape.
   static const int labelHeightPx = 127;
 
   /// Max label length along the tape at 180 dpi (3.1 inches) so labels fit in bins.
   static const int maxLabelWidthPx = 558; // 3.1" × 180 dpi
+
+  static const double _tapeHeightMm = 18;
+  static const double _dpi = 180;
 
   /// Generate label as PNG bytes: line 1 = [toolName], line 2 = BIN: [binCode], QR = tool name + BIN.
   /// Canvas height = full 18mm (labelHeightPx); QR uses that height; width = length along tape.
@@ -169,13 +180,54 @@ class LabelPrintService {
     return Uint8List.fromList(img.encodePng(image));
   }
 
-  /// Send label image to the native side (Android: Brother SDK / stub).
+  /// Send a label PNG to the printer (Android Bluetooth) or system print (web).
+  static Future<void> sendLabelPng(
+    Uint8List pngBytes, {
+    String jobName = 'label',
+  }) async {
+    if (kIsWeb) {
+      await Printing.layoutPdf(
+        name: jobName,
+        onLayout: (_) => _pngAsLabelPdf(pngBytes),
+      );
+      return;
+    }
+    await _channel.invokeMethod<void>('printLabel', {
+      'imageBytes': pngBytes.toList(),
+    });
+  }
+
+  /// Wrap PNG in a PDF page sized to 18mm tape height for the browser print dialog.
+  static Future<Uint8List> _pngAsLabelPdf(Uint8List pngBytes) async {
+    final decoded = img.decodePng(pngBytes);
+    final pxW = (decoded?.width ?? maxLabelWidthPx).toDouble();
+    final widthMm = pxW / _dpi * 25.4;
+    final heightMm = _tapeHeightMm;
+    // Guard tiny/huge pages.
+    final pageW = widthMm.clamp(20.0, 120.0) * PdfPageFormat.mm;
+    final pageH = heightMm * PdfPageFormat.mm;
+
+    final doc = pw.Document();
+    final image = pw.MemoryImage(pngBytes);
+    doc.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat(pageW, pageH),
+        margin: pw.EdgeInsets.zero,
+        build: (_) => pw.Center(
+          child: pw.Image(image, fit: pw.BoxFit.contain),
+        ),
+      ),
+    );
+    return doc.save();
+  }
+
+  /// Send tool bin label (Android or web system print).
   static Future<void> printLabel({
     required String toolName,
     required String binCode,
   }) async {
     final pngBytes = generateLabelImage(toolName: toolName, binCode: binCode);
-    await _channel.invokeMethod<void>('printLabel', {'imageBytes': pngBytes.toList()});
+    await sendLabelPng(pngBytes, jobName: 'tool-$binCode');
   }
 
   /// QR payload for a material piece — stable id, not human length text.
@@ -278,9 +330,7 @@ class LabelPrintService {
       lengthLine: lengthLine,
       pieceId: pieceId,
     );
-    await _channel.invokeMethod<void>('printLabel', {
-      'imageBytes': pngBytes.toList(),
-    });
+    await sendLabelPng(pngBytes, jobName: 'material-$labelCode');
   }
 
   /// DEBUG: Export a sample label PNG to disk so it can be inspected without printing.
