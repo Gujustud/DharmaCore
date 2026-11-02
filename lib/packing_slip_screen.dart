@@ -3,8 +3,11 @@ import 'package:intl/intl.dart';
 import 'package:printing/printing.dart';
 
 import 'auth_service.dart';
+import 'drawer_behavior.dart';
 import 'packing_slip_pdf.dart';
 import 'pocketbase_service.dart';
+import 'workspace_layout.dart';
+import 'workspace_scaffold.dart';
 
 /// Preview / print / export packing slip for a job.
 class PackingSlipScreen extends StatefulWidget {
@@ -19,7 +22,13 @@ class PackingSlipScreen extends StatefulWidget {
   State<PackingSlipScreen> createState() => _PackingSlipScreenState();
 }
 
-class _PackingSlipScreenState extends State<PackingSlipScreen> {
+class _PackingSlipScreenState extends State<PackingSlipScreen>
+    with AutoOpenDrawerMixin {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+
+  @override
+  GlobalKey<ScaffoldState> get scaffoldKey => _scaffoldKey;
+
   bool _loading = true;
   String? _error;
   String _psNumber = '';
@@ -281,9 +290,11 @@ class _PackingSlipScreenState extends State<PackingSlipScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return WorkspaceScaffold(
+      scaffoldKey: _scaffoldKey,
       appBar: AppBar(
         title: Text(_psNumber.isEmpty ? 'Packing slip' : 'Packing slip $_psNumber'),
+        leading: workspaceMenuLeading(context),
         actions: [
           TextButton.icon(
             onPressed: _loading || _error != null ? null : _print,
