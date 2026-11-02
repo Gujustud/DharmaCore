@@ -9,6 +9,7 @@ import 'workspace_layout.dart';
 import 'workspace_scaffold.dart';
 import 'job_detail_screen.dart';
 import 'jobs_kanban_board.dart';
+import 'packing_slip_screen.dart';
 import 'pocketbase_service.dart';
 import 'quote_detail_screen.dart';
 import 'list_toolbar_widgets.dart';
@@ -313,6 +314,18 @@ class _JobsScreenState extends State<JobsScreen> with AutoOpenDrawerMixin {
       MaterialPageRoute(builder: (context) => JobDetailScreen(job: job)),
     );
     if (changed == true) _loadData();
+  }
+
+  Future<void> _openPackingSlip(dynamic job) async {
+    final id = job.id?.toString() ?? '';
+    if (id.isEmpty) return;
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => PackingSlipScreen(jobId: id),
+      ),
+    );
+    if (mounted) _loadData();
   }
 
   Future<void> _openLinkedQuote(dynamic job) async {
@@ -622,6 +635,11 @@ class _JobsScreenState extends State<JobsScreen> with AutoOpenDrawerMixin {
                       QuoteTableActionButton(
                         label: 'View',
                         onPressed: () => _openJob(job),
+                      ),
+                      const SizedBox(width: 6),
+                      QuoteTableActionButton(
+                        label: 'Packing slip',
+                        onPressed: () => _openPackingSlip(job),
                       ),
                       if (hasQuote) ...[
                         const SizedBox(width: 6),
