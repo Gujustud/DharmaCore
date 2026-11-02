@@ -558,6 +558,60 @@ class ShopMaterial {
   }
 }
 
+/// One physical stick/plate remnant on the shelf (QR sticker target).
+class MaterialPiece {
+  final String id;
+  final String materialId;
+  final String labelCode;
+  final double lengthIn;
+  final double? originalLengthIn;
+  final String status; // on_shelf | depleted | scrap
+  final String source; // purchase | legacy | unknown
+  final String? locationNote;
+  final String? heatLot;
+  final String? purchaseItemId;
+  final String? notes;
+
+  MaterialPiece({
+    required this.id,
+    required this.materialId,
+    required this.labelCode,
+    required this.lengthIn,
+    this.originalLengthIn,
+    this.status = 'on_shelf',
+    this.source = 'unknown',
+    this.locationNote,
+    this.heatLot,
+    this.purchaseItemId,
+    this.notes,
+  });
+
+  bool get isOnShelf => status == 'on_shelf';
+
+  String get lengthLabel {
+    final v = lengthIn;
+    if (v == v.roundToDouble()) return '${v.round()} in';
+    return '${v.toStringAsFixed(1)} in';
+  }
+
+  factory MaterialPiece.fromRecord(dynamic record) {
+    final data = record.data as Map<String, dynamic>? ?? {};
+    return MaterialPiece(
+      id: record.id,
+      materialId: _relationIdFromData(data['material']) ?? '',
+      labelCode: (data['label_code'] ?? '').toString(),
+      lengthIn: (data['length_in'] as num?)?.toDouble() ?? 0,
+      originalLengthIn: (data['original_length_in'] as num?)?.toDouble(),
+      status: (data['status'] ?? 'on_shelf').toString(),
+      source: (data['source'] ?? 'unknown').toString(),
+      locationNote: data['location_note']?.toString(),
+      heatLot: data['heat_lot']?.toString(),
+      purchaseItemId: _relationIdFromData(data['purchase_item']),
+      notes: data['notes']?.toString(),
+    );
+  }
+}
+
 class PurchaseItem {
   final String id;
   final String purchaseId;

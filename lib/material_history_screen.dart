@@ -6,6 +6,7 @@ import 'add_purchase_screen.dart';
 import 'drawer_behavior.dart';
 import 'list_toolbar_widgets.dart';
 import 'material_form_icons.dart';
+import 'material_stock_dialogs.dart';
 import 'models.dart';
 import 'pocketbase_service.dart';
 import 'shop_material_editor.dart';
@@ -33,6 +34,8 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
   Map<String, List<String>> _lotsByMaterialId = {};
   ShopMaterial? _selected;
   List<dynamic> _historyRecords = [];
+  List<MaterialPiece> _pieces = [];
+  bool _piecesUnavailable = false;
   /// When search matched a lot, highlight that heat/lot in the history panel.
   String? _highlightHeatLot;
   bool _loading = true;
@@ -142,12 +145,28 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
       _highlightHeatLot = matchedLot;
       _loadingHistory = true;
       _historyRecords = [];
+      _pieces = [];
+      _piecesUnavailable = false;
     });
     try {
-      final records =
-          await PocketBaseService().getPurchaseItemsByMaterial(m.id);
+      final pb = PocketBaseService();
+      final historyFuture = pb.getPurchaseItemsByMaterial(m.id);
+      List<MaterialPiece> pieces = [];
+      var piecesUnavailable = false;
+      try {
+        final pieceRecords =
+            await pb.getMaterialPiecesForMaterial(m.id, onShelfOnly: false);
+        pieces = pieceRecords.map(MaterialPiece.fromRecord).toList();
+      } catch (_) {
+        // Migration may not be applied on this host yet.
+        piecesUnavailable = true;
+      }
+      final records = await historyFuture;
+      if (!mounted) return;
       setState(() {
         _historyRecords = records;
+        _pieces = pieces;
+        _piecesUnavailable = piecesUnavailable;
         _loadingHistory = false;
       });
     } catch (e) {
@@ -161,6 +180,20 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
         );
       }
     }
+  }
+
+  List<MaterialPiece> get _onShelfPieces =>
+      _pieces.where((p) => p.isOnShelf && p.lengthIn > 0).toList();
+
+  String _onHandSummary() {
+    final onShelf = _onShelfPieces;
+    if (onShelf.isEmpty) return 'No stock on shelf';
+    final total = onShelf.fold<double>(0, (sum, p) => sum + p.lengthIn);
+    final pcs = onShelf.length;
+    final totalLabel = total == total.roundToDouble()
+        ? '${total.round()} in'
+        : '${total.toStringAsFixed(1)} in';
+    return 'On shelf  $pcs pc${pcs == 1 ? '' : 's'} · $totalLabel';
   }
 
   Map<String, dynamic>? _expandFirst(dynamic expand, String key) {
@@ -226,16 +259,33 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
           await PocketBaseService().getPurchaseItemsByMaterial(material.id);
     } catch (_) {}
 
-    if (linked.isNotEmpty) {
+    var pieceCount = 0;
+    try {
+      final pieces = await PocketBaseService()
+          .getMaterialPiecesForMaterial(material.id);
+      pieceCount = pieces.length;
+    } catch (_) {}
+
+    if (linked.isNotEmpty || pieceCount > 0) {
       if (!mounted) return;
+      final reasons = <String>[];
+      if (linked.isNotEmpty) {
+        reasons.add(
+          '${linked.length} purchase line${linked.length == 1 ? '' : 's'}',
+        );
+      }
+      if (pieceCount > 0) {
+        reasons.add(
+          '$pieceCount stock piece${pieceCount == 1 ? '' : 's'}',
+        );
+      }
       await showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('Cannot delete'),
           content: Text(
-            '“${material.displayLabel}” is used on ${linked.length} purchase '
-            'line${linked.length == 1 ? '' : 's'}. Remove those lines first, '
-            'or edit this material instead.',
+            '“${material.displayLabel}” is used by ${reasons.join(' and ')}. '
+            'Remove those first, or edit this material instead.',
           ),
           actions: [
             TextButton(
@@ -254,7 +304,7 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
         title: const Text('Delete material?'),
         content: Text(
           'Delete “${material.displayLabel}” from the catalog?\n\n'
-          'This only removes the catalog entry. It is not linked to any purchase.',
+          'This only removes the catalog entry. It is not linked to any purchase or stock.',
         ),
         actions: [
           TextButton(
@@ -281,6 +331,8 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
         if (_selected?.id == material.id) {
           _selected = null;
           _historyRecords = [];
+          _pieces = [];
+          _piecesUnavailable = false;
         }
       });
       await _loadMaterials();
@@ -511,6 +563,8 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                       onTap: () => setState(() {
                         _selected = null;
                         _historyRecords = [];
+                        _pieces = [];
+                        _piecesUnavailable = false;
                       }),
                     ),
                     const Divider(height: 1),
@@ -541,35 +595,6 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     return nums.last;
   }
 
-  /// Round-bar / tube / hex cross-section diameter (first number when 2+ dims).
-  double? _diameterInchesFromSize(ShopMaterial m) {
-    final form = m.form.toLowerCase();
-    if (form != 'bar' && form != 'tube' && form != 'hex') return null;
-    final nums = _parseSizeNumbers(m.sizeLabel);
-    if (nums.length < 2) return null;
-    return nums.first;
-  }
-
-  double _densityLbPerCuIn(String grade) {
-    final g = grade.toLowerCase();
-    if (RegExp(r'6061|7075|2024|5052|5083|alumin|alum\b').hasMatch(g)) {
-      return 0.098;
-    }
-    if (RegExp(r'titanium|\bti[- ]?6').hasMatch(g)) return 0.163;
-    if (RegExp(r'brass|bronze|copper|\bcop\b').hasMatch(g)) return 0.307;
-    // Default: steel / stainless / unknown alloys
-    return 0.283;
-  }
-
-  double? _estimateWeightLbs(ShopMaterial m) {
-    final dia = _diameterInchesFromSize(m);
-    final len = _lengthInchesFromSize(m.sizeLabel);
-    if (dia == null || len == null || dia <= 0 || len <= 0) return null;
-    final r = dia / 2;
-    final volume = 3.141592653589793 * r * r * len;
-    return volume * _densityLbPerCuIn(m.grade);
-  }
-
   double? _costPerInch({
     required ShopMaterial m,
     required double unitCost,
@@ -584,29 +609,40 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     return null;
   }
 
-  String _unitLabel(String unit) {
+  /// Price unit suffix for display. Empty for each (default) so we don't say
+  /// both "each" and "/ea".
+  String _priceUnitSuffix(String unit) {
     switch (unit.trim().toLowerCase()) {
+      case '':
       case 'ea':
-        return 'each';
+        return '';
       case 'ft':
-        return 'feet';
+        return '/ft';
       case 'in':
-        return 'inches';
+        return '/in';
       case 'lb':
-        return 'pounds';
+        return '/lb';
       case 'kg':
-        return 'kilograms';
+        return '/kg';
       default:
-        return unit.isEmpty ? 'each' : unit;
+        return '/${unit.trim()}';
     }
   }
 
-  List<String> _materialSummaryParts(ShopMaterial m) {
-    final parts = <String>[];
+  String _identityTitle(ShopMaterial m) {
     final grade = m.grade.trim();
-    if (grade.isNotEmpty) parts.add(grade);
-    parts.add(_unitLabel(m.unit));
+    final form = materialFormLabel(m.form);
+    final size = m.sizeLabel.trim();
+    final parts = <String>[
+      if (grade.isNotEmpty) grade,
+      form,
+      if (size.isNotEmpty) size,
+    ];
+    return parts.join(' · ');
+  }
 
+  /// Last / avg / $/in for the detail header price column. Null when no costs.
+  _MaterialPriceSummary? _priceSummary(ShopMaterial m) {
     final costs = <double>[];
     for (final record in _historyRecords) {
       final item = PurchaseItem.fromRecord(record);
@@ -614,40 +650,26 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
         costs.add(item.unitCost!);
       }
     }
-    if (costs.isNotEmpty) {
-      final last = costs.first; // history sorted newest-first
-      parts.add('last ${_money.format(last)}/${m.unit.trim().isEmpty ? 'ea' : m.unit}');
-      final perIn = _costPerInch(m: m, unitCost: last);
-      if (perIn != null) {
-        parts.add('${_money.format(perIn)}/"');
-      }
-      if (costs.length > 1) {
-        final avg = costs.reduce((a, b) => a + b) / costs.length;
-        if ((avg - last).abs() / last > 0.02) {
-          parts.add('avg ${_money.format(avg)}');
-        }
+    if (costs.isEmpty) return null;
+
+    final last = costs.first; // history sorted newest-first
+    double? avg;
+    if (costs.length > 1) {
+      final computed = costs.reduce((a, b) => a + b) / costs.length;
+      if ((computed - last).abs() / last > 0.02) {
+        avg = computed;
       }
     }
-
-    final weight = _estimateWeightLbs(m);
-    if (weight != null) {
-      final w = weight >= 100
-          ? weight.round().toString()
-          : weight.toStringAsFixed(weight >= 10 ? 0 : 1);
-      parts.add('~$w lb est.');
-    }
-
-    final n = _historyRecords.length;
-    if (n > 0) {
-      parts.add('$n purchase${n == 1 ? '' : 's'}');
-    }
-
-    final lots = _lotsFor(m);
-    if (lots.isNotEmpty) {
-      parts.add('${lots.length} lot${lots.length == 1 ? '' : 's'}');
-    }
-
-    return parts;
+    final unit = m.unit.trim().toLowerCase();
+    // Avoid "Last $4.00/in" plus a duplicate "$4.00/in" line.
+    final perInch =
+        unit == 'in' ? null : _costPerInch(m: m, unitCost: last);
+    return _MaterialPriceSummary(
+      last: last,
+      avg: avg,
+      perInch: perInch,
+      unitSuffix: _priceUnitSuffix(m.unit),
+    );
   }
 
   Widget _buildHistoryPane(ColorScheme scheme) {
@@ -664,8 +686,14 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     }
 
     final selected = _selected!;
-    final summaryParts = _materialSummaryParts(selected);
+    final prices = _priceSummary(selected);
     final notes = (selected.notes ?? '').trim();
+    final muted = Theme.of(context).textTheme.bodyMedium?.copyWith(
+          color: scheme.onSurfaceVariant,
+        );
+    final priceValueStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
+          fontWeight: FontWeight.w600,
+        );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -679,13 +707,33 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    child: Text(
-                      '${materialFormLabel(selected.form)} · ${selected.sizeLabel}',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _identityTitle(selected),
+                          style:
+                              Theme.of(context).textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                        ),
+                        if (!_piecesUnavailable) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            _onHandSummary(),
+                            style: muted,
                           ),
+                        ],
+                      ],
                     ),
                   ),
+                  const SizedBox(width: 16),
+                  if (prices != null)
+                    _buildPriceColumn(
+                      prices,
+                      labelStyle: muted,
+                      valueStyle: priceValueStyle,
+                    ),
                   TextButton.icon(
                     onPressed: () => _editMaterial(selected),
                     icon: const Icon(Icons.edit_outlined, size: 18),
@@ -700,15 +748,6 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                   ),
                 ],
               ),
-              if (summaryParts.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text(
-                  summaryParts.join(' · '),
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                ),
-              ],
               if (mcmasterProductUrl(selected.notes) != null) ...[
                 const SizedBox(height: 4),
                 InkWell(
@@ -745,170 +784,316 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
         ),
         const Divider(height: 1),
         Expanded(
-          child: _historyRecords.isEmpty
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            children: [
+              if (!_piecesUnavailable) ...[
+                _sectionHeader(
+                  scheme,
+                  title: 'On shelf',
+                  action: TextButton.icon(
+                    onPressed: () => _addStock(selected),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Add stock'),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                if (_onShelfPieces.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
                     child: Text(
-                      'No purchases linked to this material yet.\n'
-                      'It may have been created from a purchase form and never saved on a line — '
-                      'you can edit or delete it here.',
-                      textAlign: TextAlign.center,
+                      'No pieces on the shelf yet. Add stock to print a sticker.',
                       style: TextStyle(color: scheme.onSurfaceVariant),
                     ),
-                  ),
+                  )
+                else
+                  for (final piece in _onShelfPieces) ...[
+                    _buildPieceCard(scheme, selected, piece),
+                    const SizedBox(height: 8),
+                  ],
+                const SizedBox(height: 12),
+              ],
+              _sectionHeader(scheme, title: 'Purchases'),
+              const SizedBox(height: 8),
+              if (_historyRecords.isEmpty)
+                Text(
+                  'No purchases linked to this material yet.\n'
+                  'It may have been created from a purchase form and never saved on a line — '
+                  'you can edit or delete it here.',
+                  style: TextStyle(color: scheme.onSurfaceVariant),
                 )
-              : ListView.separated(
-                  padding: const EdgeInsets.all(16),
-                  itemCount: _historyRecords.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 8),
-                  itemBuilder: (context, index) {
-                    final record = _historyRecords[index];
-                    final item = PurchaseItem.fromRecord(record);
-                    final purchaseData =
-                        _expandFirst(record.expand, 'purchase');
-                    final supplierData = () {
-                      try {
-                        final p = record.expand?['purchase'];
-                        final purchaseRec =
-                            (p is List && p.isNotEmpty) ? p.first : p;
-                        return _expandFirst(purchaseRec?.expand, 'supplier');
-                      } catch (_) {
-                        return null;
-                      }
-                    }();
-
-                    DateTime? date;
-                    final rawDate = purchaseData?['purchase_date'];
-                    if (rawDate != null) {
-                      date = DateTime.tryParse(rawDate.toString());
-                    }
-                    final supplier =
-                        (supplierData?['company_name'] ?? '').toString().trim();
-                    final heat = (item.heatLot ?? '').trim();
-                    final qty = item.quantity;
-                    final unit = item.unitCost;
-                    final lineTotal = unit != null ? qty * unit : null;
-                    final certs = item.millCertNames;
-                    final highlight = _highlightHeatLot != null &&
-                        heat.isNotEmpty &&
-                        heat.toLowerCase().contains(
-                              _highlightHeatLot!.toLowerCase(),
-                            );
-                    final detailStyle = Theme.of(context).textTheme.bodyMedium
-                        ?.copyWith(color: scheme.onSurfaceVariant);
-                    final detailBold = detailStyle?.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: scheme.onSurface,
-                    );
-
-                    return Card(
-                      color: highlight
-                          ? scheme.secondaryContainer.withValues(alpha: 0.55)
-                          : null,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(8),
-                        onTap: () => _openPurchase(item.purchaseId),
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      [
-                                        if (date != null)
-                                          DateFormat.yMMMd().format(date),
-                                        if (supplier.isNotEmpty) supplier,
-                                      ].join(' · '),
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .titleSmall
-                                          ?.copyWith(
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                    ),
-                                    if (heat.isNotEmpty) ...[
-                                      const SizedBox(height: 6),
-                                      Text.rich(
-                                        TextSpan(
-                                          style: detailStyle,
-                                          children: [
-                                            const TextSpan(text: 'Heat/lot '),
-                                            TextSpan(
-                                              text: heat,
-                                              style: detailBold,
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                    const SizedBox(height: 4),
-                                    Text.rich(
-                                      TextSpan(
-                                        style: detailStyle,
-                                        children: [
-                                          TextSpan(text: 'Qty $qty'),
-                                          if (unit != null) ...[
-                                            const TextSpan(text: ' · '),
-                                            TextSpan(
-                                              text:
-                                                  '\$${unit.toStringAsFixed(2)}/unit',
-                                              style: detailBold,
-                                            ),
-                                          ],
-                                          if (lineTotal != null) ...[
-                                            const TextSpan(text: ' · total '),
-                                            TextSpan(
-                                              text:
-                                                  '\$${lineTotal.toStringAsFixed(2)}',
-                                              style: detailBold,
-                                            ),
-                                          ],
-                                        ],
-                                      ),
-                                    ),
-                                    if (certs.isNotEmpty) ...[
-                                      const SizedBox(height: 8),
-                                      Wrap(
-                                        spacing: 6,
-                                        runSpacing: 6,
-                                        children: [
-                                          for (final name in certs)
-                                            ActionChip(
-                                              avatar: const Icon(
-                                                Icons.picture_as_pdf,
-                                                size: 16,
-                                              ),
-                                              label: Text(
-                                                name,
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                              onPressed: () =>
-                                                  _openMillCert(record, name),
-                                            ),
-                                        ],
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ),
-                              Icon(
-                                Icons.chevron_right,
-                                color: scheme.onSurfaceVariant,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
+              else
+                for (var i = 0; i < _historyRecords.length; i++) ...[
+                  if (i > 0) const SizedBox(height: 8),
+                  _buildPurchaseCard(scheme, _historyRecords[i]),
+                ],
+            ],
+          ),
         ),
       ],
+    );
+  }
+
+  Widget _sectionHeader(
+    ColorScheme scheme, {
+    required String title,
+    Widget? action,
+  }) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            title,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: scheme.onSurfaceVariant,
+                ),
+          ),
+        ),
+        if (action != null) action,
+      ],
+    );
+  }
+
+  Future<void> _addStock(ShopMaterial material) async {
+    final piece = await showAddMaterialStockDialog(
+      context,
+      material: material,
+    );
+    if (piece == null || _selected == null) return;
+    await _selectMaterial(_selected!);
+  }
+
+  Future<void> _cutPiece(ShopMaterial material, MaterialPiece piece) async {
+    final updated = await showCutMaterialPieceDialog(
+      context,
+      material: material,
+      piece: piece,
+    );
+    if (updated == null || _selected == null) return;
+    await _selectMaterial(_selected!);
+  }
+
+  Widget _buildPieceCard(
+    ColorScheme scheme,
+    ShopMaterial material,
+    MaterialPiece piece,
+  ) {
+    final loc = (piece.locationNote ?? '').trim();
+    final heat = (piece.heatLot ?? '').trim();
+    final subtitle = [
+      piece.lengthLabel,
+      if (loc.isNotEmpty) loc,
+      if (heat.isNotEmpty) 'lot $heat',
+    ].join(' · ');
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    piece.labelCode,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+            TextButton(
+              onPressed: () => _cutPiece(material, piece),
+              child: const Text('Cut'),
+            ),
+            TextButton(
+              onPressed: () => printOrPreviewMaterialLabel(
+                context,
+                material: material,
+                piece: piece,
+              ),
+              child: const Text('Print'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPurchaseCard(ColorScheme scheme, dynamic record) {
+    final item = PurchaseItem.fromRecord(record);
+    final purchaseData = _expandFirst(record.expand, 'purchase');
+    final supplierData = () {
+      try {
+        final p = record.expand?['purchase'];
+        final purchaseRec = (p is List && p.isNotEmpty) ? p.first : p;
+        return _expandFirst(purchaseRec?.expand, 'supplier');
+      } catch (_) {
+        return null;
+      }
+    }();
+
+    DateTime? date;
+    final rawDate = purchaseData?['purchase_date'];
+    if (rawDate != null) {
+      date = DateTime.tryParse(rawDate.toString());
+    }
+    final supplier = (supplierData?['company_name'] ?? '').toString().trim();
+    final heat = (item.heatLot ?? '').trim();
+    final qty = item.quantity;
+    final unit = item.unitCost;
+    final lineTotal = unit != null ? qty * unit : null;
+    final certs = item.millCertNames;
+    final highlight = _highlightHeatLot != null &&
+        heat.isNotEmpty &&
+        heat.toLowerCase().contains(_highlightHeatLot!.toLowerCase());
+    final detailStyle = Theme.of(context)
+        .textTheme
+        .bodyMedium
+        ?.copyWith(color: scheme.onSurfaceVariant);
+    final detailBold = detailStyle?.copyWith(
+      fontWeight: FontWeight.w600,
+      color: scheme.onSurface,
+    );
+
+    return Card(
+      color: highlight
+          ? scheme.secondaryContainer.withValues(alpha: 0.55)
+          : null,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => _openPurchase(item.purchaseId),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      [
+                        if (date != null) DateFormat.yMMMd().format(date),
+                        if (supplier.isNotEmpty) supplier,
+                      ].join(' · '),
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                    if (heat.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text.rich(
+                        TextSpan(
+                          style: detailStyle,
+                          children: [
+                            const TextSpan(text: 'Heat/lot '),
+                            TextSpan(text: heat, style: detailBold),
+                          ],
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 4),
+                    Text.rich(
+                      TextSpan(
+                        style: detailStyle,
+                        children: [
+                          TextSpan(text: 'Qty $qty'),
+                          if (unit != null) ...[
+                            const TextSpan(text: ' · '),
+                            TextSpan(
+                              text: '\$${unit.toStringAsFixed(2)}/unit',
+                              style: detailBold,
+                            ),
+                          ],
+                          if (lineTotal != null) ...[
+                            const TextSpan(text: ' · total '),
+                            TextSpan(
+                              text: '\$${lineTotal.toStringAsFixed(2)}',
+                              style: detailBold,
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    if (certs.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          for (final name in certs)
+                            ActionChip(
+                              avatar: const Icon(
+                                Icons.picture_as_pdf,
+                                size: 16,
+                              ),
+                              label: Text(
+                                name,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              onPressed: () => _openMillCert(record, name),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right,
+                color: scheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPriceColumn(
+    _MaterialPriceSummary prices, {
+    required TextStyle? labelStyle,
+    required TextStyle? valueStyle,
+  }) {
+    Widget row(String label, String value) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 48,
+              child: Text(label, style: labelStyle),
+            ),
+            Text(value, style: valueStyle),
+          ],
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          row('Last', '${_money.format(prices.last)}${prices.unitSuffix}'),
+          if (prices.avg != null)
+            row('Avg', '${_money.format(prices.avg!)}${prices.unitSuffix}'),
+          if (prices.perInch != null)
+            row('\$/in', _money.format(prices.perInch!)),
+        ],
+      ),
     );
   }
 
@@ -922,4 +1107,18 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
       );
     }
   }
+}
+
+class _MaterialPriceSummary {
+  const _MaterialPriceSummary({
+    required this.last,
+    required this.avg,
+    required this.perInch,
+    required this.unitSuffix,
+  });
+
+  final double last;
+  final double? avg;
+  final double? perInch;
+  final String unitSuffix;
 }
