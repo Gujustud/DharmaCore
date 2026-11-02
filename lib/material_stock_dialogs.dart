@@ -35,54 +35,52 @@ Future<void> printOrPreviewMaterialLabel(
   final lengthLine = location.isEmpty
       ? piece.lengthLabel
       : '${piece.lengthLabel} · $location';
-
-  final canNativePrint = !kIsWeb;
-  if (canNativePrint) {
-    try {
-      await LabelPrintService.printMaterialLabel(
-        labelCode: piece.labelCode,
-        identityLine: identity,
-        lengthLine: lengthLine,
-        pieceId: piece.id,
-      );
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Label sent to printer'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-      return;
-    } on PlatformException catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Print failed: ${e.message ?? e.code}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-      // Fall through to preview so the shop can still see the sticker.
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Print failed: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  if (!context.mounted) return;
   final bytes = LabelPrintService.generateMaterialLabelImage(
     labelCode: piece.labelCode,
     identityLine: identity,
     lengthLine: lengthLine,
     pieceId: piece.id,
   );
+
+  try {
+    await LabelPrintService.sendLabelPng(
+      bytes,
+      jobName: 'material-${piece.labelCode}',
+    );
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            kIsWeb
+                ? 'Opened system print — pick the Brother PT-P910BT (18mm)'
+                : 'Label sent to printer',
+          ),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+    return;
+  } on PlatformException catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Print failed: ${e.message ?? e.code}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Print failed: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  if (!context.mounted) return;
   await showDialog<void>(
     context: context,
     builder: (ctx) => AlertDialog(
@@ -92,7 +90,7 @@ Future<void> printOrPreviewMaterialLabel(
         children: [
           Text(
             kIsWeb
-                ? 'Brother print works from the Android app. Preview:'
+                ? 'Print dialog unavailable. Preview (use Print again or check the printer):'
                 : 'Preview (printer unavailable):',
             style: TextStyle(color: Theme.of(ctx).colorScheme.onSurfaceVariant),
           ),
@@ -108,6 +106,18 @@ Future<void> printOrPreviewMaterialLabel(
         ],
       ),
       actions: [
+        TextButton(
+          onPressed: () async {
+            Navigator.pop(ctx);
+            try {
+              await LabelPrintService.sendLabelPng(
+                bytes,
+                jobName: 'material-${piece.labelCode}',
+              );
+            } catch (_) {}
+          },
+          child: const Text('Print'),
+        ),
         TextButton(
           onPressed: () => Navigator.pop(ctx),
           child: const Text('Close'),

@@ -4182,13 +4182,15 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
             color: Colors.blue,
             tooltip: 'Add Inventory',
           ),
-          if (!kIsWeb && _isEditMode && Platform.isAndroid)
+          if (_isEditMode && (kIsWeb || (!kIsWeb && Platform.isAndroid)))
             IconButton(
               onPressed: _showPrintLabelDialog,
               icon: const Icon(Icons.print),
               tooltip: _getBinToolLocations().isEmpty
                   ? 'Print bin label (assign tool to a bin first)'
-                  : 'Print bin label',
+                  : (kIsWeb
+                      ? 'Print bin label (system print → PT-P910BT)'
+                      : 'Print bin label'),
             ),
         ],
       ),
@@ -4532,7 +4534,14 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
       await LabelPrintService.printLabel(toolName: widget.tool!.toolName, binCode: binCode);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Label sent to printer'), backgroundColor: Colors.green),
+          SnackBar(
+            content: Text(
+              kIsWeb
+                  ? 'Opened system print — pick the Brother PT-P910BT (18mm)'
+                  : 'Label sent to printer',
+            ),
+            backgroundColor: Colors.green,
+          ),
         );
       }
     } on PlatformException catch (e) {
