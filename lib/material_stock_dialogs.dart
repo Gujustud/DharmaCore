@@ -843,6 +843,7 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
     final msg = '$e';
     final migrationHint = msg.contains('material_events') ||
         msg.contains('1776810000') ||
+        msg.contains('1776820000') ||
         msg.contains('missing');
     rows.add(
       _MaterialHistoryRow(
@@ -851,8 +852,9 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
             ? 'Cut / scrap log not on this server yet'
             : 'Could not load cut / scrap log',
         subtitle: migrationHint
-            ? 'Copy pb_migrations/1776810000_ensure_material_events.js to CT 105 '
-                'pb_migrations, restart pocketbase-erp-dev, then reopen History.'
+            ? 'On the laptop run: scp pb_migrations/1776820000_material_events_create.js '
+                'to CT105 /opt/pocketbase-erp-dev/pb_migrations/ then '
+                'systemctl restart pocketbase-erp-dev. ($msg)'
             : msg,
       ),
     );

@@ -3249,12 +3249,25 @@ class PocketBaseService {
 
   /// True when `material_events` is listable (migration applied).
   Future<bool> materialEventsCollectionAvailable() async {
+    return (await materialEventsUnavailableReason()) == null;
+  }
+
+  /// Null if listable; otherwise a short reason (for History UI).
+  Future<String?> materialEventsUnavailableReason() async {
     try {
       await pb.collection('material_events').getList(page: 1, perPage: 1);
-      return true;
+      return null;
     } catch (e) {
       print('material_events not available: $e');
-      return false;
+      final s = '$e';
+      // Prefer the server message when present.
+      final msgMatch = RegExp(r'message:\s*([^,}]+)').firstMatch(s);
+      final statusMatch = RegExp(r'statusCode:\s*(\d+)').firstMatch(s);
+      final status = statusMatch?.group(1);
+      final msg = msgMatch?.group(1)?.trim();
+      if (status != null && msg != null) return 'HTTP $status — $msg';
+      if (s.length <= 180) return s;
+      return '${s.substring(0, 180)}…';
     }
   }
 
@@ -3273,9 +3286,10 @@ class PocketBaseService {
   /// Events for every piece of a catalog material (incoming/outgoing timeline).
   /// Throws [StateError] with a short migration hint if the collection is missing.
   Future<List<dynamic>> getMaterialEventsForMaterial(String materialId) async {
-    if (!await materialEventsCollectionAvailable()) {
+    final unavailable = await materialEventsUnavailableReason();
+    if (unavailable != null) {
       throw StateError(
-        'material_events missing — apply 1776810000_ensure_material_events.js on CT 105',
+        'material_events missing — apply 1776820000_material_events_create.js on CT 105 ($unavailable)',
       );
     }
     final pieces = await getMaterialPiecesForMaterial(materialId);
