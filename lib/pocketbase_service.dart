@@ -3152,15 +3152,17 @@ class PocketBaseService {
           'remaining (${before.toStringAsFixed(1)} in)',
         );
       }
-      final after = (before - cutLengthIn);
-      final status = after <= 0.001 ? 'depleted' : 'on_shelf';
-      final lengthAfter = after <= 0.001 ? 0.0 : after;
+      final after = before - cutLengthIn;
+      final depleted = after <= 0.001;
+      final lengthAfter = depleted ? 0.0 : after;
+      // PocketBase required number fields reject 0 as "blank" — omit length_in when depleted.
+      final body = <String, dynamic>{
+        'status': depleted ? 'depleted' : 'on_shelf',
+        if (!depleted) 'length_in': lengthAfter,
+      };
       final updated = await pb.collection('material_pieces').update(
         pieceId,
-        body: {
-          'length_in': lengthAfter,
-          'status': status,
-        },
+        body: body,
       );
       final email = pb.authStore.record?.getStringValue('email') ?? '';
       await pb.collection('material_events').create(body: {
@@ -3185,11 +3187,11 @@ class PocketBaseService {
       final current = await pb.collection('material_pieces').getOne(pieceId);
       final data = current.data as Map<String, dynamic>? ?? {};
       final before = (data['length_in'] as num?)?.toDouble() ?? 0;
+      // Keep length_in as-is: PB rejects 0 on required numbers; status removes it from shelf.
       await pb.collection('material_pieces').update(
         pieceId,
         body: {
           'status': 'scrap',
-          'length_in': 0,
         },
       );
       final email = pb.authStore.record?.getStringValue('email') ?? '';
@@ -3215,6 +3217,23 @@ class PocketBaseService {
       );
     } catch (e) {
       print('Error getting material events: $e');
+      rethrow;
+    }
+  }
+
+  /// Events for every piece of a catalog material (incoming/outgoing timeline).
+  Future<List<dynamic>> getMaterialEventsForMaterial(String materialId) async {
+    try {
+      final pieces = await getMaterialPiecesForMaterial(materialId);
+      if (pieces.isEmpty) return [];
+      final ids = pieces.map((p) => p.id.toString()).toList();
+      final filter = ids.map((id) => 'piece = "$id"').join(' || ');
+      return await pb.collection('material_events').getFullList(
+        filter: filter,
+        sort: '-created',
+      );
+    } catch (e) {
+      print('Error getting material events for material: $e');
       rethrow;
     }
   }

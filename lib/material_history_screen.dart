@@ -477,13 +477,22 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                                 children: [
                                   PopupMenuButton<String>(
                                     onSelected: (value) {
-                                      if (value == 'edit') {
+                                      if (value == 'history') {
+                                        showMaterialHistoryDialog(
+                                          context,
+                                          material: m,
+                                        );
+                                      } else if (value == 'edit') {
                                         _editMaterial(m);
                                       } else if (value == 'delete') {
                                         _deleteMaterial(m);
                                       }
                                     },
                                     itemBuilder: (context) => const [
+                                      PopupMenuItem(
+                                        value: 'history',
+                                        child: Text('History'),
+                                      ),
                                       PopupMenuItem(
                                         value: 'edit',
                                         child: Text('Edit'),
@@ -548,13 +557,20 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                       trailing: PopupMenuButton<String>(
                         onSelected: (value) {
                           final m = _selected!;
-                          if (value == 'edit') {
+                          if (value == 'history') {
+                            showMaterialHistoryDialog(
+                              context,
+                              material: m,
+                            );
+                          } else if (value == 'edit') {
                             _editMaterial(m);
                           } else if (value == 'delete') {
                             _deleteMaterial(m);
                           }
                         },
                         itemBuilder: (context) => const [
+                          PopupMenuItem(
+                              value: 'history', child: Text('History')),
                           PopupMenuItem(value: 'edit', child: Text('Edit')),
                           PopupMenuItem(
                               value: 'delete', child: Text('Delete')),
@@ -735,6 +751,15 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                       valueStyle: priceValueStyle,
                     ),
                   TextButton.icon(
+                    onPressed: () => showMaterialHistoryDialog(
+                      context,
+                      material: selected,
+                    ),
+                    icon: const Icon(Icons.history, size: 18),
+                    label: const Text('History'),
+                  ),
+                  const SizedBox(width: 4),
+                  TextButton.icon(
                     onPressed: () => _editMaterial(selected),
                     icon: const Icon(Icons.edit_outlined, size: 18),
                     label: const Text('Edit'),
@@ -901,17 +926,6 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     );
   }
 
-  Future<void> _pieceHistory(
-    ShopMaterial material,
-    MaterialPiece piece,
-  ) async {
-    await showMaterialPieceHistoryDialog(
-      context,
-      material: material,
-      piece: piece,
-    );
-  }
-
   Widget _buildPieceCard(
     ColorScheme scheme,
     ShopMaterial material,
@@ -974,29 +988,10 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
               ),
               child: const Text('Print'),
             ),
-            PopupMenuButton<String>(
-              tooltip: 'More',
-              onSelected: (value) {
-                switch (value) {
-                  case 'history':
-                    _pieceHistory(material, piece);
-                  case 'scrap':
-                    _scrapPiece(material, piece);
-                }
-              },
-              itemBuilder: (ctx) => [
-                const PopupMenuItem(
-                  value: 'history',
-                  child: Text('History'),
-                ),
-                PopupMenuItem(
-                  value: 'scrap',
-                  child: Text(
-                    'Scrap',
-                    style: TextStyle(color: scheme.error),
-                  ),
-                ),
-              ],
+            TextButton(
+              onPressed: () => _scrapPiece(material, piece),
+              style: TextButton.styleFrom(foregroundColor: scheme.error),
+              child: const Text('Scrap'),
             ),
           ],
         ),

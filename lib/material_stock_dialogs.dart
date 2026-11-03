@@ -727,21 +727,143 @@ Future<bool> showScrapMaterialPieceDialog(
   return ok == true;
 }
 
-/// Show intake / cut / adjust / scrap timeline for a piece.
-Future<void> showMaterialPieceHistoryDialog(
+class _MaterialHistoryRow {
+  _MaterialHistoryRow({
+    required this.when,
+    required this.title,
+    required this.subtitle,
+  });
+  final DateTime? when;
+  final String title;
+  final String subtitle;
+}
+
+Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
+  ShopMaterial material,
+) async {
+  final pb = PocketBaseService();
+  final dateFmt = DateFormat('MMM d yyyy · HH:mm');
+  final rows = <_MaterialHistoryRow>[];
+
+  // Purchases = incoming stock for this alloy/form/size.
+  try {
+    final purchases = await pb.getPurchaseItemsByMaterial(material.id);
+    for (final rec in purchases) {
+      final item = PurchaseItem.fromRecord(rec);
+      DateTime? when;
+      try {
+        final purchaseData = () {
+          final p = rec.expand?['purchase'];
+          final purchaseRec = (p is List && p.isNotEmpty) ? p.first : p;
+          return purchaseRec?.data as Map<String, dynamic>?;
+        }();
+        final raw = purchaseData?['purchase_date'];
+        if (raw != null) when = DateTime.tryParse(raw.toString());
+        when ??= DateTime.tryParse(rec.created?.toString() ?? '');
+      } catch (_) {}
+      final supplier = () {
+        try {
+          final p = rec.expand?['purchase'];
+          final purchaseRec = (p is List && p.isNotEmpty) ? p.first : p;
+          final s = purchaseRec?.expand?['supplier'];
+          final supplierRec = (s is List && s.isNotEmpty) ? s.first : s;
+          return (supplierRec?.data?['name'] ?? '').toString().trim();
+        } catch (_) {
+          return '';
+        }
+      }();
+      final lot = (item.heatLot ?? '').trim();
+      final qty = item.quantity;
+      final cost = item.unitCost;
+      final bits = <String>[
+        if (supplier.isNotEmpty) supplier,
+        'Qty $qty',
+        if (cost != null) '\$${cost.toStringAsFixed(2)}/unit',
+        if (lot.isNotEmpty) 'lot $lot',
+      ];
+      rows.add(
+        _MaterialHistoryRow(
+          when: when,
+          title: 'Purchased · ${bits.join(' · ')}',
+          subtitle: when != null ? dateFmt.format(when.toLocal()) : 'Purchase',
+        ),
+      );
+    }
+  } catch (_) {
+    // Purchases may fail independently; still show piece events.
+  }
+
+  // Piece events = intake / cut / adjust / scrap across all rems.
+  try {
+    final pieces = await pb.getMaterialPiecesForMaterial(material.id);
+    final codeById = <String, String>{
+      for (final r in pieces)
+        r.id.toString(): MaterialPiece.fromRecord(r).labelCode,
+    };
+    final events = await pb.getMaterialEventsForMaterial(material.id);
+    for (final rec in events) {
+      DateTime? when;
+      try {
+        when = DateTime.tryParse(rec.created?.toString() ?? '');
+      } catch (_) {}
+      final data = rec.data as Map<String, dynamic>? ?? {};
+      final pieceId = () {
+        final raw = data['piece'];
+        if (raw is String) return raw;
+        if (raw is Map) return (raw['id'] ?? '').toString();
+        return raw?.toString() ?? '';
+      }();
+      final code = codeById[pieceId] ?? '';
+      final by = (data['created_by_email'] ?? '').toString().trim();
+      final desc = describeMaterialEvent(rec);
+      rows.add(
+        _MaterialHistoryRow(
+          when: when,
+          title: code.isEmpty ? desc : '$code · $desc',
+          subtitle: [
+            if (when != null) dateFmt.format(when.toLocal()),
+            if (by.isNotEmpty) by,
+          ].join(' · '),
+        ),
+      );
+    }
+  } catch (e) {
+    // Surface migration / API issues as a single row so the dialog still opens.
+    rows.add(
+      _MaterialHistoryRow(
+        when: null,
+        title: 'Piece activity unavailable',
+        subtitle:
+            'Apply pb_migrations/1776800000_material_pieces.js on CT 105 if material_events is missing. ($e)',
+      ),
+    );
+  }
+
+  rows.sort((a, b) {
+    final aw = a.when;
+    final bw = b.when;
+    if (aw == null && bw == null) return 0;
+    if (aw == null) return 1;
+    if (bw == null) return -1;
+    return bw.compareTo(aw);
+  });
+  return rows;
+}
+
+/// Full incoming/outgoing history for a catalog material (alloy / form / size).
+Future<void> showMaterialHistoryDialog(
   BuildContext context, {
   required ShopMaterial material,
-  required MaterialPiece piece,
 }) async {
   await showDialog<void>(
     context: context,
     builder: (ctx) {
       return AlertDialog(
-        title: Text('History · ${piece.labelCode}'),
+        title: Text('History · ${material.displayLabel}'),
         content: SizedBox(
-          width: 460,
-          child: FutureBuilder<List<dynamic>>(
-            future: PocketBaseService().getMaterialEventsForPiece(piece.id),
+          width: 520,
+          child: FutureBuilder<List<_MaterialHistoryRow>>(
+            future: _loadMaterialHistoryRows(material),
             builder: (ctx, snap) {
               if (snap.connectionState != ConnectionState.done) {
                 return const SizedBox(
@@ -755,40 +877,29 @@ Future<void> showMaterialPieceHistoryDialog(
                   style: TextStyle(color: Theme.of(ctx).colorScheme.error),
                 );
               }
-              final events = snap.data ?? const [];
-              if (events.isEmpty) {
+              final rows = snap.data ?? const [];
+              if (rows.isEmpty) {
                 return Text(
-                  'No events recorded for this piece yet.',
+                  'No purchases or piece activity for this material yet.',
                   style: TextStyle(
                     color: Theme.of(ctx).colorScheme.onSurfaceVariant,
                   ),
                 );
               }
-              final dateFmt = DateFormat('MMM d yyyy · HH:mm');
               return ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 420),
+                constraints: const BoxConstraints(maxHeight: 480),
                 child: ListView.separated(
                   shrinkWrap: true,
-                  itemCount: events.length,
+                  itemCount: rows.length,
                   separatorBuilder: (_, __) => const Divider(height: 1),
                   itemBuilder: (ctx, i) {
-                    final rec = events[i];
-                    DateTime? when;
-                    try {
-                      when = DateTime.tryParse(rec.created?.toString() ?? '');
-                    } catch (_) {}
-                    final data = rec.data as Map<String, dynamic>? ?? {};
-                    final by =
-                        (data['created_by_email'] ?? '').toString().trim();
+                    final row = rows[i];
                     return ListTile(
                       contentPadding: EdgeInsets.zero,
-                      title: Text(describeMaterialEvent(rec)),
-                      subtitle: Text(
-                        [
-                          if (when != null) dateFmt.format(when.toLocal()),
-                          if (by.isNotEmpty) by,
-                        ].join(' · '),
-                      ),
+                      title: Text(row.title),
+                      subtitle: row.subtitle.isEmpty
+                          ? null
+                          : Text(row.subtitle),
                       dense: true,
                     );
                   },
