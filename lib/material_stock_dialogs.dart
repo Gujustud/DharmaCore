@@ -52,7 +52,7 @@ Future<void> printOrPreviewMaterialLabel(
         SnackBar(
           content: Text(
             kIsWeb
-                ? 'Opened system print — choose PT-P910BT and 18mm tape (not 36mm)'
+                ? 'Opened system print — PT-P910BT, 18mm paper, short Length (not 100mm)'
                 : 'Label sent to printer',
           ),
           backgroundColor: Colors.green,

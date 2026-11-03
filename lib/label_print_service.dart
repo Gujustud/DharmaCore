@@ -57,6 +57,23 @@ class LabelPrintService {
   static const double _tapeHeightMm = 18;
   static const double _dpi = 180;
 
+  /// Trim trailing blank tape: keep ink + [rightPad] px only.
+  static img.Image _cropLabelToContent(img.Image image, {int rightPad = 16}) {
+    var maxX = 0;
+    for (var y = 0; y < image.height; y++) {
+      for (var x = image.width - 1; x > maxX; x--) {
+        final p = image.getPixel(x, y);
+        if (p.r < 250 || p.g < 250 || p.b < 250) {
+          maxX = x;
+          break;
+        }
+      }
+    }
+    final newW = (maxX + rightPad + 1).clamp(1, image.width);
+    if (newW >= image.width) return image;
+    return img.copyCrop(image, x: 0, y: 0, width: newW, height: image.height);
+  }
+
   /// Generate label as PNG bytes: line 1 = [toolName], line 2 = BIN: [binCode], QR = tool name + BIN.
   /// Canvas height = full 18mm (labelHeightPx); QR uses that height; width = length along tape.
   static Uint8List generateLabelImage({
@@ -69,7 +86,7 @@ class LabelPrintService {
     const rightMargin = 16;
     const qrVerticalMargin = 6;
 
-    // Height = full tape width in pixels (after 90° rotation this maps to 18mm).
+    // Height = full 18mm tape width in pixels.
     final imageHeight = height ?? labelHeightPx;
     // QR square uses max height minus margins.
     final qrMaxSide = imageHeight - 2 * qrVerticalMargin;
@@ -91,44 +108,17 @@ class LabelPrintService {
     final qrSize = qrModuleCount * qrModulePixel;
     final qrY = (imageHeight - qrSize) ~/ 2;
 
-    // Width: text area + gap + QR + margins (length along tape), capped at 3.1".
-    final computedWidth = leftMargin + 260 + 8 + qrSize + rightMargin;
-    final imageWidth = (width ?? computedWidth).clamp(0, maxLabelWidthPx);
-
-    final image = img.Image(width: imageWidth, height: imageHeight);
-    final white = img.ColorRgba8(255, 255, 255, 255);
-    final black = img.ColorRgba8(0, 0, 0, 255);
-    img.fill(image, color: white);
-
     // Fonts: use arial24 for both, but scale BIN slightly larger via bitmap scaling.
     final binFont = img.arial24;
     final toolFont = img.arial24;
     const targetBinHeight = 32; // approx "30px" visual height after scaling
     const toolLineHeight = 28;
     const toolMaxCharsPerLine = 26;
+    // ~14px/char for arial24; BIN is scaled ~32/24 so slightly wider.
+    const pxPerChar = 14;
 
     // BIN at top: bin number only (e.g. BIN: 250), scaled slightly larger.
     final binLine = 'BIN: $binNumber';
-    const binY = 14; // a bit more breathing room from the top
-    // Render BIN into a temporary image with the base font, then scale it UP.
-    // Height of temp image (24) is smaller than targetBinHeight (32) so we enlarge.
-    final binTemp = img.Image(width: imageWidth, height: 24);
-    img.fill(binTemp, color: white);
-    img.drawString(
-      binTemp,
-      binLine,
-      font: binFont,
-      x: 0,
-      y: 0,
-      color: black,
-    );
-    final binScaled = img.copyResize(binTemp, height: targetBinHeight);
-    img.compositeImage(
-      image,
-      binScaled,
-      dstX: leftMargin,
-      dstY: binY,
-    );
 
     // Tool name near bottom: wrap to 2 lines if too long (split at last space).
     final nameLines = <String>[];
@@ -146,6 +136,44 @@ class LabelPrintService {
       }
     }
 
+    var textCol = (binLine.length * pxPerChar * targetBinHeight / 24).ceil();
+    for (final line in nameLines) {
+      final w = line.length * pxPerChar;
+      if (w > textCol) textCol = w;
+    }
+    textCol = textCol.clamp(80, 260);
+
+    // Width: text + gap + QR + margins (length along tape), capped at 3.1".
+    const gap = 8;
+    final computedWidth = leftMargin + textCol + gap + qrSize + rightMargin;
+    final imageWidth = (width ?? computedWidth).clamp(0, maxLabelWidthPx);
+
+    final image = img.Image(width: imageWidth, height: imageHeight);
+    final white = img.ColorRgba8(255, 255, 255, 255);
+    final black = img.ColorRgba8(0, 0, 0, 255);
+    img.fill(image, color: white);
+
+    const binY = 14; // a bit more breathing room from the top
+    // Render BIN into a temporary image with the base font, then scale it UP.
+    // Height of temp image (24) is smaller than targetBinHeight (32) so we enlarge.
+    final binTemp = img.Image(width: textCol + 8, height: 24);
+    img.fill(binTemp, color: white);
+    img.drawString(
+      binTemp,
+      binLine,
+      font: binFont,
+      x: 0,
+      y: 0,
+      color: black,
+    );
+    final binScaled = img.copyResize(binTemp, height: targetBinHeight);
+    img.compositeImage(
+      image,
+      binScaled,
+      dstX: leftMargin,
+      dstY: binY,
+    );
+
     final toolBlockHeight = nameLines.length * toolLineHeight;
     final toolStartY = imageHeight - toolBlockHeight - 8; // 8px bottom margin
     for (var i = 0; i < nameLines.length; i++) {
@@ -159,8 +187,8 @@ class LabelPrintService {
       );
     }
 
-    // QR code: sized to use max label height, right-aligned and vertically centered
-    final qrX = imageWidth - qrSize - rightMargin;
+    // QR immediately after the text column (saves blank tape).
+    final qrX = leftMargin + textCol + gap;
     for (var row = 0; row < qrModuleCount; row++) {
       for (var col = 0; col < qrModuleCount; col++) {
         if (qrImage.isDark(row, col)) {
@@ -177,7 +205,25 @@ class LabelPrintService {
       }
     }
 
-    return Uint8List.fromList(img.encodePng(image));
+    final cropped = _cropLabelToContent(image, rightPad: rightMargin);
+    return Uint8List.fromList(img.encodePng(cropped));
+  }
+
+  /// Along-tape length in mm for a label bitmap (x = length, y = 18mm).
+  static double _labelLengthMm(img.Image src) {
+    // Hug content; keep a small floor so drivers accept the page.
+    return (src.width / _dpi * 25.4).clamp(28.0, 90.0);
+  }
+
+  static PdfPageFormat _labelPageFormat(img.Image src) {
+    final lengthMm = _labelLengthMm(src);
+    // Landscape: width = length along tape, height = 18mm tape width.
+    // Windows Brother prefs must also be 18mm (not 36mm); set Length short there too.
+    return PdfPageFormat(
+      lengthMm * PdfPageFormat.mm,
+      _tapeHeightMm * PdfPageFormat.mm,
+      marginAll: 0,
+    );
   }
 
   /// Send a label PNG to the printer (Android Bluetooth) or system print (web).
@@ -186,8 +232,13 @@ class LabelPrintService {
     String jobName = 'label',
   }) async {
     if (kIsWeb) {
+      final decoded = img.decodePng(pngBytes);
+      final src = decoded ??
+          img.Image(width: maxLabelWidthPx, height: labelHeightPx);
+      final format = _labelPageFormat(src);
       await Printing.layoutPdf(
         name: jobName,
+        format: format,
         onLayout: (_) => _pngAsLabelPdf(pngBytes),
       );
       return;
@@ -199,34 +250,24 @@ class LabelPrintService {
 
   /// Wrap PNG in a PDF for the browser → Brother print dialog.
   ///
-  /// Brother maps PDF **page width** to tape width. Our label bitmaps are
-  /// drawn with tape width as image *height* (18mm), so we rotate 90° CW and
-  /// use page size (18mm × length). Otherwise Windows often defaults to 36mm
-  /// and the P910BT errors "cassette does not match".
+  /// Page is landscape: along-tape length × 18mm (no rotate). That matches how
+  /// the bitmap is drawn and keeps Chrome from stretching a tall strip onto a
+  /// long fixed-length roll. Pick **18 mm** paper and a short **Length** in
+  /// Brother printing preferences (driver default 100mm wastes tape).
   static Future<Uint8List> _pngAsLabelPdf(Uint8List pngBytes) async {
     final decoded = img.decodePng(pngBytes);
     final src = decoded ??
         img.Image(width: maxLabelWidthPx, height: labelHeightPx);
-
-    // Bitmap: x = along tape, y = across tape (18mm). Rotate so PDF width = 18mm.
-    final rotated = img.copyRotate(src, angle: 90);
-    final rotatedPng =
-        Uint8List.fromList(img.encodePng(rotated, level: 6));
-
-    final lengthMm =
-        (src.width / _dpi * 25.4).clamp(25.0, 120.0); // along-tape length
-    final pageW = _tapeHeightMm * PdfPageFormat.mm; // 18mm tape width
-    final pageH = lengthMm * PdfPageFormat.mm;
+    // Always size to the label; ignore letter/A4 if the dialog resets format.
+    final page = _labelPageFormat(src);
+    final pageW = page.width;
+    final pageH = page.height;
 
     final doc = pw.Document();
-    final image = pw.MemoryImage(rotatedPng);
+    final image = pw.MemoryImage(pngBytes);
     doc.addPage(
       pw.Page(
-        pageFormat: PdfPageFormat(
-          pageW,
-          pageH,
-          marginAll: 0,
-        ),
+        pageFormat: page,
         margin: pw.EdgeInsets.zero,
         build: (_) => pw.SizedBox(
           width: pageW,
@@ -278,17 +319,11 @@ class LabelPrintService {
     final qrSize = qrModuleCount * qrModulePixel;
     final qrY = (imageHeight - qrSize) ~/ 2;
 
-    final computedWidth = leftMargin + 280 + 8 + qrSize + rightMargin;
-    final imageWidth = (width ?? computedWidth).clamp(0, maxLabelWidthPx);
-
-    final image = img.Image(width: imageWidth, height: imageHeight);
-    final white = img.ColorRgba8(255, 255, 255, 255);
-    final black = img.ColorRgba8(0, 0, 0, 255);
-    img.fill(image, color: white);
-
     final font = img.arial24;
     const lineHeight = 28;
     const maxChars = 28;
+    const pxPerChar = 14;
+    const gap = 8;
 
     String trimLine(String s) {
       final t = s.trim();
@@ -301,6 +336,21 @@ class LabelPrintService {
       trimLine(identityLine),
       trimLine(lengthLine),
     ];
+
+    var textCol = 80;
+    for (final line in lines) {
+      final w = line.length * pxPerChar;
+      if (w > textCol) textCol = w;
+    }
+    textCol = textCol.clamp(80, 260);
+
+    final computedWidth = leftMargin + textCol + gap + qrSize + rightMargin;
+    final imageWidth = (width ?? computedWidth).clamp(0, maxLabelWidthPx);
+
+    final image = img.Image(width: imageWidth, height: imageHeight);
+    final white = img.ColorRgba8(255, 255, 255, 255);
+    final black = img.ColorRgba8(0, 0, 0, 255);
+    img.fill(image, color: white);
 
     var y = 10;
     for (final line in lines) {
@@ -315,7 +365,8 @@ class LabelPrintService {
       y += lineHeight;
     }
 
-    final qrX = imageWidth - qrSize - rightMargin;
+    // QR immediately after the text column (saves blank tape).
+    final qrX = leftMargin + textCol + gap;
     for (var row = 0; row < qrModuleCount; row++) {
       for (var col = 0; col < qrModuleCount; col++) {
         if (qrImage.isDark(row, col)) {
@@ -332,7 +383,8 @@ class LabelPrintService {
       }
     }
 
-    return Uint8List.fromList(img.encodePng(image));
+    final cropped = _cropLabelToContent(image, rightPad: rightMargin);
+    return Uint8List.fromList(img.encodePng(cropped));
   }
 
   static Future<void> printMaterialLabel({
