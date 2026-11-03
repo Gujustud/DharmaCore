@@ -841,10 +841,14 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
     }
   } catch (e) {
     final msg = '$e';
-    final migrationHint = msg.contains('material_events') ||
-        msg.contains('1776810000') ||
-        msg.contains('1776820000') ||
-        msg.contains('missing');
+    final lower = msg.toLowerCase();
+    // Only treat true "collection missing" as a migration problem.
+    // Auth / filter / expand failures must show the real server error.
+    final migrationHint = lower.contains('collection missing') ||
+        lower.contains('collection not found') ||
+        lower.contains('1776820000') ||
+        (lower.contains("couldn't find the collection") &&
+            lower.contains('material_events'));
     rows.add(
       _MaterialHistoryRow(
         when: null,

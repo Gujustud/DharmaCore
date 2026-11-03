@@ -3252,6 +3252,27 @@ class PocketBaseService {
     return (await materialEventsUnavailableReason()) == null;
   }
 
+  static bool _looksLikeMissingCollection(String raw, {String? status}) {
+    final s = raw.toLowerCase();
+    if (status == '404') return true;
+    return s.contains('missing collection') ||
+        s.contains("collection 'material_events' not found") ||
+        s.contains('collection not found') ||
+        s.contains("couldn't find the collection") ||
+        (s.contains('material_events') && s.contains('not found'));
+  }
+
+  String _formatPbError(Object e) {
+    final s = '$e';
+    final msgMatch = RegExp(r'message:\s*([^,}]+)').firstMatch(s);
+    final statusMatch = RegExp(r'statusCode:\s*(\d+)').firstMatch(s);
+    final status = statusMatch?.group(1);
+    final msg = msgMatch?.group(1)?.trim();
+    if (status != null && msg != null) return 'HTTP $status — $msg';
+    if (s.length <= 180) return s;
+    return '${s.substring(0, 180)}…';
+  }
+
   /// Null if listable; otherwise a short reason (for History UI).
   Future<String?> materialEventsUnavailableReason() async {
     try {
@@ -3259,15 +3280,7 @@ class PocketBaseService {
       return null;
     } catch (e) {
       print('material_events not available: $e');
-      final s = '$e';
-      // Prefer the server message when present.
-      final msgMatch = RegExp(r'message:\s*([^,}]+)').firstMatch(s);
-      final statusMatch = RegExp(r'statusCode:\s*(\d+)').firstMatch(s);
-      final status = statusMatch?.group(1);
-      final msg = msgMatch?.group(1)?.trim();
-      if (status != null && msg != null) return 'HTTP $status — $msg';
-      if (s.length <= 180) return s;
-      return '${s.substring(0, 180)}…';
+      return _formatPbError(e);
     }
   }
 
@@ -3283,24 +3296,40 @@ class PocketBaseService {
     return raw.toString();
   }
 
+  Future<List<dynamic>> _listMaterialEvents({
+    String? filter,
+    String? expand,
+  }) {
+    return pb.collection('material_events').getFullList(
+      filter: filter,
+      sort: '-created',
+      expand: expand,
+    );
+  }
+
   /// Events for every piece of a catalog material (incoming/outgoing timeline).
-  /// Throws [StateError] with a short migration hint if the collection is missing.
   Future<List<dynamic>> getMaterialEventsForMaterial(String materialId) async {
     final unavailable = await materialEventsUnavailableReason();
     if (unavailable != null) {
-      throw StateError(
-        'material_events missing — apply 1776820000_material_events_create.js on CT 105 ($unavailable)',
-      );
+      final statusMatch =
+          RegExp(r'HTTP (\d+)').firstMatch(unavailable)?.group(1);
+      if (_looksLikeMissingCollection(unavailable, status: statusMatch)) {
+        throw StateError(
+          'material_events collection missing — apply '
+          '1776820000_material_events_create.js on CT 105 ($unavailable)',
+        );
+      }
+      throw StateError('material_events not readable ($unavailable)');
     }
     final pieces = await getMaterialPiecesForMaterial(materialId);
-    final ids = pieces.map((p) => p.id.toString()).where((id) => id.isNotEmpty).toSet();
+    final ids =
+        pieces.map((p) => p.id.toString()).where((id) => id.isNotEmpty).toSet();
     if (ids.isEmpty) return [];
 
     // Preferred: nested relation filter (one request).
     try {
-      return await pb.collection('material_events').getFullList(
+      return await _listMaterialEvents(
         filter: 'piece.material = "$materialId"',
-        sort: '-created',
         expand: 'piece',
       );
     } catch (e) {
@@ -3308,20 +3337,22 @@ class PocketBaseService {
     }
 
     // Fallback: load events and keep those whose piece belongs to this material.
-    try {
-      final all = await pb.collection('material_events').getFullList(
-        sort: '-created',
-        expand: 'piece',
-      );
-      return all.where((rec) {
-        final data = rec.data as Map<String, dynamic>? ?? {};
-        final pid = _pieceIdFromEventData(data['piece']);
-        return ids.contains(pid);
-      }).toList();
-    } catch (e) {
-      print('Error listing material_events: $e');
-      rethrow;
+    // Try with expand first, then without (expand can 400 on some PB setups).
+    Object? lastError;
+    for (final expand in <String?>['piece', null]) {
+      try {
+        final all = await _listMaterialEvents(expand: expand);
+        return all.where((rec) {
+          final data = rec.data as Map<String, dynamic>? ?? {};
+          final pid = _pieceIdFromEventData(data['piece']);
+          return ids.contains(pid);
+        }).toList();
+      } catch (e) {
+        lastError = e;
+        print('Error listing material_events (expand=$expand): $e');
+      }
     }
+    throw lastError ?? StateError('Error listing material_events');
   }
 
   Future<dynamic> uploadPurchaseAttachments(

@@ -8,7 +8,8 @@ if (-not (Test-Path (Join-Path $repo '.git'))) { $repo = Get-Location }
 $files = @(
   '1776800000_material_pieces.js',
   '1776810000_ensure_material_events.js',
-  '1776820000_material_events_create.js'
+  '1776820000_material_events_create.js',
+  '1776830000_material_events_auth_rules.js'
 )
 foreach ($f in $files) {
   $src = Join-Path $repo "pb_migrations\$f"
@@ -23,17 +24,21 @@ Write-Host "Strip CRLF from migrations + restart PocketBase..." -ForegroundColor
 ssh $ct "sed -i 's/\r$//' /opt/pocketbase-erp-dev/pb_migrations/17768*.js && systemctl restart pocketbase-erp-dev && sleep 3 && systemctl is-active pocketbase-erp-dev && curl -sS http://127.0.0.1:8091/api/health"
 
 Write-Host "List migration files on CT..." -ForegroundColor Cyan
-ssh $ct "ls -la /opt/pocketbase-erp-dev/pb_migrations/17768*.js"
+ssh $ct 'ls -la /opt/pocketbase-erp-dev/pb_migrations/17768*.js'
 
 Write-Host "Recent PocketBase log..." -ForegroundColor Cyan
-ssh $ct "journalctl -u pocketbase-erp-dev -n 50 --no-pager"
+ssh $ct 'journalctl -u pocketbase-erp-dev -n 40 --no-pager'
 
-Write-Host "Check material* collections in data.db..." -ForegroundColor Cyan
-ssh $ct "command -v sqlite3 >/dev/null && sqlite3 /opt/pocketbase-erp-dev/pb_data/data.db `"SELECT name FROM _collections WHERE name LIKE 'material%' ORDER BY name;`" || echo 'sqlite3 missing or no data.db'"
+# Windows OpenSSH strips nested quotes — pipe SQL via echo instead of argv.
+Write-Host "material* collections..." -ForegroundColor Cyan
+ssh $ct 'echo SELECT name, listRule FROM _collections | sqlite3 -separator " | " /opt/pocketbase-erp-dev/pb_data/data.db | grep material'
 
-Write-Host "Check migration rows 17768*..." -ForegroundColor Cyan
-ssh $ct "command -v sqlite3 >/dev/null && sqlite3 /opt/pocketbase-erp-dev/pb_data/data.db `"SELECT file FROM _migrations WHERE file LIKE '17768%' ORDER BY file;`" || echo 'sqlite3 missing or no data.db'"
+Write-Host "migration rows 17768*..." -ForegroundColor Cyan
+ssh $ct 'echo SELECT file FROM _migrations | sqlite3 /opt/pocketbase-erp-dev/pb_data/data.db | grep 17768'
+
+Write-Host "material_events row count..." -ForegroundColor Cyan
+ssh $ct 'echo SELECT count(*) FROM material_events | sqlite3 /opt/pocketbase-erp-dev/pb_data/data.db'
 
 Write-Host ""
-Write-Host "Expect to see material_events in the collections list above." -ForegroundColor Green
+Write-Host "Expect material_events with a non-empty listRule, and 177683 in _migrations." -ForegroundColor Green
 Write-Host "Then: .\scripts\build_web_shop.ps1 and deploy shop-web.zip; hard-refresh History." -ForegroundColor Yellow
