@@ -345,13 +345,14 @@ class LabelPrintService {
   }
 
   /// Material piece label + QR = piece id.
-  /// Typical: identity / REM / P-code / optional LOT (after P).
-  /// Identity + REM are bold; P-code + LOT are regular and one size smaller.
+  /// Typical: identity / REM / optional LOT / P-code.
+  /// Identity + REM are bold; LOT + P-code are regular and one size smaller.
+  /// When [heatLotLine] is set it is drawn above the P-code.
   static Future<Uint8List> generateMaterialLabelImage({
     required String line1,
     required String line2,
-    required String line3,
-    String? line4,
+    String? heatLotLine,
+    required String codeLine,
     required String pieceId,
     int? width,
     int? height,
@@ -390,8 +391,9 @@ class LabelPrintService {
       trimLine(line2),
     ];
     final meta = <String>[
-      trimLine(line3),
-      if (line4 != null && line4.trim().isNotEmpty) trimLine(line4),
+      if (heatLotLine != null && heatLotLine.trim().isNotEmpty)
+        trimLine(heatLotLine),
+      trimLine(codeLine),
     ];
 
     final painters = <TextPainter>[
@@ -450,16 +452,16 @@ class LabelPrintService {
   static Future<void> printMaterialLabel({
     required String line1,
     required String line2,
-    required String line3,
-    String? line4,
+    String? heatLotLine,
+    required String codeLine,
     required String pieceId,
     String jobName = 'material',
   }) async {
     final pngBytes = await generateMaterialLabelImage(
       line1: line1,
       line2: line2,
-      line3: line3,
-      line4: line4,
+      heatLotLine: heatLotLine,
+      codeLine: codeLine,
       pieceId: pieceId,
     );
     await sendLabelPng(pngBytes, jobName: jobName);

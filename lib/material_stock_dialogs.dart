@@ -54,7 +54,7 @@ String materialLabelCodeForSticker(String labelCode) {
   return bare.substring(0, bare.length - 1);
 }
 
-/// Heat/lot line for stickers (shown after the P-code when present).
+/// Heat/lot line for stickers (shown above the P-code when present).
 String? materialHeatLotForSticker(String? heatLot) {
   final t = (heatLot ?? '').trim();
   if (t.isEmpty) return null;
@@ -81,8 +81,8 @@ Future<void> printOrPreviewMaterialLabel(
   final bytes = await LabelPrintService.generateMaterialLabelImage(
     line1: identity,
     line2: remLine,
-    line3: codeLine,
-    line4: heatLine,
+    heatLotLine: heatLine,
+    codeLine: codeLine,
     pieceId: piece.id,
   );
 
