@@ -20,6 +20,36 @@ String materialPieceIdentityLine(ShopMaterial m) {
   ].join(' · ');
 }
 
+/// Size for stickers: `1x2.5x12` → `1 x 2.5 x 12`.
+String formatMaterialSizeForLabel(String sizeLabel) {
+  final t = sizeLabel.trim();
+  if (t.isEmpty) return t;
+  return t.replaceAllMapped(RegExp(r'\s*[xX×]\s*'), (_) => ' x ');
+}
+
+/// Sticker identity: grade + form + spaced size (no middle dots).
+String materialPieceLabelIdentityLine(ShopMaterial m) {
+  final grade = m.grade.trim();
+  final form = materialFormLabel(m.form);
+  final size = formatMaterialSizeForLabel(m.sizeLabel);
+  return [
+    if (grade.isNotEmpty) grade,
+    form,
+    if (size.isNotEmpty) size,
+  ].join(' ');
+}
+
+String formatRemnantForLabel(double lengthIn) {
+  final v = lengthIn;
+  final numPart =
+      v == v.roundToDouble() ? '${v.round()}' : v.toStringAsFixed(1);
+  return 'REM: $numPart';
+}
+
+/// Printable piece code without dashes (`P-85L20` → `P85L20`).
+String materialLabelCodeForSticker(String labelCode) =>
+    labelCode.replaceAll('-', '');
+
 String _formatInches(double v) {
   if (v == v.roundToDouble()) return '${v.round()} in';
   return '${v.toStringAsFixed(1)} in';
@@ -30,15 +60,15 @@ Future<void> printOrPreviewMaterialLabel(
   required ShopMaterial material,
   required MaterialPiece piece,
 }) async {
-  final identity = materialPieceIdentityLine(material);
+  final identity = materialPieceLabelIdentityLine(material);
   final location = (piece.locationNote ?? '').trim();
-  final lengthLine = location.isEmpty
-      ? piece.lengthLabel
-      : '${piece.lengthLabel} · $location';
+  final rem = formatRemnantForLabel(piece.lengthIn);
+  final remLine = location.isEmpty ? rem : '$rem $location';
+  final codeLine = materialLabelCodeForSticker(piece.labelCode);
   final bytes = LabelPrintService.generateMaterialLabelImage(
-    labelCode: piece.labelCode,
-    identityLine: identity,
-    lengthLine: lengthLine,
+    line1: identity,
+    line2: remLine,
+    line3: codeLine,
     pieceId: piece.id,
   );
 

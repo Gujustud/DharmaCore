@@ -291,18 +291,40 @@ class LabelPrintService {
   /// QR payload for a material piece — stable id, not human length text.
   static String materialPieceQrPayload(String pieceId) => 'dharma://piece/$pieceId';
 
-  /// Material piece label: code + grade/form/size + length, QR = piece id.
+  /// Rightmost non-white x in [image], or -1 if blank.
+  static int _contentMaxX(img.Image image) {
+    var maxX = -1;
+    for (var y = 0; y < image.height; y++) {
+      for (var x = image.width - 1; x > maxX; x--) {
+        final p = image.getPixel(x, y);
+        if (p.r < 250 || p.g < 250 || p.b < 250) {
+          maxX = x;
+          break;
+        }
+      }
+    }
+    return maxX;
+  }
+
+  /// Material piece label: 3 text lines + QR = piece id.
+  /// Typical: `1018 Flat 1 x 2.5 x 12` / `REM: 3.5` / `P85L20`.
   static Uint8List generateMaterialLabelImage({
-    required String labelCode,
-    required String identityLine,
-    required String lengthLine,
+    required String line1,
+    required String line2,
+    required String line3,
     required String pieceId,
     int? width,
     int? height,
   }) {
-    const leftMargin = 14;
-    const rightMargin = 16;
-    const qrVerticalMargin = 6;
+    const leftMargin = 10;
+    const rightMargin = 12;
+    const qrVerticalMargin = 4;
+    // Scale arial24 up so three lines fill most of the 18mm tape height.
+    const targetLineHeight = 36;
+    const lineGap = 2;
+    const topPad = 6;
+    const maxChars = 32;
+    const gap = 8;
 
     final imageHeight = height ?? labelHeightPx;
     final qrMaxSide = imageHeight - 2 * qrVerticalMargin;
@@ -320,10 +342,8 @@ class LabelPrintService {
     final qrY = (imageHeight - qrSize) ~/ 2;
 
     final font = img.arial24;
-    const lineHeight = 28;
-    const maxChars = 28;
-    const pxPerChar = 14;
-    const gap = 8;
+    final white = img.ColorRgba8(255, 255, 255, 255);
+    final black = img.ColorRgba8(0, 0, 0, 255);
 
     String trimLine(String s) {
       final t = s.trim();
@@ -332,37 +352,48 @@ class LabelPrintService {
     }
 
     final lines = <String>[
-      trimLine(labelCode),
-      trimLine(identityLine),
-      trimLine(lengthLine),
+      trimLine(line1),
+      trimLine(line2),
+      trimLine(line3),
     ];
 
-    var textCol = 80;
+    // Render + scale each line, measure real ink width.
+    final scaledLines = <img.Image>[];
+    var textCol = 40;
     for (final line in lines) {
-      final w = line.length * pxPerChar;
+      final tempW = (line.length * 14 + 24).clamp(32, 400);
+      final temp = img.Image(width: tempW, height: 24);
+      img.fill(temp, color: white);
+      img.drawString(
+        temp,
+        line,
+        font: font,
+        x: 0,
+        y: 0,
+        color: black,
+      );
+      final scaled = img.copyResize(temp, height: targetLineHeight);
+      final ink = _contentMaxX(scaled);
+      final w = ink < 0 ? 40 : ink + 1;
       if (w > textCol) textCol = w;
+      scaledLines.add(scaled);
     }
-    textCol = textCol.clamp(80, 260);
 
     final computedWidth = leftMargin + textCol + gap + qrSize + rightMargin;
     final imageWidth = (width ?? computedWidth).clamp(0, maxLabelWidthPx);
 
     final image = img.Image(width: imageWidth, height: imageHeight);
-    final white = img.ColorRgba8(255, 255, 255, 255);
-    final black = img.ColorRgba8(0, 0, 0, 255);
     img.fill(image, color: white);
 
-    var y = 10;
-    for (final line in lines) {
-      img.drawString(
+    var y = topPad;
+    for (final scaled in scaledLines) {
+      img.compositeImage(
         image,
-        line,
-        font: font,
-        x: leftMargin,
-        y: y,
-        color: black,
+        scaled,
+        dstX: leftMargin,
+        dstY: y,
       );
-      y += lineHeight;
+      y += targetLineHeight + lineGap;
     }
 
     // QR immediately after the text column (saves blank tape).
@@ -388,18 +419,19 @@ class LabelPrintService {
   }
 
   static Future<void> printMaterialLabel({
-    required String labelCode,
-    required String identityLine,
-    required String lengthLine,
+    required String line1,
+    required String line2,
+    required String line3,
     required String pieceId,
+    String jobName = 'material',
   }) async {
     final pngBytes = generateMaterialLabelImage(
-      labelCode: labelCode,
-      identityLine: identityLine,
-      lengthLine: lengthLine,
+      line1: line1,
+      line2: line2,
+      line3: line3,
       pieceId: pieceId,
     );
-    await sendLabelPng(pngBytes, jobName: 'material-$labelCode');
+    await sendLabelPng(pngBytes, jobName: jobName);
   }
 
   /// DEBUG: Export a sample label PNG to disk so it can be inspected without printing.
