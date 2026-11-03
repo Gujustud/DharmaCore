@@ -3226,14 +3226,29 @@ class PocketBaseService {
     }
   }
 
+  /// True when `material_events` is listable (migration applied).
+  Future<bool> materialEventsCollectionAvailable() async {
+    try {
+      await pb.collection('material_events').getList(page: 1, perPage: 1);
+      return true;
+    } catch (e) {
+      print('material_events not available: $e');
+      return false;
+    }
+  }
+
   /// Events for every piece of a catalog material (incoming/outgoing timeline).
-  /// Fetches per-piece to avoid brittle OR filters; returns [] if collection missing.
+  /// Fetches per-piece to avoid brittle OR filters.
+  /// Throws [StateError] with a short migration hint if the collection is missing.
   Future<List<dynamic>> getMaterialEventsForMaterial(String materialId) async {
+    if (!await materialEventsCollectionAvailable()) {
+      throw StateError(
+        'material_events missing — apply 1776810000_ensure_material_events.js on CT 105',
+      );
+    }
     final pieces = await getMaterialPiecesForMaterial(materialId);
     if (pieces.isEmpty) return [];
     final out = <dynamic>[];
-    var anyOk = false;
-    Object? lastErr;
     for (final p in pieces) {
       final id = p.id.toString();
       if (id.isEmpty) continue;
@@ -3242,15 +3257,10 @@ class PocketBaseService {
           filter: 'piece = "$id"',
           sort: '-created',
         );
-        anyOk = true;
         out.addAll(rows);
       } catch (e) {
-        lastErr = e;
         print('Error getting material events for piece $id: $e');
       }
-    }
-    if (!anyOk && lastErr != null) {
-      throw lastErr;
     }
     out.sort((a, b) {
       final ac = DateTime.tryParse('${a.created ?? ''}') ??

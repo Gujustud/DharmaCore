@@ -859,18 +859,20 @@ Future<void> showMaterialHistoryDialog(
   await showDialog<void>(
     context: context,
     builder: (ctx) {
+      final size = MediaQuery.sizeOf(ctx);
+      final dialogW = (size.width - 48).clamp(480.0, 920.0);
+      final dialogH = (size.height - 160).clamp(360.0, 720.0);
       return AlertDialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
         title: Text('History · ${material.displayLabel}'),
         content: SizedBox(
-          width: 520,
+          width: dialogW,
+          height: dialogH,
           child: FutureBuilder<List<_MaterialHistoryRow>>(
             future: _loadMaterialHistoryRows(material),
             builder: (ctx, snap) {
               if (snap.connectionState != ConnectionState.done) {
-                return const SizedBox(
-                  height: 120,
-                  child: Center(child: CircularProgressIndicator()),
-                );
+                return const Center(child: CircularProgressIndicator());
               }
               if (snap.hasError) {
                 return Text(
@@ -887,24 +889,18 @@ Future<void> showMaterialHistoryDialog(
                   ),
                 );
               }
-              return ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 480),
-                child: ListView.separated(
-                  shrinkWrap: true,
-                  itemCount: rows.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (ctx, i) {
-                    final row = rows[i];
-                    return ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(row.title),
-                      subtitle: row.subtitle.isEmpty
-                          ? null
-                          : Text(row.subtitle),
-                      dense: true,
-                    );
-                  },
-                ),
+              return ListView.separated(
+                itemCount: rows.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (ctx, i) {
+                  final row = rows[i];
+                  return ListTile(
+                    contentPadding: const EdgeInsets.symmetric(vertical: 4),
+                    title: Text(row.title),
+                    subtitle:
+                        row.subtitle.isEmpty ? null : Text(row.subtitle),
+                  );
+                },
               );
             },
           ),
