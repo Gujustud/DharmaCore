@@ -1,6 +1,8 @@
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:pdf/pdf.dart';
@@ -59,45 +61,126 @@ class LabelPrintService {
 
   /// Trim trailing blank tape: keep ink + [rightPad] px only.
   static img.Image _cropLabelToContent(img.Image image, {int rightPad = 16}) {
-    var maxX = 0;
-    for (var y = 0; y < image.height; y++) {
-      for (var x = image.width - 1; x > maxX; x--) {
-        final p = image.getPixel(x, y);
-        if (p.r < 250 || p.g < 250 || p.b < 250) {
-          maxX = x;
-          break;
-        }
-      }
-    }
+    final maxX = _contentMaxX(image);
+    if (maxX < 0) return image;
     final newW = (maxX + rightPad + 1).clamp(1, image.width);
     if (newW >= image.width) return image;
     return img.copyCrop(image, x: 0, y: 0, width: newW, height: image.height);
   }
 
-  /// Generate label as PNG bytes: line 1 = [toolName], line 2 = BIN: [binCode], QR = tool name + BIN.
-  /// Canvas height = full 18mm (labelHeightPx); QR uses that height; width = length along tape.
-  static Uint8List generateLabelImage({
+  /// Flatten anti-aliased grays to pure B/W for crisp TZe thermal output.
+  static img.Image _toStrictBlackWhite(img.Image src, {int threshold = 160}) {
+    final white = img.ColorRgba8(255, 255, 255, 255);
+    final black = img.ColorRgba8(0, 0, 0, 255);
+    for (var y = 0; y < src.height; y++) {
+      for (var x = 0; x < src.width; x++) {
+        final p = src.getPixel(x, y);
+        final lum = (p.r + p.g + p.b) / 3;
+        src.setPixel(x, y, lum < threshold ? black : white);
+      }
+    }
+    return src;
+  }
+
+  static TextPainter _labelTextPainter(
+    String text, {
+    required double fontSize,
+    FontWeight weight = FontWeight.w700,
+  }) {
+    final painter = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          fontFamily: 'NotoSans',
+          fontWeight: weight,
+          fontSize: fontSize,
+          color: const Color(0xFF000000),
+          height: 1.05,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1,
+      ellipsis: '…',
+    )..layout(maxWidth: 520);
+    return painter;
+  }
+
+  static Future<Uint8List> _canvasLabelToPng({
+    required int imageWidth,
+    required int imageHeight,
+    required void Function(Canvas canvas) paint,
+    int rightPad = 12,
+  }) async {
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, imageWidth.toDouble(), imageHeight.toDouble()),
+      Paint()..color = const Color(0xFFFFFFFF),
+    );
+    paint(canvas);
+    final picture = recorder.endRecording();
+    final rendered =
+        await picture.toImage(imageWidth, imageHeight);
+    final byteData =
+        await rendered.toByteData(format: ui.ImageByteFormat.png);
+    picture.dispose();
+    rendered.dispose();
+    final raw = byteData?.buffer.asUint8List() ?? Uint8List(0);
+    final decoded = img.decodePng(raw);
+    if (decoded == null) return raw;
+    final bw = _toStrictBlackWhite(decoded);
+    final cropped = _cropLabelToContent(bw, rightPad: rightPad);
+    return Uint8List.fromList(img.encodePng(cropped));
+  }
+
+  static void _paintQr(
+    Canvas canvas, {
+    required QrImage qrImage,
+    required int moduleCount,
+    required int modulePx,
+    required double originX,
+    required double originY,
+  }) {
+    final paint = Paint()..color = const Color(0xFF000000);
+    for (var row = 0; row < moduleCount; row++) {
+      for (var col = 0; col < moduleCount; col++) {
+        if (!qrImage.isDark(row, col)) continue;
+        canvas.drawRect(
+          Rect.fromLTWH(
+            originX + col * modulePx,
+            originY + row * modulePx,
+            modulePx.toDouble(),
+            modulePx.toDouble(),
+          ),
+          paint,
+        );
+      }
+    }
+  }
+
+  /// Generate label as PNG bytes: BIN + tool name + QR.
+  /// Uses bundled NotoSans (not upscaled bitmap fonts).
+  static Future<Uint8List> generateLabelImage({
     required String toolName,
     required String binCode,
     int? width,
     int? height,
-  }) {
-    const leftMargin = 14;
-    const rightMargin = 16;
+  }) async {
+    const leftMargin = 12.0;
+    const rightMargin = 12;
     const qrVerticalMargin = 6;
+    const gap = 8.0;
+    const toolMaxCharsPerLine = 26;
+    const binFontSize = 30.0;
+    const nameFontSize = 26.0;
 
-    // Height = full 18mm tape width in pixels.
     final imageHeight = height ?? labelHeightPx;
-    // QR square uses max height minus margins.
     final qrMaxSide = imageHeight - 2 * qrVerticalMargin;
 
-    // Bin number only (last segment of path, e.g. A-C-1-250 → 250) so label stays valid if bin is moved.
     final binNumber = binCode.contains('-')
         ? binCode.substring(binCode.lastIndexOf('-') + 1)
         : binCode;
-    // QR encodes tool name + bin number so a scan shows both.
     final qrData = '$toolName\nBIN: $binNumber';
-    // qr ^3 API (pdf/barcode pins qr <4).
     final qrCode = QrCode.fromData(
       data: qrData,
       errorCorrectLevel: QrErrorCorrectLevel.L,
@@ -106,21 +189,9 @@ class LabelPrintService {
     final qrModuleCount = qrImage.moduleCount;
     final qrModulePixel = (qrMaxSide / qrModuleCount).floor().clamp(1, 20);
     final qrSize = qrModuleCount * qrModulePixel;
-    final qrY = (imageHeight - qrSize) ~/ 2;
+    final qrY = (imageHeight - qrSize) / 2;
 
-    // Fonts: use arial24 for both, but scale BIN slightly larger via bitmap scaling.
-    final binFont = img.arial24;
-    final toolFont = img.arial24;
-    const targetBinHeight = 32; // approx "30px" visual height after scaling
-    const toolLineHeight = 28;
-    const toolMaxCharsPerLine = 26;
-    // ~14px/char for arial24; BIN is scaled ~32/24 so slightly wider.
-    const pxPerChar = 14;
-
-    // BIN at top: bin number only (e.g. BIN: 250), scaled slightly larger.
     final binLine = 'BIN: $binNumber';
-
-    // Tool name near bottom: wrap to 2 lines if too long (split at last space).
     final nameLines = <String>[];
     if (toolName.length <= toolMaxCharsPerLine) {
       nameLines.add(toolName);
@@ -136,77 +207,43 @@ class LabelPrintService {
       }
     }
 
-    var textCol = (binLine.length * pxPerChar * targetBinHeight / 24).ceil();
-    for (final line in nameLines) {
-      final w = line.length * pxPerChar;
-      if (w > textCol) textCol = w;
-    }
-    textCol = textCol.clamp(80, 260);
+    final binPainter = _labelTextPainter(binLine, fontSize: binFontSize);
+    final namePainters = nameLines
+        .map((l) => _labelTextPainter(l, fontSize: nameFontSize))
+        .toList();
 
-    // Width: text + gap + QR + margins (length along tape), capped at 3.1".
-    const gap = 8;
-    final computedWidth = leftMargin + textCol + gap + qrSize + rightMargin;
+    var textCol = binPainter.width;
+    for (final p in namePainters) {
+      if (p.width > textCol) textCol = p.width;
+    }
+
+    final computedWidth =
+        (leftMargin + textCol + gap + qrSize + rightMargin).ceil();
     final imageWidth = (width ?? computedWidth).clamp(0, maxLabelWidthPx);
 
-    final image = img.Image(width: imageWidth, height: imageHeight);
-    final white = img.ColorRgba8(255, 255, 255, 255);
-    final black = img.ColorRgba8(0, 0, 0, 255);
-    img.fill(image, color: white);
-
-    const binY = 14; // a bit more breathing room from the top
-    // Render BIN into a temporary image with the base font, then scale it UP.
-    // Height of temp image (24) is smaller than targetBinHeight (32) so we enlarge.
-    final binTemp = img.Image(width: textCol + 8, height: 24);
-    img.fill(binTemp, color: white);
-    img.drawString(
-      binTemp,
-      binLine,
-      font: binFont,
-      x: 0,
-      y: 0,
-      color: black,
-    );
-    final binScaled = img.copyResize(binTemp, height: targetBinHeight);
-    img.compositeImage(
-      image,
-      binScaled,
-      dstX: leftMargin,
-      dstY: binY,
-    );
-
-    final toolBlockHeight = nameLines.length * toolLineHeight;
-    final toolStartY = imageHeight - toolBlockHeight - 8; // 8px bottom margin
-    for (var i = 0; i < nameLines.length; i++) {
-      img.drawString(
-        image,
-        nameLines[i],
-        font: toolFont,
-        x: leftMargin,
-        y: toolStartY + i * toolLineHeight,
-        color: black,
-      );
-    }
-
-    // QR immediately after the text column (saves blank tape).
-    final qrX = leftMargin + textCol + gap;
-    for (var row = 0; row < qrModuleCount; row++) {
-      for (var col = 0; col < qrModuleCount; col++) {
-        if (qrImage.isDark(row, col)) {
-          for (var dy = 0; dy < qrModulePixel; dy++) {
-            for (var dx = 0; dx < qrModulePixel; dx++) {
-              final x = qrX + col * qrModulePixel + dx;
-              final y = qrY + row * qrModulePixel + dy;
-              if (x < imageWidth && y < imageHeight) {
-                image.setPixel(x, y, black);
-              }
-            }
-          }
+    return _canvasLabelToPng(
+      imageWidth: imageWidth,
+      imageHeight: imageHeight,
+      rightPad: rightMargin,
+      paint: (canvas) {
+        binPainter.paint(canvas, const Offset(leftMargin, 10));
+        final nameBlockH =
+            namePainters.fold<double>(0, (s, p) => s + p.height);
+        var y = imageHeight - nameBlockH - 8;
+        for (final p in namePainters) {
+          p.paint(canvas, Offset(leftMargin, y));
+          y += p.height;
         }
-      }
-    }
-
-    final cropped = _cropLabelToContent(image, rightPad: rightMargin);
-    return Uint8List.fromList(img.encodePng(cropped));
+        _paintQr(
+          canvas,
+          qrImage: qrImage,
+          moduleCount: qrModuleCount,
+          modulePx: qrModulePixel,
+          originX: leftMargin + textCol + gap,
+          originY: qrY,
+        );
+      },
+    );
   }
 
   /// Along-tape length in mm for a label bitmap (x = length, y = 18mm).
@@ -284,7 +321,8 @@ class LabelPrintService {
     required String toolName,
     required String binCode,
   }) async {
-    final pngBytes = generateLabelImage(toolName: toolName, binCode: binCode);
+    final pngBytes =
+        await generateLabelImage(toolName: toolName, binCode: binCode);
     await sendLabelPng(pngBytes, jobName: 'tool-$binCode');
   }
 
@@ -308,29 +346,28 @@ class LabelPrintService {
 
   /// Material piece label: 3 text lines + QR = piece id.
   /// Typical: `1018 Flat 1 x 2.5 x 12` / `REM: 3.5` / `P85L20`.
-  static Uint8List generateMaterialLabelImage({
+  /// Text is NotoSans Bold at final size (no bitmap upscale).
+  static Future<Uint8List> generateMaterialLabelImage({
     required String line1,
     required String line2,
     required String line3,
     required String pieceId,
     int? width,
     int? height,
-  }) {
-    const leftMargin = 10;
+  }) async {
+    const leftMargin = 10.0;
     const rightMargin = 12;
     const qrVerticalMargin = 4;
-    // Scale arial24 up so three lines fill most of the 18mm tape height.
-    const targetLineHeight = 36;
-    const lineGap = 2;
-    const topPad = 6;
+    const fontSize = 32.0;
+    const lineGap = 2.0;
+    const topPad = 6.0;
     const maxChars = 32;
-    const gap = 8;
+    const gap = 8.0;
 
     final imageHeight = height ?? labelHeightPx;
     final qrMaxSide = imageHeight - 2 * qrVerticalMargin;
 
     final qrData = materialPieceQrPayload(pieceId);
-    // qr ^3 API (pdf/barcode pins qr <4).
     final qrCode = QrCode.fromData(
       data: qrData,
       errorCorrectLevel: QrErrorCorrectLevel.L,
@@ -339,11 +376,7 @@ class LabelPrintService {
     final qrModuleCount = qrImage.moduleCount;
     final qrModulePixel = (qrMaxSide / qrModuleCount).floor().clamp(1, 20);
     final qrSize = qrModuleCount * qrModulePixel;
-    final qrY = (imageHeight - qrSize) ~/ 2;
-
-    final font = img.arial24;
-    final white = img.ColorRgba8(255, 255, 255, 255);
-    final black = img.ColorRgba8(0, 0, 0, 255);
+    final qrY = (imageHeight - qrSize) / 2;
 
     String trimLine(String s) {
       final t = s.trim();
@@ -356,66 +389,38 @@ class LabelPrintService {
       trimLine(line2),
       trimLine(line3),
     ];
+    final painters =
+        lines.map((l) => _labelTextPainter(l, fontSize: fontSize)).toList();
 
-    // Render + scale each line, measure real ink width.
-    final scaledLines = <img.Image>[];
-    var textCol = 40;
-    for (final line in lines) {
-      final tempW = (line.length * 14 + 24).clamp(32, 400);
-      final temp = img.Image(width: tempW, height: 24);
-      img.fill(temp, color: white);
-      img.drawString(
-        temp,
-        line,
-        font: font,
-        x: 0,
-        y: 0,
-        color: black,
-      );
-      final scaled = img.copyResize(temp, height: targetLineHeight);
-      final ink = _contentMaxX(scaled);
-      final w = ink < 0 ? 40 : ink + 1;
-      if (w > textCol) textCol = w;
-      scaledLines.add(scaled);
+    var textCol = 40.0;
+    for (final p in painters) {
+      if (p.width > textCol) textCol = p.width;
     }
 
-    final computedWidth = leftMargin + textCol + gap + qrSize + rightMargin;
+    final computedWidth =
+        (leftMargin + textCol + gap + qrSize + rightMargin).ceil();
     final imageWidth = (width ?? computedWidth).clamp(0, maxLabelWidthPx);
 
-    final image = img.Image(width: imageWidth, height: imageHeight);
-    img.fill(image, color: white);
-
-    var y = topPad;
-    for (final scaled in scaledLines) {
-      img.compositeImage(
-        image,
-        scaled,
-        dstX: leftMargin,
-        dstY: y,
-      );
-      y += targetLineHeight + lineGap;
-    }
-
-    // QR immediately after the text column (saves blank tape).
-    final qrX = leftMargin + textCol + gap;
-    for (var row = 0; row < qrModuleCount; row++) {
-      for (var col = 0; col < qrModuleCount; col++) {
-        if (qrImage.isDark(row, col)) {
-          for (var dy = 0; dy < qrModulePixel; dy++) {
-            for (var dx = 0; dx < qrModulePixel; dx++) {
-              final x = qrX + col * qrModulePixel + dx;
-              final py = qrY + row * qrModulePixel + dy;
-              if (x < imageWidth && py < imageHeight) {
-                image.setPixel(x, py, black);
-              }
-            }
-          }
+    return _canvasLabelToPng(
+      imageWidth: imageWidth,
+      imageHeight: imageHeight,
+      rightPad: rightMargin,
+      paint: (canvas) {
+        var y = topPad;
+        for (final p in painters) {
+          p.paint(canvas, Offset(leftMargin, y));
+          y += p.height + lineGap;
         }
-      }
-    }
-
-    final cropped = _cropLabelToContent(image, rightPad: rightMargin);
-    return Uint8List.fromList(img.encodePng(cropped));
+        _paintQr(
+          canvas,
+          qrImage: qrImage,
+          moduleCount: qrModuleCount,
+          modulePx: qrModulePixel,
+          originX: leftMargin + textCol + gap,
+          originY: qrY,
+        );
+      },
+    );
   }
 
   static Future<void> printMaterialLabel({
@@ -425,7 +430,7 @@ class LabelPrintService {
     required String pieceId,
     String jobName = 'material',
   }) async {
-    final pngBytes = generateMaterialLabelImage(
+    final pngBytes = await generateMaterialLabelImage(
       line1: line1,
       line2: line2,
       line3: line3,
@@ -440,9 +445,8 @@ class LabelPrintService {
     required String toolName,
     required String binCode,
   }) async {
-    final bytes = generateLabelImage(toolName: toolName, binCode: binCode);
-    // Use a platform channel on Android/iOS, or write directly on desktop/web via dart:io.
-    // For simplicity here we just reuse the same MethodChannel with a debug method.
+    final bytes =
+        await generateLabelImage(toolName: toolName, binCode: binCode);
     final path = await _channel.invokeMethod<String>('exportLabelPng', {
       'imageBytes': bytes.toList(),
       'toolName': toolName,

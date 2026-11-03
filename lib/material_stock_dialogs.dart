@@ -65,7 +65,7 @@ Future<void> printOrPreviewMaterialLabel(
   final rem = formatRemnantForLabel(piece.lengthIn);
   final remLine = location.isEmpty ? rem : '$rem $location';
   final codeLine = materialLabelCodeForSticker(piece.labelCode);
-  final bytes = LabelPrintService.generateMaterialLabelImage(
+  final bytes = await LabelPrintService.generateMaterialLabelImage(
     line1: identity,
     line2: remLine,
     line3: codeLine,
