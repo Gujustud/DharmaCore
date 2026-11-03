@@ -707,9 +707,6 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     final muted = Theme.of(context).textTheme.bodyMedium?.copyWith(
           color: scheme.onSurfaceVariant,
         );
-    final priceValueStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
-          fontWeight: FontWeight.w600,
-        );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -720,7 +717,7 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Expanded(
                     child: Column(
@@ -744,33 +741,17 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                     ),
                   ),
                   const SizedBox(width: 16),
-                  if (prices != null)
-                    _buildPriceColumn(
-                      prices,
-                      labelStyle: muted,
-                      valueStyle: priceValueStyle,
+                  if (prices != null) ...[
+                    _buildPriceColumn(scheme, prices),
+                    const SizedBox(width: 12),
+                    Container(
+                      width: 1,
+                      height: 28,
+                      color: scheme.outlineVariant,
                     ),
-                  TextButton.icon(
-                    onPressed: () => showMaterialHistoryDialog(
-                      context,
-                      material: selected,
-                    ),
-                    icon: const Icon(Icons.history, size: 18),
-                    label: const Text('History'),
-                  ),
-                  const SizedBox(width: 4),
-                  TextButton.icon(
-                    onPressed: () => _editMaterial(selected),
-                    icon: const Icon(Icons.edit_outlined, size: 18),
-                    label: const Text('Edit'),
-                  ),
-                  const SizedBox(width: 4),
-                  TextButton.icon(
-                    onPressed: () => _deleteMaterial(selected),
-                    style: TextButton.styleFrom(foregroundColor: scheme.error),
-                    icon: const Icon(Icons.delete_outline, size: 18),
-                    label: const Text('Delete'),
-                  ),
+                    const SizedBox(width: 12),
+                  ],
+                  _buildHeaderActions(scheme, selected),
                 ],
               ),
               if (mcmasterProductUrl(selected.notes) != null) ...[
@@ -1130,38 +1111,132 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     );
   }
 
-  Widget _buildPriceColumn(
-    _MaterialPriceSummary prices, {
-    required TextStyle? labelStyle,
-    required TextStyle? valueStyle,
-  }) {
-    Widget row(String label, String value) {
+  /// Quiet cost metrics — read-only data, kept apart from header actions.
+  Widget _buildPriceColumn(ColorScheme scheme, _MaterialPriceSummary prices) {
+    final labelStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: scheme.onSurfaceVariant,
+          fontWeight: FontWeight.w500,
+          height: 1.1,
+        );
+    final valueStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
+          fontWeight: FontWeight.w600,
+          fontFeatures: const [FontFeature.tabularFigures()],
+          height: 1.2,
+        );
+
+    Widget metric(String label, String value) {
       return Padding(
-        padding: const EdgeInsets.only(bottom: 2),
+        padding: const EdgeInsets.symmetric(vertical: 1),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             SizedBox(
-              width: 48,
+              width: 36,
               child: Text(label, style: labelStyle),
             ),
+            const SizedBox(width: 8),
             Text(value, style: valueStyle),
           ],
         ),
       );
     }
 
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          row('Last', '${_money.format(prices.last)}${prices.unitSuffix}'),
-          if (prices.avg != null)
-            row('Avg', '${_money.format(prices.avg!)}${prices.unitSuffix}'),
-          if (prices.perInch != null)
-            row('\$/in', _money.format(prices.perInch!)),
-        ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        metric('Last', '${_money.format(prices.last)}${prices.unitSuffix}'),
+        if (prices.avg != null)
+          metric('Avg', '${_money.format(prices.avg!)}${prices.unitSuffix}'),
+        if (prices.perInch != null)
+          metric('\$/in', _money.format(prices.perInch!)),
+      ],
+    );
+  }
+
+  /// Compact outlined toolbar for History / Edit / Delete.
+  Widget _buildHeaderActions(ColorScheme scheme, ShopMaterial selected) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: scheme.outline),
+      ),
+      child: Material(
+        type: MaterialType.transparency,
+        child: IntrinsicHeight(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _headerActionButton(
+                scheme: scheme,
+                icon: Icons.history,
+                label: 'History',
+                onPressed: () => showMaterialHistoryDialog(
+                  context,
+                  material: selected,
+                ),
+              ),
+              VerticalDivider(
+                width: 1,
+                thickness: 1,
+                color: scheme.outline,
+              ),
+              _headerActionButton(
+                scheme: scheme,
+                icon: Icons.edit_outlined,
+                label: 'Edit',
+                onPressed: () => _editMaterial(selected),
+              ),
+              VerticalDivider(
+                width: 1,
+                thickness: 1,
+                color: scheme.outline,
+              ),
+              _headerActionButton(
+                scheme: scheme,
+                icon: Icons.delete_outline,
+                label: 'Delete',
+                danger: true,
+                onPressed: () => _deleteMaterial(selected),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _headerActionButton({
+    required ColorScheme scheme,
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+    bool danger = false,
+  }) {
+    final color = danger ? scheme.error : scheme.onSurface;
+    return Tooltip(
+      message: label,
+      waitDuration: const Duration(milliseconds: 600),
+      child: InkWell(
+        onTap: onPressed,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 16, color: color),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: color,
+                      fontWeight: FontWeight.w500,
+                    ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
