@@ -3227,20 +3227,39 @@ class PocketBaseService {
   }
 
   /// Events for every piece of a catalog material (incoming/outgoing timeline).
+  /// Fetches per-piece to avoid brittle OR filters; returns [] if collection missing.
   Future<List<dynamic>> getMaterialEventsForMaterial(String materialId) async {
-    try {
-      final pieces = await getMaterialPiecesForMaterial(materialId);
-      if (pieces.isEmpty) return [];
-      final ids = pieces.map((p) => p.id.toString()).toList();
-      final filter = ids.map((id) => 'piece = "$id"').join(' || ');
-      return await pb.collection('material_events').getFullList(
-        filter: filter,
-        sort: '-created',
-      );
-    } catch (e) {
-      print('Error getting material events for material: $e');
-      rethrow;
+    final pieces = await getMaterialPiecesForMaterial(materialId);
+    if (pieces.isEmpty) return [];
+    final out = <dynamic>[];
+    var anyOk = false;
+    Object? lastErr;
+    for (final p in pieces) {
+      final id = p.id.toString();
+      if (id.isEmpty) continue;
+      try {
+        final rows = await pb.collection('material_events').getFullList(
+          filter: 'piece = "$id"',
+          sort: '-created',
+        );
+        anyOk = true;
+        out.addAll(rows);
+      } catch (e) {
+        lastErr = e;
+        print('Error getting material events for piece $id: $e');
+      }
     }
+    if (!anyOk && lastErr != null) {
+      throw lastErr;
+    }
+    out.sort((a, b) {
+      final ac = DateTime.tryParse('${a.created ?? ''}') ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+      final bc = DateTime.tryParse('${b.created ?? ''}') ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+      return bc.compareTo(ac);
+    });
+    return out;
   }
 
   Future<dynamic> uploadPurchaseAttachments(

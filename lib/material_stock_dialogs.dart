@@ -827,14 +827,15 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
         ),
       );
     }
-  } catch (e) {
-    // Surface migration / API issues as a single row so the dialog still opens.
+  } catch (_) {
+    // Purchases still show; piece log needs material_events on the server.
     rows.add(
       _MaterialHistoryRow(
         when: null,
-        title: 'Piece activity unavailable',
+        title: 'Cut / scrap log not on this server yet',
         subtitle:
-            'Apply pb_migrations/1776800000_material_pieces.js on CT 105 if material_events is missing. ($e)',
+            'Copy pb_migrations/1776810000_ensure_material_events.js to CT 105 '
+            'pb_migrations, restart pocketbase-erp-dev, then reopen History.',
       ),
     );
   }
