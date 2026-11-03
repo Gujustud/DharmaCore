@@ -3073,19 +3073,13 @@ class PocketBaseService {
         body['notes'] = notes.trim();
       }
       final created = await pb.collection('material_pieces').create(body: body);
-      try {
-        final email = pb.authStore.record?.getStringValue('email') ?? '';
-        await pb.collection('material_events').create(body: {
-          'piece': created.id,
-          'event_type': 'intake',
-          'length_before': lengthIn,
-          'length_after': lengthIn,
-          if (email.isNotEmpty) 'created_by_email': email,
-          if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
-        });
-      } catch (e) {
-        print('Warning: intake event not recorded: $e');
-      }
+      await _recordMaterialEvent(
+        pieceId: created.id,
+        eventType: 'intake',
+        lengthBefore: lengthIn,
+        lengthAfter: lengthIn,
+        notes: notes,
+      );
       return created;
     } catch (e) {
       print('Error creating material piece: $e');
@@ -3120,19 +3114,13 @@ class PocketBaseService {
         body: body,
       );
       if ((before - lengthIn).abs() > 0.0005) {
-        try {
-          final email = pb.authStore.record?.getStringValue('email') ?? '';
-          await pb.collection('material_events').create(body: {
-            'piece': pieceId,
-            'event_type': 'adjust',
-            'length_before': before,
-            'length_after': lengthIn,
-            if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
-            if (email.isNotEmpty) 'created_by_email': email,
-          });
-        } catch (e) {
-          print('Warning: adjust event not recorded: $e');
-        }
+        await _recordMaterialEvent(
+          pieceId: pieceId,
+          eventType: 'adjust',
+          lengthBefore: before,
+          lengthAfter: lengthIn,
+          notes: notes,
+        );
       }
       return updated;
     } catch (e) {
@@ -3172,21 +3160,15 @@ class PocketBaseService {
         pieceId,
         body: body,
       );
-      try {
-        final email = pb.authStore.record?.getStringValue('email') ?? '';
-        await pb.collection('material_events').create(body: {
-          'piece': pieceId,
-          'event_type': 'cut',
-          'length_before': before,
-          'length_after': lengthAfter,
-          'cut_length': cutLengthIn,
-          if (jobRef != null && jobRef.trim().isNotEmpty) 'job_ref': jobRef.trim(),
-          if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
-          if (email.isNotEmpty) 'created_by_email': email,
-        });
-      } catch (e) {
-        print('Warning: cut event not recorded: $e');
-      }
+      await _recordMaterialEvent(
+        pieceId: pieceId,
+        eventType: 'cut',
+        lengthBefore: before,
+        lengthAfter: lengthAfter,
+        cutLength: cutLengthIn,
+        jobRef: jobRef,
+        notes: notes,
+      );
       return updated;
     } catch (e) {
       print('Error cutting material piece: $e');
@@ -3206,23 +3188,49 @@ class PocketBaseService {
           'status': 'scrap',
         },
       );
-      try {
-        final email = pb.authStore.record?.getStringValue('email') ?? '';
-        await pb.collection('material_events').create(body: {
-          'piece': pieceId,
-          'event_type': 'scrap',
-          'length_before': before,
-          'length_after': 0,
-          if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
-          if (email.isNotEmpty) 'created_by_email': email,
-        });
-      } catch (e) {
-        // Piece is scrapped; event log may be missing until migration is applied.
-        print('Warning: scrap event not recorded: $e');
-      }
+      await _recordMaterialEvent(
+        pieceId: pieceId,
+        eventType: 'scrap',
+        lengthBefore: before,
+        lengthAfter: 0,
+        notes: notes,
+      );
     } catch (e) {
       print('Error scrapping material piece: $e');
       rethrow;
+    }
+  }
+
+  /// Writes a material_events row. Never throws — piece ops must still succeed.
+  /// Returns an error message when logging failed (for optional UI snackbars).
+  Future<String?> _recordMaterialEvent({
+    required String pieceId,
+    required String eventType,
+    double? lengthBefore,
+    double? lengthAfter,
+    double? cutLength,
+    String? jobRef,
+    String? notes,
+  }) async {
+    try {
+      final email = pb.authStore.record?.getStringValue('email') ?? '';
+      final body = <String, dynamic>{
+        'piece': pieceId,
+        'event_type': eventType,
+        // Avoid sending literal 0 on number fields — some PB setups treat it as blank.
+        if (lengthBefore != null && lengthBefore > 0)
+          'length_before': lengthBefore,
+        if (lengthAfter != null && lengthAfter > 0) 'length_after': lengthAfter,
+        if (cutLength != null && cutLength > 0) 'cut_length': cutLength,
+        if (jobRef != null && jobRef.trim().isNotEmpty) 'job_ref': jobRef.trim(),
+        if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+        if (email.isNotEmpty) 'created_by_email': email,
+      };
+      await pb.collection('material_events').create(body: body);
+      return null;
+    } catch (e) {
+      print('Warning: $eventType event not recorded for $pieceId: $e');
+      return '$e';
     }
   }
 
@@ -3231,6 +3239,7 @@ class PocketBaseService {
       return await pb.collection('material_events').getFullList(
         filter: 'piece = "$pieceId"',
         sort: '-created',
+        expand: 'piece',
       );
     } catch (e) {
       print('Error getting material events: $e');
@@ -3249,8 +3258,19 @@ class PocketBaseService {
     }
   }
 
+  String _pieceIdFromEventData(dynamic raw) {
+    if (raw == null) return '';
+    if (raw is String) return raw;
+    if (raw is Map) return (raw['id'] ?? '').toString();
+    try {
+      // Expanded relation record
+      final id = raw.id;
+      if (id != null) return id.toString();
+    } catch (_) {}
+    return raw.toString();
+  }
+
   /// Events for every piece of a catalog material (incoming/outgoing timeline).
-  /// Fetches per-piece to avoid brittle OR filters.
   /// Throws [StateError] with a short migration hint if the collection is missing.
   Future<List<dynamic>> getMaterialEventsForMaterial(String materialId) async {
     if (!await materialEventsCollectionAvailable()) {
@@ -3259,29 +3279,35 @@ class PocketBaseService {
       );
     }
     final pieces = await getMaterialPiecesForMaterial(materialId);
-    if (pieces.isEmpty) return [];
-    final out = <dynamic>[];
-    for (final p in pieces) {
-      final id = p.id.toString();
-      if (id.isEmpty) continue;
-      try {
-        final rows = await pb.collection('material_events').getFullList(
-          filter: 'piece = "$id"',
-          sort: '-created',
-        );
-        out.addAll(rows);
-      } catch (e) {
-        print('Error getting material events for piece $id: $e');
-      }
+    final ids = pieces.map((p) => p.id.toString()).where((id) => id.isNotEmpty).toSet();
+    if (ids.isEmpty) return [];
+
+    // Preferred: nested relation filter (one request).
+    try {
+      return await pb.collection('material_events').getFullList(
+        filter: 'piece.material = "$materialId"',
+        sort: '-created',
+        expand: 'piece',
+      );
+    } catch (e) {
+      print('piece.material filter failed, falling back: $e');
     }
-    out.sort((a, b) {
-      final ac = DateTime.tryParse('${a.created ?? ''}') ??
-          DateTime.fromMillisecondsSinceEpoch(0);
-      final bc = DateTime.tryParse('${b.created ?? ''}') ??
-          DateTime.fromMillisecondsSinceEpoch(0);
-      return bc.compareTo(ac);
-    });
-    return out;
+
+    // Fallback: load events and keep those whose piece belongs to this material.
+    try {
+      final all = await pb.collection('material_events').getFullList(
+        sort: '-created',
+        expand: 'piece',
+      );
+      return all.where((rec) {
+        final data = rec.data as Map<String, dynamic>? ?? {};
+        final pid = _pieceIdFromEventData(data['piece']);
+        return ids.contains(pid);
+      }).toList();
+    } catch (e) {
+      print('Error listing material_events: $e');
+      rethrow;
+    }
   }
 
   Future<dynamic> uploadPurchaseAttachments(
