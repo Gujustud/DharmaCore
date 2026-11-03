@@ -3089,6 +3089,50 @@ class PocketBaseService {
     }
   }
 
+  /// Update an on-shelf piece (length / location / heat / notes). Logs `adjust` when length changes.
+  Future<dynamic> updateMaterialPiece({
+    required String pieceId,
+    required double lengthIn,
+    String? locationNote,
+    String? heatLot,
+    String? notes,
+  }) async {
+    try {
+      if (lengthIn <= 0) {
+        throw Exception('Length must be greater than zero');
+      }
+      final current = await pb.collection('material_pieces').getOne(pieceId);
+      final data = current.data as Map<String, dynamic>? ?? {};
+      final before = (data['length_in'] as num?)?.toDouble() ?? 0;
+      final body = <String, dynamic>{
+        'length_in': lengthIn,
+        'status': 'on_shelf',
+        'location_note': (locationNote ?? '').trim(),
+        'heat_lot': (heatLot ?? '').trim(),
+        'notes': (notes ?? '').trim(),
+      };
+      final updated = await pb.collection('material_pieces').update(
+        pieceId,
+        body: body,
+      );
+      if ((before - lengthIn).abs() > 0.0005) {
+        final email = pb.authStore.record?.getStringValue('email') ?? '';
+        await pb.collection('material_events').create(body: {
+          'piece': pieceId,
+          'event_type': 'adjust',
+          'length_before': before,
+          'length_after': lengthIn,
+          if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+          if (email.isNotEmpty) 'created_by_email': email,
+        });
+      }
+      return updated;
+    } catch (e) {
+      print('Error updating material piece: $e');
+      rethrow;
+    }
+  }
+
   Future<dynamic> cutMaterialPiece({
     required String pieceId,
     required double cutLengthIn,

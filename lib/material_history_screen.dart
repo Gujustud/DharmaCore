@@ -874,6 +874,16 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     await _selectMaterial(_selected!);
   }
 
+  Future<void> _editPiece(ShopMaterial material, MaterialPiece piece) async {
+    final updated = await showEditMaterialPieceDialog(
+      context,
+      material: material,
+      piece: piece,
+    );
+    if (updated == null || _selected == null) return;
+    await _selectMaterial(_selected!);
+  }
+
   Widget _buildPieceCard(
     ColorScheme scheme,
     ShopMaterial material,
@@ -881,8 +891,7 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
   ) {
     final loc = (piece.locationNote ?? '').trim();
     final heat = (piece.heatLot ?? '').trim();
-    final subtitle = [
-      piece.lengthLabel,
+    final meta = [
       if (loc.isNotEmpty) loc,
       if (heat.isNotEmpty) 'lot $heat',
     ].join(' · ');
@@ -897,20 +906,33 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    piece.labelCode,
+                    piece.lengthLabel,
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.w600,
                         ),
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    subtitle,
+                    piece.labelCode,
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           color: scheme.onSurfaceVariant,
                         ),
                   ),
+                  if (meta.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      meta,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                    ),
+                  ],
                 ],
               ),
+            ),
+            TextButton(
+              onPressed: () => _editPiece(material, piece),
+              child: const Text('Edit'),
             ),
             TextButton(
               onPressed: () => _cutPiece(material, piece),

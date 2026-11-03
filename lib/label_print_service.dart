@@ -360,7 +360,6 @@ class LabelPrintService {
     const qrVerticalMargin = 4;
     const fontSize = 32.0;
     const lineGap = 2.0;
-    const topPad = 6.0;
     const maxChars = 32;
     const gap = 8.0;
 
@@ -393,20 +392,26 @@ class LabelPrintService {
         lines.map((l) => _labelTextPainter(l, fontSize: fontSize)).toList();
 
     var textCol = 40.0;
-    for (final p in painters) {
+    var textBlockH = 0.0;
+    for (var i = 0; i < painters.length; i++) {
+      final p = painters[i];
       if (p.width > textCol) textCol = p.width;
+      textBlockH += p.height;
+      if (i < painters.length - 1) textBlockH += lineGap;
     }
 
     final computedWidth =
         (leftMargin + textCol + gap + qrSize + rightMargin).ceil();
     final imageWidth = (width ?? computedWidth).clamp(0, maxLabelWidthPx);
+    // Vertically center the three text lines on the tape.
+    final textTop = ((imageHeight - textBlockH) / 2).clamp(0.0, imageHeight.toDouble());
 
     return _canvasLabelToPng(
       imageWidth: imageWidth,
       imageHeight: imageHeight,
       rightPad: rightMargin,
       paint: (canvas) {
-        var y = topPad;
+        var y = textTop;
         for (final p in painters) {
           p.paint(canvas, Offset(leftMargin, y));
           y += p.height + lineGap;

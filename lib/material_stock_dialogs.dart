@@ -295,6 +295,149 @@ Future<MaterialPiece?> showAddMaterialStockDialog(
   return saved;
 }
 
+/// Edit an on-shelf remnant (length, location, heat, notes).
+Future<MaterialPiece?> showEditMaterialPieceDialog(
+  BuildContext context, {
+  required ShopMaterial material,
+  required MaterialPiece piece,
+}) async {
+  final lengthCtrl = TextEditingController(
+    text: piece.lengthIn == piece.lengthIn.roundToDouble()
+        ? '${piece.lengthIn.round()}'
+        : piece.lengthIn.toStringAsFixed(1),
+  );
+  final locationCtrl =
+      TextEditingController(text: piece.locationNote ?? '');
+  final heatCtrl = TextEditingController(text: piece.heatLot ?? '');
+  final notesCtrl = TextEditingController(text: piece.notes ?? '');
+  var printAfter = false;
+
+  final saved = await showDialog<MaterialPiece>(
+    context: context,
+    builder: (ctx) {
+      return StatefulBuilder(
+        builder: (ctx, setLocal) {
+          return AlertDialog(
+            title: Text('Edit · ${piece.labelCode}'),
+            content: SizedBox(
+              width: 420,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      materialPieceIdentityLine(material),
+                      style: Theme.of(ctx).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: lengthCtrl,
+                      autofocus: true,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: const InputDecoration(
+                        labelText: 'Remnant length (inches)',
+                        hintText: 'e.g. 3.5',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: locationCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Location (optional)',
+                        hintText: 'e.g. Rack B',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: heatCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Heat / lot (optional)',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: notesCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Notes (optional)',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Print sticker after save'),
+                      value: printAfter,
+                      onChanged: (v) =>
+                          setLocal(() => printAfter = v ?? false),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () async {
+                  final raw = lengthCtrl.text.trim().replaceAll(',', '');
+                  final length = double.tryParse(raw);
+                  if (length == null || length <= 0) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      const SnackBar(
+                        content: Text('Enter a length greater than zero'),
+                      ),
+                    );
+                    return;
+                  }
+                  try {
+                    final rec = await PocketBaseService().updateMaterialPiece(
+                      pieceId: piece.id,
+                      lengthIn: length,
+                      locationNote: locationCtrl.text,
+                      heatLot: heatCtrl.text,
+                      notes: notesCtrl.text,
+                    );
+                    final updated = MaterialPiece.fromRecord(rec);
+                    if (ctx.mounted) Navigator.pop(ctx, updated);
+                  } catch (e) {
+                    if (ctx.mounted) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(
+                        SnackBar(
+                          content: Text('Could not update: $e'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
+                },
+                child: const Text('Save'),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+
+  lengthCtrl.dispose();
+  locationCtrl.dispose();
+  heatCtrl.dispose();
+  notesCtrl.dispose();
+
+  if (saved != null && printAfter && context.mounted) {
+    await printOrPreviewMaterialLabel(
+      context,
+      material: material,
+      piece: saved,
+    );
+  }
+  return saved;
+}
+
 /// Returns the updated piece after a cut, or null if cancelled.
 Future<MaterialPiece?> showCutMaterialPieceDialog(
   BuildContext context, {
