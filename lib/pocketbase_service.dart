@@ -3073,15 +3073,19 @@ class PocketBaseService {
         body['notes'] = notes.trim();
       }
       final created = await pb.collection('material_pieces').create(body: body);
-      final email = pb.authStore.record?.getStringValue('email') ?? '';
-      await pb.collection('material_events').create(body: {
-        'piece': created.id,
-        'event_type': 'intake',
-        'length_before': lengthIn,
-        'length_after': lengthIn,
-        if (email.isNotEmpty) 'created_by_email': email,
-        if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
-      });
+      try {
+        final email = pb.authStore.record?.getStringValue('email') ?? '';
+        await pb.collection('material_events').create(body: {
+          'piece': created.id,
+          'event_type': 'intake',
+          'length_before': lengthIn,
+          'length_after': lengthIn,
+          if (email.isNotEmpty) 'created_by_email': email,
+          if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+        });
+      } catch (e) {
+        print('Warning: intake event not recorded: $e');
+      }
       return created;
     } catch (e) {
       print('Error creating material piece: $e');
@@ -3116,15 +3120,19 @@ class PocketBaseService {
         body: body,
       );
       if ((before - lengthIn).abs() > 0.0005) {
-        final email = pb.authStore.record?.getStringValue('email') ?? '';
-        await pb.collection('material_events').create(body: {
-          'piece': pieceId,
-          'event_type': 'adjust',
-          'length_before': before,
-          'length_after': lengthIn,
-          if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
-          if (email.isNotEmpty) 'created_by_email': email,
-        });
+        try {
+          final email = pb.authStore.record?.getStringValue('email') ?? '';
+          await pb.collection('material_events').create(body: {
+            'piece': pieceId,
+            'event_type': 'adjust',
+            'length_before': before,
+            'length_after': lengthIn,
+            if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+            if (email.isNotEmpty) 'created_by_email': email,
+          });
+        } catch (e) {
+          print('Warning: adjust event not recorded: $e');
+        }
       }
       return updated;
     } catch (e) {
@@ -3164,17 +3172,21 @@ class PocketBaseService {
         pieceId,
         body: body,
       );
-      final email = pb.authStore.record?.getStringValue('email') ?? '';
-      await pb.collection('material_events').create(body: {
-        'piece': pieceId,
-        'event_type': 'cut',
-        'length_before': before,
-        'length_after': lengthAfter,
-        'cut_length': cutLengthIn,
-        if (jobRef != null && jobRef.trim().isNotEmpty) 'job_ref': jobRef.trim(),
-        if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
-        if (email.isNotEmpty) 'created_by_email': email,
-      });
+      try {
+        final email = pb.authStore.record?.getStringValue('email') ?? '';
+        await pb.collection('material_events').create(body: {
+          'piece': pieceId,
+          'event_type': 'cut',
+          'length_before': before,
+          'length_after': lengthAfter,
+          'cut_length': cutLengthIn,
+          if (jobRef != null && jobRef.trim().isNotEmpty) 'job_ref': jobRef.trim(),
+          if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+          if (email.isNotEmpty) 'created_by_email': email,
+        });
+      } catch (e) {
+        print('Warning: cut event not recorded: $e');
+      }
       return updated;
     } catch (e) {
       print('Error cutting material piece: $e');
