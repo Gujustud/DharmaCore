@@ -3207,6 +3207,18 @@ class PocketBaseService {
     }
   }
 
+  Future<List<dynamic>> getMaterialEventsForPiece(String pieceId) async {
+    try {
+      return await pb.collection('material_events').getFullList(
+        filter: 'piece = "$pieceId"',
+        sort: '-created',
+      );
+    } catch (e) {
+      print('Error getting material events: $e');
+      rethrow;
+    }
+  }
+
   Future<dynamic> uploadPurchaseAttachments(
     String purchaseId,
     List<http.MultipartFile> files,

@@ -884,6 +884,34 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     await _selectMaterial(_selected!);
   }
 
+  Future<void> _scrapPiece(ShopMaterial material, MaterialPiece piece) async {
+    final ok = await showScrapMaterialPieceDialog(
+      context,
+      material: material,
+      piece: piece,
+    );
+    if (!ok || _selected == null) return;
+    await _selectMaterial(_selected!);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Scrapped ${piece.labelCode}'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  Future<void> _pieceHistory(
+    ShopMaterial material,
+    MaterialPiece piece,
+  ) async {
+    await showMaterialPieceHistoryDialog(
+      context,
+      material: material,
+      piece: piece,
+    );
+  }
+
   Widget _buildPieceCard(
     ColorScheme scheme,
     ShopMaterial material,
@@ -945,6 +973,30 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                 piece: piece,
               ),
               child: const Text('Print'),
+            ),
+            PopupMenuButton<String>(
+              tooltip: 'More',
+              onSelected: (value) {
+                switch (value) {
+                  case 'history':
+                    _pieceHistory(material, piece);
+                  case 'scrap':
+                    _scrapPiece(material, piece);
+                }
+              },
+              itemBuilder: (ctx) => [
+                const PopupMenuItem(
+                  value: 'history',
+                  child: Text('History'),
+                ),
+                PopupMenuItem(
+                  value: 'scrap',
+                  child: Text(
+                    'Scrap',
+                    style: TextStyle(color: scheme.error),
+                  ),
+                ),
+              ],
             ),
           ],
         ),

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 
 import 'label_print_service.dart';
 import 'material_form_icons.dart';
@@ -601,4 +602,208 @@ Future<MaterialPiece?> showCutMaterialPieceDialog(
     );
   }
   return updated;
+}
+
+String _formatEventInches(num? v) {
+  if (v == null) return '?';
+  final d = v.toDouble();
+  if (d == d.roundToDouble()) return '${d.round()} in';
+  return '${d.toStringAsFixed(1)} in';
+}
+
+String describeMaterialEvent(dynamic record) {
+  final data = record.data as Map<String, dynamic>? ?? {};
+  final type = (data['event_type'] ?? '').toString();
+  final before = data['length_before'] as num?;
+  final after = data['length_after'] as num?;
+  final cut = data['cut_length'] as num?;
+  final job = (data['job_ref'] ?? '').toString().trim();
+  final notes = (data['notes'] ?? '').toString().trim();
+
+  String base;
+  switch (type) {
+    case 'intake':
+      base = 'Received ${_formatEventInches(after ?? before)}';
+      break;
+    case 'cut':
+      base =
+          'Cut ${_formatEventInches(cut)} → ${_formatEventInches(after)} left';
+      if (job.isNotEmpty) base = '$base · job $job';
+      break;
+    case 'adjust':
+      base =
+          'Adjusted ${_formatEventInches(before)} → ${_formatEventInches(after)}';
+      break;
+    case 'scrap':
+      base = 'Scrapped (${_formatEventInches(before)})';
+      break;
+    case 'reprint':
+      base = 'Sticker reprinted';
+      break;
+    default:
+      base = type.isEmpty ? 'Event' : type;
+  }
+  if (notes.isNotEmpty) return '$base · $notes';
+  return base;
+}
+
+/// Confirm scrap (soft remove) for a remnant. Returns true if scrapped.
+Future<bool> showScrapMaterialPieceDialog(
+  BuildContext context, {
+  required ShopMaterial material,
+  required MaterialPiece piece,
+}) async {
+  final notesCtrl = TextEditingController();
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) {
+      return AlertDialog(
+        title: Text('Scrap · ${piece.labelCode}'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                materialPieceIdentityLine(material),
+                style: Theme.of(ctx).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Removes ${piece.lengthLabel} from the shelf. '
+                'The piece stays in history as scrap (not hard-deleted).',
+                style: Theme.of(ctx).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: notesCtrl,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  labelText: 'Reason (optional)',
+                  hintText: 'e.g. too short, damaged',
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(ctx).colorScheme.error,
+              foregroundColor: Theme.of(ctx).colorScheme.onError,
+            ),
+            onPressed: () async {
+              try {
+                await PocketBaseService().scrapMaterialPiece(
+                  piece.id,
+                  notes: notesCtrl.text,
+                );
+                if (ctx.mounted) Navigator.pop(ctx, true);
+              } catch (e) {
+                if (ctx.mounted) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    SnackBar(
+                      content: Text('Could not scrap: $e'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+              }
+            },
+            child: const Text('Scrap'),
+          ),
+        ],
+      );
+    },
+  );
+  notesCtrl.dispose();
+  return ok == true;
+}
+
+/// Show intake / cut / adjust / scrap timeline for a piece.
+Future<void> showMaterialPieceHistoryDialog(
+  BuildContext context, {
+  required ShopMaterial material,
+  required MaterialPiece piece,
+}) async {
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) {
+      return AlertDialog(
+        title: Text('History · ${piece.labelCode}'),
+        content: SizedBox(
+          width: 460,
+          child: FutureBuilder<List<dynamic>>(
+            future: PocketBaseService().getMaterialEventsForPiece(piece.id),
+            builder: (ctx, snap) {
+              if (snap.connectionState != ConnectionState.done) {
+                return const SizedBox(
+                  height: 120,
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              }
+              if (snap.hasError) {
+                return Text(
+                  'Could not load history: ${snap.error}',
+                  style: TextStyle(color: Theme.of(ctx).colorScheme.error),
+                );
+              }
+              final events = snap.data ?? const [];
+              if (events.isEmpty) {
+                return Text(
+                  'No events recorded for this piece yet.',
+                  style: TextStyle(
+                    color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                  ),
+                );
+              }
+              final dateFmt = DateFormat('MMM d yyyy · HH:mm');
+              return ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 420),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: events.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (ctx, i) {
+                    final rec = events[i];
+                    DateTime? when;
+                    try {
+                      when = DateTime.tryParse(rec.created?.toString() ?? '');
+                    } catch (_) {}
+                    final data = rec.data as Map<String, dynamic>? ?? {};
+                    final by =
+                        (data['created_by_email'] ?? '').toString().trim();
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(describeMaterialEvent(rec)),
+                      subtitle: Text(
+                        [
+                          if (when != null) dateFmt.format(when.toLocal()),
+                          if (by.isNotEmpty) by,
+                        ].join(' · '),
+                      ),
+                      dense: true,
+                    );
+                  },
+                ),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Close'),
+          ),
+        ],
+      );
+    },
+  );
 }
