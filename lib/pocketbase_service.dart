@@ -3194,15 +3194,20 @@ class PocketBaseService {
           'status': 'scrap',
         },
       );
-      final email = pb.authStore.record?.getStringValue('email') ?? '';
-      await pb.collection('material_events').create(body: {
-        'piece': pieceId,
-        'event_type': 'scrap',
-        'length_before': before,
-        'length_after': 0,
-        if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
-        if (email.isNotEmpty) 'created_by_email': email,
-      });
+      try {
+        final email = pb.authStore.record?.getStringValue('email') ?? '';
+        await pb.collection('material_events').create(body: {
+          'piece': pieceId,
+          'event_type': 'scrap',
+          'length_before': before,
+          'length_after': 0,
+          if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+          if (email.isNotEmpty) 'created_by_email': email,
+        });
+      } catch (e) {
+        // Piece is scrapped; event log may be missing until migration is applied.
+        print('Warning: scrap event not recorded: $e');
+      }
     } catch (e) {
       print('Error scrapping material piece: $e');
       rethrow;
