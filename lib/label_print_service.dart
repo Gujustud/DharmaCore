@@ -197,24 +197,41 @@ class LabelPrintService {
     });
   }
 
-  /// Wrap PNG in a PDF page sized to 18mm tape height for the browser print dialog.
+  /// Wrap PNG in a PDF for the browser → Brother print dialog.
+  ///
+  /// Brother maps PDF **page width** to tape width. Our label bitmaps are
+  /// drawn with tape width as image *height* (18mm), so we rotate 90° CW and
+  /// use page size (18mm × length). Otherwise Windows often defaults to 36mm
+  /// and the P910BT errors "cassette does not match".
   static Future<Uint8List> _pngAsLabelPdf(Uint8List pngBytes) async {
     final decoded = img.decodePng(pngBytes);
-    final pxW = (decoded?.width ?? maxLabelWidthPx).toDouble();
-    final widthMm = pxW / _dpi * 25.4;
-    final heightMm = _tapeHeightMm;
-    // Guard tiny/huge pages.
-    final pageW = widthMm.clamp(20.0, 120.0) * PdfPageFormat.mm;
-    final pageH = heightMm * PdfPageFormat.mm;
+    final src = decoded ??
+        img.Image(width: maxLabelWidthPx, height: labelHeightPx);
+
+    // Bitmap: x = along tape, y = across tape (18mm). Rotate so PDF width = 18mm.
+    final rotated = img.copyRotate(src, angle: 90);
+    final rotatedPng =
+        Uint8List.fromList(img.encodePng(rotated, level: 6));
+
+    final lengthMm =
+        (src.width / _dpi * 25.4).clamp(25.0, 120.0); // along-tape length
+    final pageW = _tapeHeightMm * PdfPageFormat.mm; // 18mm tape width
+    final pageH = lengthMm * PdfPageFormat.mm;
 
     final doc = pw.Document();
-    final image = pw.MemoryImage(pngBytes);
+    final image = pw.MemoryImage(rotatedPng);
     doc.addPage(
       pw.Page(
-        pageFormat: PdfPageFormat(pageW, pageH),
+        pageFormat: PdfPageFormat(
+          pageW,
+          pageH,
+          marginAll: 0,
+        ),
         margin: pw.EdgeInsets.zero,
-        build: (_) => pw.Center(
-          child: pw.Image(image, fit: pw.BoxFit.contain),
+        build: (_) => pw.SizedBox(
+          width: pageW,
+          height: pageH,
+          child: pw.Image(image, fit: pw.BoxFit.fill),
         ),
       ),
     );
