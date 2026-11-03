@@ -635,7 +635,9 @@ String describeMaterialEvent(dynamic record) {
           'Adjusted ${_formatEventInches(before)} → ${_formatEventInches(after)}';
       break;
     case 'scrap':
-      base = 'Scrapped (${_formatEventInches(before)})';
+      base = before != null
+          ? 'Scrapped (${_formatEventInches(before)})'
+          : 'Scrapped';
       break;
     case 'reprint':
       base = 'Sticker reprinted';
@@ -813,7 +815,17 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
         if (raw is Map) return (raw['id'] ?? '').toString();
         return raw?.toString() ?? '';
       }();
-      final code = codeById[pieceId] ?? '';
+      var code = codeById[pieceId] ?? '';
+      if (code.isEmpty) {
+        try {
+          final expanded = rec.expand?['piece'];
+          final pieceRec =
+              (expanded is List && expanded.isNotEmpty) ? expanded.first : expanded;
+          if (pieceRec != null) {
+            code = MaterialPiece.fromRecord(pieceRec).labelCode;
+          }
+        } catch (_) {}
+      }
       final by = (data['created_by_email'] ?? '').toString().trim();
       final desc = describeMaterialEvent(rec);
       rows.add(
@@ -827,15 +839,21 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
         ),
       );
     }
-  } catch (_) {
-    // Purchases still show; piece log needs material_events on the server.
+  } catch (e) {
+    final msg = '$e';
+    final migrationHint = msg.contains('material_events') ||
+        msg.contains('1776810000') ||
+        msg.contains('missing');
     rows.add(
       _MaterialHistoryRow(
         when: null,
-        title: 'Cut / scrap log not on this server yet',
-        subtitle:
-            'Copy pb_migrations/1776810000_ensure_material_events.js to CT 105 '
-            'pb_migrations, restart pocketbase-erp-dev, then reopen History.',
+        title: migrationHint
+            ? 'Cut / scrap log not on this server yet'
+            : 'Could not load cut / scrap log',
+        subtitle: migrationHint
+            ? 'Copy pb_migrations/1776810000_ensure_material_events.js to CT 105 '
+                'pb_migrations, restart pocketbase-erp-dev, then reopen History.'
+            : msg,
       ),
     );
   }
