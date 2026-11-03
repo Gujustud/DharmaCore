@@ -844,22 +844,33 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
     final lower = msg.toLowerCase();
     // Only treat true "collection missing" as a migration problem.
     // Auth / filter / expand failures must show the real server error.
-    final migrationHint = lower.contains('collection missing') ||
+    final missingCollection = lower.contains('collection missing') ||
         lower.contains('collection not found') ||
         lower.contains('1776820000') ||
         (lower.contains("couldn't find the collection") &&
             lower.contains('material_events'));
+    // HTTP 400 on sort=-created usually means missing AutodateFields.
+    final needsAutodate = !missingCollection &&
+        (lower.contains('sort=-created') ||
+            lower.contains('1776840000') ||
+            (lower.contains('statuscode: 400') &&
+                lower.contains('material_events')));
     rows.add(
       _MaterialHistoryRow(
         when: null,
-        title: migrationHint
+        title: missingCollection
             ? 'Cut / scrap log not on this server yet'
-            : 'Could not load cut / scrap log',
-        subtitle: migrationHint
+            : needsAutodate
+                ? 'Cut / scrap log needs a PocketBase schema update'
+                : 'Could not load cut / scrap log',
+        subtitle: missingCollection
             ? 'On the laptop run: scp pb_migrations/1776820000_material_events_create.js '
                 'to CT105 /opt/pocketbase-erp-dev/pb_migrations/ then '
                 'systemctl restart pocketbase-erp-dev. ($msg)'
-            : msg,
+            : needsAutodate
+                ? 'On the laptop run: powershell -File .\\deploy\\ct105_material_events.ps1 '
+                    '(applies 177684 autodate). Then hard-refresh. ($msg)'
+                : msg,
       ),
     );
   }

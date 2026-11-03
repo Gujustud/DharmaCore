@@ -9,7 +9,8 @@ $files = @(
   '1776800000_material_pieces.js',
   '1776810000_ensure_material_events.js',
   '1776820000_material_events_create.js',
-  '1776830000_material_events_auth_rules.js'
+  '1776830000_material_events_auth_rules.js',
+  '1776840000_material_events_autodate.js'
 )
 foreach ($f in $files) {
   $src = Join-Path $repo "pb_migrations\$f"
@@ -30,7 +31,7 @@ Write-Host "Recent PocketBase log..." -ForegroundColor Cyan
 ssh $ct 'journalctl -u pocketbase-erp-dev -n 40 --no-pager'
 
 # Windows OpenSSH strips nested quotes — pipe SQL via echo instead of argv.
-Write-Host "material* collections..." -ForegroundColor Cyan
+Write-Host "material* collections + listRule..." -ForegroundColor Cyan
 ssh $ct 'echo SELECT name, listRule FROM _collections | sqlite3 -separator " | " /opt/pocketbase-erp-dev/pb_data/data.db | grep material'
 
 Write-Host "migration rows 17768*..." -ForegroundColor Cyan
@@ -39,6 +40,9 @@ ssh $ct 'echo SELECT file FROM _migrations | sqlite3 /opt/pocketbase-erp-dev/pb_
 Write-Host "material_events row count..." -ForegroundColor Cyan
 ssh $ct 'echo SELECT count(*) FROM material_events | sqlite3 /opt/pocketbase-erp-dev/pb_data/data.db'
 
+Write-Host "material_events fields (expect created + updated)..." -ForegroundColor Cyan
+ssh $ct 'echo SELECT name, fields FROM _collections | sqlite3 /opt/pocketbase-erp-dev/pb_data/data.db | grep ^material_events | tr "," "\n" | grep -E "created|updated|event_type|piece" | head -20'
+
 Write-Host ""
-Write-Host "Expect material_events with a non-empty listRule, and 177683 in _migrations." -ForegroundColor Green
+Write-Host "Expect 177684 in _migrations and created/updated on material_events." -ForegroundColor Green
 Write-Host "Then: .\scripts\build_web_shop.ps1 and deploy shop-web.zip; hard-refresh History." -ForegroundColor Yellow

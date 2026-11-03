@@ -102,6 +102,12 @@ migrate((app) => {
       name: "notes",
     }),
   );
+  addPieceField(
+    new AutodateField({ name: "created", onCreate: true, onUpdate: false }),
+  );
+  addPieceField(
+    new AutodateField({ name: "updated", onCreate: true, onUpdate: true }),
+  );
 
   app.save(pieces);
   const piecesCol = app.findCollectionByNameOrId("material_pieces");
@@ -173,6 +179,12 @@ migrate((app) => {
     new TextField({
       name: "created_by_email",
     }),
+  );
+  addEventField(
+    new AutodateField({ name: "created", onCreate: true, onUpdate: false }),
+  );
+  addEventField(
+    new AutodateField({ name: "updated", onCreate: true, onUpdate: true }),
   );
 
   app.save(events);

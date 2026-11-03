@@ -57,6 +57,12 @@ migrate((app) => {
   addEventField(new TextField({ name: "job_ref" }));
   addEventField(new TextField({ name: "notes" }));
   addEventField(new TextField({ name: "created_by_email" }));
+  addEventField(
+    new AutodateField({ name: "created", onCreate: true, onUpdate: false }),
+  );
+  addEventField(
+    new AutodateField({ name: "updated", onCreate: true, onUpdate: true }),
+  );
 
   app.save(events);
 }, (app) => {

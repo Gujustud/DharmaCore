@@ -3236,9 +3236,8 @@ class PocketBaseService {
 
   Future<List<dynamic>> getMaterialEventsForPiece(String pieceId) async {
     try {
-      return await pb.collection('material_events').getFullList(
+      return await _listMaterialEvents(
         filter: 'piece = "$pieceId"',
-        sort: '-created',
         expand: 'piece',
       );
     } catch (e) {
@@ -3296,15 +3295,34 @@ class PocketBaseService {
     return raw.toString();
   }
 
+  /// List material_events with resilient sort/expand.
+  /// PB returns HTTP 400 on sort=-created when AutodateFields are missing
+  /// (fixed by migration 1776840000_material_events_autodate.js).
   Future<List<dynamic>> _listMaterialEvents({
     String? filter,
     String? expand,
-  }) {
-    return pb.collection('material_events').getFullList(
-      filter: filter,
-      sort: '-created',
-      expand: expand,
-    );
+  }) async {
+    Object? lastError;
+    // Prefer created; fall back when autodate migration is not applied yet.
+    final sorts = <String?>['-created', '-id', null];
+    final expands = expand == null ? <String?>[null] : <String?>[expand, null];
+    for (final sort in sorts) {
+      for (final exp in expands) {
+        try {
+          return await pb.collection('material_events').getFullList(
+            filter: filter,
+            sort: sort,
+            expand: exp,
+          );
+        } catch (e) {
+          lastError = e;
+          print(
+            'material_events list failed filter=$filter sort=$sort expand=$exp: $e',
+          );
+        }
+      }
+    }
+    throw lastError ?? StateError('Error listing material_events');
   }
 
   /// Events for every piece of a catalog material (incoming/outgoing timeline).
@@ -3337,22 +3355,17 @@ class PocketBaseService {
     }
 
     // Fallback: load events and keep those whose piece belongs to this material.
-    // Try with expand first, then without (expand can 400 on some PB setups).
-    Object? lastError;
-    for (final expand in <String?>['piece', null]) {
-      try {
-        final all = await _listMaterialEvents(expand: expand);
-        return all.where((rec) {
-          final data = rec.data as Map<String, dynamic>? ?? {};
-          final pid = _pieceIdFromEventData(data['piece']);
-          return ids.contains(pid);
-        }).toList();
-      } catch (e) {
-        lastError = e;
-        print('Error listing material_events (expand=$expand): $e');
-      }
+    try {
+      final all = await _listMaterialEvents(expand: 'piece');
+      return all.where((rec) {
+        final data = rec.data as Map<String, dynamic>? ?? {};
+        final pid = _pieceIdFromEventData(data['piece']);
+        return ids.contains(pid);
+      }).toList();
+    } catch (e) {
+      print('Error listing material_events: $e');
+      rethrow;
     }
-    throw lastError ?? StateError('Error listing material_events');
   }
 
   Future<dynamic> uploadPurchaseAttachments(
