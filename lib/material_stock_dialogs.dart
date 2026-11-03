@@ -54,7 +54,7 @@ String materialLabelCodeForSticker(String labelCode) {
   return bare.substring(0, bare.length - 1);
 }
 
-/// Heat/lot line for stickers (shown above the P-code when present).
+/// Heat/lot line for stickers (shown after the P-code when present).
 String? materialHeatLotForSticker(String? heatLot) {
   final t = (heatLot ?? '').trim();
   if (t.isEmpty) return null;

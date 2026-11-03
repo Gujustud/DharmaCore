@@ -345,9 +345,8 @@ class LabelPrintService {
   }
 
   /// Material piece label + QR = piece id.
-  /// Typical: identity / REM / optional LOT / P-code.
-  /// Identity + REM are bold; LOT + P-code are regular and one size smaller.
-  /// When [heatLotLine] is set it is drawn above the P-code.
+  /// Typical: identity / REM / P-code / optional LOT (after P).
+  /// Identity + REM are bold; P-code + LOT are regular and one size smaller.
   static Future<Uint8List> generateMaterialLabelImage({
     required String line1,
     required String line2,
@@ -391,9 +390,9 @@ class LabelPrintService {
       trimLine(line2),
     ];
     final meta = <String>[
+      trimLine(codeLine),
       if (heatLotLine != null && heatLotLine.trim().isNotEmpty)
         trimLine(heatLotLine),
-      trimLine(codeLine),
     ];
 
     final painters = <TextPainter>[
