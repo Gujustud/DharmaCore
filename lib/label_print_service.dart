@@ -344,13 +344,14 @@ class LabelPrintService {
     return maxX;
   }
 
-  /// Material piece label: 3 text lines + QR = piece id.
-  /// Typical: `1018 Flat 1 x 2.5 x 12` / `REM: 3.5` / `P85L20`.
-  /// Text is NotoSans Bold at final size (no bitmap upscale).
+  /// Material piece label + QR = piece id.
+  /// Typical: identity / REM / P-code / optional LOT (after P).
+  /// Identity + REM are bold; P-code + LOT are regular and one size smaller.
   static Future<Uint8List> generateMaterialLabelImage({
     required String line1,
     required String line2,
     required String line3,
+    String? line4,
     required String pieceId,
     int? width,
     int? height,
@@ -358,9 +359,10 @@ class LabelPrintService {
     const leftMargin = 10.0;
     const rightMargin = 12;
     const qrVerticalMargin = 4;
-    const fontSize = 32.0;
-    const lineGap = 2.0;
-    const maxChars = 32;
+    const primaryFontSize = 30.0;
+    const metaFontSize = 24.0;
+    const lineGap = 1.0;
+    const maxChars = 34;
     const gap = 8.0;
 
     final imageHeight = height ?? labelHeightPx;
@@ -383,13 +385,29 @@ class LabelPrintService {
       return '${t.substring(0, maxChars - 1)}…';
     }
 
-    final lines = <String>[
+    final primary = [
       trimLine(line1),
       trimLine(line2),
-      trimLine(line3),
     ];
-    final painters =
-        lines.map((l) => _labelTextPainter(l, fontSize: fontSize)).toList();
+    final meta = <String>[
+      trimLine(line3),
+      if (line4 != null && line4.trim().isNotEmpty) trimLine(line4),
+    ];
+
+    final painters = <TextPainter>[
+      for (final l in primary)
+        _labelTextPainter(
+          l,
+          fontSize: primaryFontSize,
+          weight: FontWeight.w700,
+        ),
+      for (final l in meta)
+        _labelTextPainter(
+          l,
+          fontSize: metaFontSize,
+          weight: FontWeight.w400,
+        ),
+    ];
 
     var textCol = 40.0;
     var textBlockH = 0.0;
@@ -403,8 +421,9 @@ class LabelPrintService {
     final computedWidth =
         (leftMargin + textCol + gap + qrSize + rightMargin).ceil();
     final imageWidth = (width ?? computedWidth).clamp(0, maxLabelWidthPx);
-    // Vertically center the three text lines on the tape.
-    final textTop = ((imageHeight - textBlockH) / 2).clamp(0.0, imageHeight.toDouble());
+    // Vertically center the text block on the tape.
+    final textTop =
+        ((imageHeight - textBlockH) / 2).clamp(0.0, imageHeight.toDouble());
 
     return _canvasLabelToPng(
       imageWidth: imageWidth,
@@ -432,6 +451,7 @@ class LabelPrintService {
     required String line1,
     required String line2,
     required String line3,
+    String? line4,
     required String pieceId,
     String jobName = 'material',
   }) async {
@@ -439,6 +459,7 @@ class LabelPrintService {
       line1: line1,
       line2: line2,
       line3: line3,
+      line4: line4,
       pieceId: pieceId,
     );
     await sendLabelPng(pngBytes, jobName: jobName);

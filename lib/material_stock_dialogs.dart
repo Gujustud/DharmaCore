@@ -46,9 +46,21 @@ String formatRemnantForLabel(double lengthIn) {
   return 'REM: $numPart';
 }
 
-/// Printable piece code without dashes (`P-85L20` → `P85L20`).
-String materialLabelCodeForSticker(String labelCode) =>
-    labelCode.replaceAll('-', '');
+/// Printable piece code without dashes, shortened one char for sticker fit
+/// (`P-85L20` → `P85L2`).
+String materialLabelCodeForSticker(String labelCode) {
+  final bare = labelCode.replaceAll('-', '').trim();
+  if (bare.length <= 2) return bare;
+  return bare.substring(0, bare.length - 1);
+}
+
+/// Heat/lot line for stickers (shown after the P-code when present).
+String? materialHeatLotForSticker(String? heatLot) {
+  final t = (heatLot ?? '').trim();
+  if (t.isEmpty) return null;
+  final bare = t.replaceFirst(RegExp(r'^(lot|heat)\s*[:#]?\s*', caseSensitive: false), '');
+  return 'LOT ${bare.isEmpty ? t : bare}';
+}
 
 String _formatInches(double v) {
   if (v == v.roundToDouble()) return '${v.round()} in';
@@ -65,10 +77,12 @@ Future<void> printOrPreviewMaterialLabel(
   final rem = formatRemnantForLabel(piece.lengthIn);
   final remLine = location.isEmpty ? rem : '$rem $location';
   final codeLine = materialLabelCodeForSticker(piece.labelCode);
+  final heatLine = materialHeatLotForSticker(piece.heatLot);
   final bytes = await LabelPrintService.generateMaterialLabelImage(
     line1: identity,
     line2: remLine,
     line3: codeLine,
+    line4: heatLine,
     pieceId: piece.id,
   );
 
