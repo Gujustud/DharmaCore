@@ -17,30 +17,23 @@ foreach ($f in $files) {
   scp $src "${ct}:/opt/pocketbase-erp-dev/pb_migrations/"
 }
 
-Write-Host "Restart PocketBase + verify..." -ForegroundColor Cyan
-ssh $ct @'
-set -e
-ls -la /opt/pocketbase-erp-dev/pb_migrations/17768*.js
-systemctl restart pocketbase-erp-dev
-sleep 3
-systemctl is-active pocketbase-erp-dev
-curl -sS http://127.0.0.1:8091/api/health
-echo ""
-echo "=== recent pocketbase log (migrations) ==="
-journalctl -u pocketbase-erp-dev -n 40 --no-pager | tail -40
-echo ""
-echo "=== collections named material* ==="
-DB=$(ls /opt/pocketbase-erp-dev/pb_data/*.db 2>/dev/null | head -1)
-echo "DB=$DB"
-if command -v sqlite3 >/dev/null 2>&1 && [ -n "$DB" ]; then
-  sqlite3 "$DB" "SELECT name FROM _collections WHERE name LIKE 'material%' ORDER BY name;"
-  echo "=== migrations 17768* ==="
-  sqlite3 "$DB" "SELECT file, applied FROM _migrations WHERE file LIKE '17768%' ORDER BY file;"
-else
-  echo "sqlite3 not installed — skip DB check"
-fi
-'@
+# One-line remote commands only (avoid CRLF breaking bash/systemd on the CT).
+# Strip Windows CRLF from migrations — PB JSVM can fail to apply CRLF scripts.
+Write-Host "Strip CRLF from migrations + restart PocketBase..." -ForegroundColor Cyan
+ssh $ct "sed -i 's/\r$//' /opt/pocketbase-erp-dev/pb_migrations/17768*.js && systemctl restart pocketbase-erp-dev && sleep 3 && systemctl is-active pocketbase-erp-dev && curl -sS http://127.0.0.1:8091/api/health"
+
+Write-Host "List migration files on CT..." -ForegroundColor Cyan
+ssh $ct "ls -la /opt/pocketbase-erp-dev/pb_migrations/17768*.js"
+
+Write-Host "Recent PocketBase log..." -ForegroundColor Cyan
+ssh $ct "journalctl -u pocketbase-erp-dev -n 50 --no-pager"
+
+Write-Host "Check material* collections in data.db..." -ForegroundColor Cyan
+ssh $ct "command -v sqlite3 >/dev/null && sqlite3 /opt/pocketbase-erp-dev/pb_data/data.db `"SELECT name FROM _collections WHERE name LIKE 'material%' ORDER BY name;`" || echo 'sqlite3 missing or no data.db'"
+
+Write-Host "Check migration rows 17768*..." -ForegroundColor Cyan
+ssh $ct "command -v sqlite3 >/dev/null && sqlite3 /opt/pocketbase-erp-dev/pb_data/data.db `"SELECT file FROM _migrations WHERE file LIKE '17768%' ORDER BY file;`" || echo 'sqlite3 missing or no data.db'"
 
 Write-Host ""
-Write-Host "If material_events is listed above, hard-refresh DharmaCore and reopen History." -ForegroundColor Green
-Write-Host "Then deploy latest web (for clearer errors): .\scripts\build_web_shop.ps1 + scp/unzip as usual." -ForegroundColor Yellow
+Write-Host "Expect to see material_events in the collections list above." -ForegroundColor Green
+Write-Host "Then: .\scripts\build_web_shop.ps1 and deploy shop-web.zip; hard-refresh History." -ForegroundColor Yellow
