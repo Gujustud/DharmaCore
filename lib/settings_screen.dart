@@ -364,6 +364,45 @@ class _SettingsScreenState extends State<SettingsScreen> with AutoOpenDrawerMixi
     }
   }
 
+  Future<void> _editName() async {
+    final ctrl = TextEditingController(text: AuthService.instance.name ?? '');
+    final next = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Your name'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(hintText: 'Name shown in History'),
+          onSubmitted: (v) => Navigator.pop(ctx, v),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (next == null) return;
+    try {
+      await AuthService.instance.saveName(next);
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not save name: $e')),
+        );
+      }
+    }
+  }
+
   Future<void> _pickSkin() async {
     final selected = await showModalBottomSheet<AppSkin>(
       context: context,
@@ -409,6 +448,29 @@ class _SettingsScreenState extends State<SettingsScreen> with AutoOpenDrawerMixi
         : ListView(
             padding: const EdgeInsets.all(16),
             children: [
+                const Text(
+                  'YOUR ACCOUNT',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.badge_outlined, color: Colors.blue),
+                    title: const Text('Your name'),
+                    subtitle: Text(
+                      AuthService.instance.name ??
+                          'Not set — History shows your email until you add one',
+                    ),
+                    trailing: const Icon(Icons.edit_outlined),
+                    onTap: _editName,
+                  ),
+                ),
+                const SizedBox(height: 16),
                 // Inventory Management Section
                 const Text(
                   'INVENTORY MANAGEMENT',

@@ -45,6 +45,18 @@ class AuthService {
     _pb.authStore.save(token, rec);
   }
 
+  /// Persist `users.name` for the signed-in user (shown in History, wiki, …).
+  Future<void> saveName(String name) async {
+    final id = userId;
+    final token = _pb.authStore.token;
+    if (id == null || token.isEmpty) return;
+    final rec = await _pb.collection('users').update(
+      id,
+      body: {'name': name.trim()},
+    );
+    _pb.authStore.save(token, rec);
+  }
+
   /// `full`, `jobs_only`, or null/empty (treated as full).
   String get role {
     final r = user?.getStringValue('role').trim();
