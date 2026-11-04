@@ -567,30 +567,9 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
               ? Column(
                   children: [
                     ListTile(
+                      dense: true,
                       leading: const Icon(Icons.arrow_back),
-                      title: Text(_selected!.displayLabel),
-                      trailing: PopupMenuButton<String>(
-                        onSelected: (value) {
-                          final m = _selected!;
-                          if (value == 'history') {
-                            showMaterialHistoryDialog(
-                              context,
-                              material: m,
-                            );
-                          } else if (value == 'edit') {
-                            _editMaterial(m);
-                          } else if (value == 'delete') {
-                            _deleteMaterial(m);
-                          }
-                        },
-                        itemBuilder: (context) => const [
-                          PopupMenuItem(
-                              value: 'history', child: Text('History')),
-                          PopupMenuItem(value: 'edit', child: Text('Edit')),
-                          PopupMenuItem(
-                              value: 'delete', child: Text('Delete')),
-                        ],
-                      ),
+                      title: const Text('All materials'),
                       onTap: () => setState(() {
                         _selected = null;
                         _historyRecords = [];
@@ -933,20 +912,19 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
           title,
           style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
         ),
-        if (detail != null) ...[
-          const SizedBox(width: 12),
-          Flexible(
-            child: Text(
-              detail,
-              overflow: TextOverflow.ellipsis,
-              style: textTheme.bodyMedium?.copyWith(
-                color: scheme.onSurfaceVariant,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
-            ),
-          ),
-        ],
-        const Spacer(),
+        const SizedBox(width: 12),
+        Expanded(
+          child: detail == null
+              ? const SizedBox.shrink()
+              : Text(
+                  detail,
+                  overflow: TextOverflow.ellipsis,
+                  style: textTheme.bodyMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+        ),
         ?action,
       ],
     );
@@ -1158,7 +1136,7 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final compact = constraints.maxWidth < 560;
+        final compact = constraints.maxWidth < 640;
         return Padding(
           padding: const EdgeInsets.fromLTRB(16, 10, 4, 10),
           child: compact
@@ -1170,8 +1148,8 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                         children: [
                           Row(
                             children: [
-                              lengthText,
-                              const SizedBox(width: 12),
+                              SizedBox(width: 72, child: lengthText),
+                              const SizedBox(width: 16),
                               Expanded(child: code),
                             ],
                           ),
@@ -1190,7 +1168,8 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                     const SizedBox(width: 16),
                     Expanded(child: bar),
                     const SizedBox(width: 20),
-                    SizedBox(width: 150, child: code),
+                    SizedBox(width: 210, child: code),
+                    const SizedBox(width: 12),
                     actions,
                   ],
                 ),
