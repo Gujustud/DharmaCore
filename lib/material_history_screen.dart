@@ -187,13 +187,28 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
 
   String _onHandSummary() {
     final onShelf = _onShelfPieces;
-    if (onShelf.isEmpty) return 'No stock on shelf';
+    if (onShelf.isEmpty) return 'Empty';
     final total = onShelf.fold<double>(0, (sum, p) => sum + p.lengthIn);
     final pcs = onShelf.length;
     final totalLabel = total == total.roundToDouble()
         ? '${total.round()} in'
         : '${total.toStringAsFixed(1)} in';
-    return 'On shelf  $pcs pc${pcs == 1 ? '' : 's'} · $totalLabel';
+    if (pcs == 1) return '$totalLabel in 1 piece';
+    return '$totalLabel across $pcs pieces';
+  }
+
+  /// Length a full bar represents: the piece's original length when known,
+  /// otherwise the longest of the stock length and the pieces on the shelf.
+  double _barFullLength(ShopMaterial m, MaterialPiece piece) {
+    final original = piece.originalLengthIn;
+    if (original != null && original >= piece.lengthIn && original > 0) {
+      return original;
+    }
+    var full = _lengthInchesFromSize(m.sizeLabel) ?? 0;
+    for (final p in _onShelfPieces) {
+      if (p.lengthIn > full) full = p.lengthIn;
+    }
+    return full > 0 ? full : piece.lengthIn;
   }
 
   Map<String, dynamic>? _expandFirst(dynamic expand, String key) {
@@ -645,17 +660,8 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     }
   }
 
-  String _identityTitle(ShopMaterial m) {
-    final grade = m.grade.trim();
-    final form = materialFormLabel(m.form);
-    final size = m.sizeLabel.trim();
-    final parts = <String>[
-      if (grade.isNotEmpty) grade,
-      form,
-      if (size.isNotEmpty) size,
-    ];
-    return parts.join(' · ');
-  }
+  /// Same wording as the sticker's first line: `1018 Flat 1 x 2.5 x 12`.
+  String _identityTitle(ShopMaterial m) => materialPieceLabelIdentityLine(m);
 
   /// Last / avg / $/in for the detail header price column. Null when no costs.
   _MaterialPriceSummary? _priceSummary(ShopMaterial m) {
@@ -702,120 +708,98 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     }
 
     final selected = _selected!;
-    final prices = _priceSummary(selected);
+    final textTheme = Theme.of(context).textTheme;
     final notes = (selected.notes ?? '').trim();
-    final muted = Theme.of(context).textTheme.bodyMedium?.copyWith(
-          color: scheme.onSurfaceVariant,
-        );
-    final priceValueStyle = Theme.of(context).textTheme.bodyMedium?.copyWith(
-          fontWeight: FontWeight.w600,
-        );
+    final mcmasterUrl = mcmasterProductUrl(selected.notes);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+          padding: const EdgeInsets.fromLTRB(20, 18, 12, 16),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _identityTitle(selected),
-                          style:
-                              Theme.of(context).textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                  ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _identityTitle(selected),
+                      style: textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        height: 1.2,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    _buildHeaderFacts(scheme, selected, mcmasterUrl),
+                    if (notes.isNotEmpty && mcmasterUrl == null) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        notes,
+                        style: textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
                         ),
-                        if (!_piecesUnavailable) ...[
-                          const SizedBox(height: 6),
-                          Text(
-                            _onHandSummary(),
-                            style: muted,
-                          ),
-                        ],
-                      ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: () => showMaterialHistoryDialog(
+                  context,
+                  material: selected,
+                ),
+                icon: const Icon(Icons.history, size: 18),
+                label: const Text('History'),
+              ),
+              const SizedBox(width: 4),
+              PopupMenuButton<String>(
+                tooltip: 'More',
+                icon: const Icon(Icons.more_vert),
+                onSelected: (value) {
+                  if (value == 'edit') {
+                    _editMaterial(selected);
+                  } else if (value == 'delete') {
+                    _deleteMaterial(selected);
+                  }
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'edit',
+                    child: ListTile(
+                      leading: Icon(Icons.edit_outlined),
+                      title: Text('Edit material'),
+                      contentPadding: EdgeInsets.zero,
                     ),
                   ),
-                  const SizedBox(width: 16),
-                  if (prices != null)
-                    _buildPriceColumn(
-                      prices,
-                      labelStyle: muted,
-                      valueStyle: priceValueStyle,
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: ListTile(
+                      leading: Icon(Icons.delete_outline, color: scheme.error),
+                      title: Text(
+                        'Delete material',
+                        style: TextStyle(color: scheme.error),
+                      ),
+                      contentPadding: EdgeInsets.zero,
                     ),
-                  TextButton.icon(
-                    onPressed: () => showMaterialHistoryDialog(
-                      context,
-                      material: selected,
-                    ),
-                    icon: const Icon(Icons.history, size: 18),
-                    label: const Text('History'),
-                  ),
-                  const SizedBox(width: 4),
-                  TextButton.icon(
-                    onPressed: () => _editMaterial(selected),
-                    icon: const Icon(Icons.edit_outlined, size: 18),
-                    label: const Text('Edit'),
-                  ),
-                  const SizedBox(width: 4),
-                  TextButton.icon(
-                    onPressed: () => _deleteMaterial(selected),
-                    style: TextButton.styleFrom(foregroundColor: scheme.error),
-                    icon: const Icon(Icons.delete_outline, size: 18),
-                    label: const Text('Delete'),
                   ),
                 ],
               ),
-              if (mcmasterProductUrl(selected.notes) != null) ...[
-                const SizedBox(height: 4),
-                InkWell(
-                  onTap: () {
-                    final url = mcmasterProductUrl(selected.notes);
-                    if (url != null) {
-                      launchUrl(
-                        Uri.parse(url),
-                        mode: LaunchMode.externalApplication,
-                      );
-                    }
-                  },
-                  child: Text(
-                    'Order on McMaster: ${mcmasterPartNumberFromText(selected.notes)}',
-                    style: TextStyle(
-                      color: scheme.primary,
-                      decoration: TextDecoration.underline,
-                    ),
-                  ),
-                ),
-              ],
-              if (notes.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(
-                  notes,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                        fontStyle: FontStyle.italic,
-                      ),
-                ),
-              ],
             ],
           ),
         ),
         const Divider(height: 1),
         Expanded(
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
             children: [
               if (!_piecesUnavailable) ...[
                 _sectionHeader(
                   scheme,
                   title: 'On shelf',
+                  detail: _onHandSummary(),
                   action: TextButton.icon(
                     onPressed: () => _addStock(selected),
                     icon: const Icon(Icons.add, size: 18),
@@ -827,31 +811,43 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: Text(
-                      'No pieces on the shelf yet. Add stock to print a sticker.',
+                      'Nothing on the shelf. Add stock to log a piece and print its sticker.',
                       style: TextStyle(color: scheme.onSurfaceVariant),
                     ),
                   )
                 else
-                  for (final piece in _onShelfPieces) ...[
-                    _buildPieceCard(scheme, selected, piece),
-                    const SizedBox(height: 8),
-                  ],
-                const SizedBox(height: 12),
+                  _listFrame(
+                    scheme,
+                    [
+                      for (final piece in _onShelfPieces)
+                        _buildPieceRow(scheme, selected, piece),
+                    ],
+                  ),
+                const SizedBox(height: 28),
               ],
-              _sectionHeader(scheme, title: 'Purchases'),
+              _sectionHeader(
+                scheme,
+                title: 'Purchases',
+                detail: _historyRecords.isEmpty
+                    ? null
+                    : '${_historyRecords.length} '
+                        'line${_historyRecords.length == 1 ? '' : 's'}',
+              ),
               const SizedBox(height: 8),
               if (_historyRecords.isEmpty)
                 Text(
-                  'No purchases linked to this material yet.\n'
-                  'It may have been created from a purchase form and never saved on a line — '
-                  'you can edit or delete it here.',
+                  'No purchases linked to this material yet. Link it from a '
+                  'purchase line, or edit or delete it from the ⋮ menu.',
                   style: TextStyle(color: scheme.onSurfaceVariant),
                 )
               else
-                for (var i = 0; i < _historyRecords.length; i++) ...[
-                  if (i > 0) const SizedBox(height: 8),
-                  _buildPurchaseCard(scheme, _historyRecords[i]),
-                ],
+                _listFrame(
+                  scheme,
+                  [
+                    for (final record in _historyRecords)
+                      _buildPurchaseRow(scheme, record),
+                  ],
+                ),
             ],
           ),
         ),
@@ -859,24 +855,124 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     );
   }
 
+  /// One quiet line of price facts + McMaster link under the material title.
+  Widget _buildHeaderFacts(
+    ColorScheme scheme,
+    ShopMaterial m,
+    String? mcmasterUrl,
+  ) {
+    final textTheme = Theme.of(context).textTheme;
+    final labelStyle =
+        textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant);
+    final valueStyle = textTheme.bodyMedium?.copyWith(
+      fontWeight: FontWeight.w600,
+      color: scheme.onSurface,
+    );
+    final prices = _priceSummary(m);
+
+    Widget fact(String label, String value) {
+      return Text.rich(
+        TextSpan(
+          style: labelStyle,
+          children: [
+            TextSpan(text: '$label '),
+            TextSpan(text: value, style: valueStyle),
+          ],
+        ),
+      );
+    }
+
+    final facts = <Widget>[
+      if (prices?.perInch != null)
+        Text.rich(
+          TextSpan(
+            style: labelStyle,
+            children: [
+              TextSpan(text: _money.format(prices!.perInch!), style: valueStyle),
+              const TextSpan(text: ' per inch'),
+            ],
+          ),
+        ),
+      if (prices != null)
+        fact('Last paid', '${_money.format(prices.last)}${prices.unitSuffix}'),
+      if (prices?.avg != null)
+        fact('Avg', '${_money.format(prices!.avg!)}${prices.unitSuffix}'),
+      if (mcmasterUrl != null)
+        InkWell(
+          onTap: () => launchUrl(
+            Uri.parse(mcmasterUrl),
+            mode: LaunchMode.externalApplication,
+          ),
+          child: Text(
+            'McMaster ${mcmasterPartNumberFromText(m.notes) ?? ''}'.trim(),
+            style: labelStyle?.copyWith(
+              color: scheme.primary,
+              decoration: TextDecoration.underline,
+              decorationColor: scheme.primary,
+            ),
+          ),
+        ),
+    ];
+    if (facts.isEmpty) {
+      return Text('No purchase price yet', style: labelStyle);
+    }
+    return Wrap(spacing: 20, runSpacing: 4, children: facts);
+  }
+
   Widget _sectionHeader(
     ColorScheme scheme, {
     required String title,
+    String? detail,
     Widget? action,
   }) {
+    final textTheme = Theme.of(context).textTheme;
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Expanded(
-          child: Text(
-            title,
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: scheme.onSurfaceVariant,
-                ),
-          ),
+        Text(
+          title,
+          style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
         ),
-        if (action != null) action,
+        if (detail != null) ...[
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(
+              detail,
+              overflow: TextOverflow.ellipsis,
+              style: textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        ],
+        const Spacer(),
+        ?action,
       ],
+    );
+  }
+
+  /// Rows inside one outlined frame, separated by hairlines (not a card per row).
+  Widget _listFrame(ColorScheme scheme, List<Widget> rows) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: scheme.surface,
+        border: Border.all(color: scheme.outlineVariant),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var i = 0; i < rows.length; i++) ...[
+              if (i > 0)
+                Divider(height: 1, thickness: 1, color: scheme.outlineVariant),
+              rows[i],
+            ],
+          ],
+        ),
+      ),
     );
   }
 
@@ -926,80 +1022,184 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     );
   }
 
-  Widget _buildPieceCard(
+  Widget _buildPieceRow(
     ColorScheme scheme,
     ShopMaterial material,
     MaterialPiece piece,
   ) {
+    final textTheme = Theme.of(context).textTheme;
     final loc = (piece.locationNote ?? '').trim();
     final heat = (piece.heatLot ?? '').trim();
     final meta = [
+      if (heat.isNotEmpty) 'Lot $heat',
       if (loc.isNotEmpty) loc,
-      if (heat.isNotEmpty) 'lot $heat',
-    ].join(' · ');
+    ].join('   ');
+    final full = _barFullLength(material, piece);
+    final fraction = full > 0 ? (piece.lengthIn / full).clamp(0.0, 1.0) : 1.0;
+    final fullLabel =
+        full == full.roundToDouble() ? '${full.round()}' : full.toStringAsFixed(1);
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    piece.lengthLabel,
-                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    piece.labelCode,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                  ),
-                  if (meta.isNotEmpty) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      meta,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
-                    ),
-                  ],
-                ],
+    final lengthText = Text(
+      piece.lengthLabel,
+      textAlign: TextAlign.right,
+      style: textTheme.titleMedium?.copyWith(
+        fontWeight: FontWeight.w600,
+        fontFeatures: const [FontFeature.tabularFigures()],
+      ),
+    );
+
+    final bar = Tooltip(
+      message: '${piece.lengthLabel} of $fullLabel in',
+      child: SizedBox(
+        height: 10,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(2),
+          ),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: FractionallySizedBox(
+              widthFactor: fraction < 0.015 ? 0.015 : fraction,
+              heightFactor: 1,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: scheme.onSurface.withValues(alpha: 0.62),
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
             ),
-            TextButton(
-              onPressed: () => _editPiece(material, piece),
-              child: const Text('Edit'),
-            ),
-            TextButton(
-              onPressed: () => _cutPiece(material, piece),
-              child: const Text('Cut'),
-            ),
-            TextButton(
-              onPressed: () => printOrPreviewMaterialLabel(
-                context,
-                material: material,
-                piece: piece,
-              ),
-              child: const Text('Print'),
-            ),
-            TextButton(
-              onPressed: () => _scrapPiece(material, piece),
-              style: TextButton.styleFrom(foregroundColor: scheme.error),
-              child: const Text('Scrap'),
-            ),
-          ],
+          ),
         ),
       ),
     );
+
+    final code = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Tooltip(
+          message: 'Sticker code (${piece.labelCode})',
+          child: Text(
+            materialLabelCodeForSticker(piece.labelCode),
+            style: textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w500,
+              letterSpacing: 0.4,
+            ),
+          ),
+        ),
+        if (meta.isNotEmpty)
+          Text(
+            meta,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+      ],
+    );
+
+    final actions = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        OutlinedButton(
+          onPressed: () => _cutPiece(material, piece),
+          style: OutlinedButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+          ),
+          child: const Text('Cut'),
+        ),
+        const SizedBox(width: 4),
+        IconButton(
+          tooltip: 'Print sticker',
+          onPressed: () => printOrPreviewMaterialLabel(
+            context,
+            material: material,
+            piece: piece,
+          ),
+          icon: const Icon(Icons.print_outlined, size: 20),
+        ),
+        PopupMenuButton<String>(
+          tooltip: 'More',
+          icon: const Icon(Icons.more_vert, size: 20),
+          onSelected: (value) {
+            if (value == 'edit') {
+              _editPiece(material, piece);
+            } else if (value == 'scrap') {
+              _scrapPiece(material, piece);
+            }
+          },
+          itemBuilder: (context) => [
+            const PopupMenuItem(
+              value: 'edit',
+              child: ListTile(
+                leading: Icon(Icons.edit_outlined),
+                title: Text('Edit piece'),
+                contentPadding: EdgeInsets.zero,
+              ),
+            ),
+            PopupMenuItem(
+              value: 'scrap',
+              child: ListTile(
+                leading: Icon(Icons.delete_sweep_outlined, color: scheme.error),
+                title: Text(
+                  'Scrap piece',
+                  style: TextStyle(color: scheme.error),
+                ),
+                contentPadding: EdgeInsets.zero,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 560;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 4, 10),
+          child: compact
+              ? Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              lengthText,
+                              const SizedBox(width: 12),
+                              Expanded(child: code),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          bar,
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    actions,
+                  ],
+                )
+              : Row(
+                  children: [
+                    SizedBox(width: 72, child: lengthText),
+                    const SizedBox(width: 16),
+                    Expanded(child: bar),
+                    const SizedBox(width: 20),
+                    SizedBox(width: 150, child: code),
+                    actions,
+                  ],
+                ),
+        );
+      },
+    );
   }
 
-  Widget _buildPurchaseCard(ColorScheme scheme, dynamic record) {
+  Widget _buildPurchaseRow(ColorScheme scheme, dynamic record) {
     final item = PurchaseItem.fromRecord(record);
     final purchaseData = _expandFirst(record.expand, 'purchase');
     final supplierData = () {
@@ -1026,142 +1226,122 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     final highlight = _highlightHeatLot != null &&
         heat.isNotEmpty &&
         heat.toLowerCase().contains(_highlightHeatLot!.toLowerCase());
-    final detailStyle = Theme.of(context)
-        .textTheme
-        .bodyMedium
-        ?.copyWith(color: scheme.onSurfaceVariant);
+    final textTheme = Theme.of(context).textTheme;
+    final detailStyle =
+        textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant);
     final detailBold = detailStyle?.copyWith(
       fontWeight: FontWeight.w600,
       color: scheme.onSurface,
     );
 
-    return Card(
-      color: highlight
-          ? scheme.secondaryContainer.withValues(alpha: 0.55)
-          : null,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: () => _openPurchase(item.purchaseId),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    final dateText = Text(
+      date != null ? DateFormat.yMMMd().format(date) : 'No date',
+      style: textTheme.bodyMedium?.copyWith(
+        fontWeight: FontWeight.w600,
+        fontFeatures: const [FontFeature.tabularFigures()],
+      ),
+    );
+
+    final details = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          supplier.isNotEmpty ? supplier : 'Unknown supplier',
+          style: textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w500),
+        ),
+        const SizedBox(height: 2),
+        Text.rich(
+          TextSpan(
+            style: detailStyle,
             children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      [
-                        if (date != null) DateFormat.yMMMd().format(date),
-                        if (supplier.isNotEmpty) supplier,
-                      ].join(' · '),
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
-                    ),
-                    if (heat.isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Text.rich(
-                        TextSpan(
-                          style: detailStyle,
-                          children: [
-                            const TextSpan(text: 'Heat/lot '),
-                            TextSpan(text: heat, style: detailBold),
-                          ],
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 4),
-                    Text.rich(
-                      TextSpan(
-                        style: detailStyle,
-                        children: [
-                          TextSpan(text: 'Qty $qty'),
-                          if (unit != null) ...[
-                            const TextSpan(text: ' · '),
-                            TextSpan(
-                              text: '\$${unit.toStringAsFixed(2)}/unit',
-                              style: detailBold,
-                            ),
-                          ],
-                          if (lineTotal != null) ...[
-                            const TextSpan(text: ' · total '),
-                            TextSpan(
-                              text: '\$${lineTotal.toStringAsFixed(2)}',
-                              style: detailBold,
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    if (certs.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: [
-                          for (final name in certs)
-                            ActionChip(
-                              avatar: const Icon(
-                                Icons.picture_as_pdf,
-                                size: 16,
-                              ),
-                              label: Text(
-                                name,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              onPressed: () => _openMillCert(record, name),
-                            ),
-                        ],
-                      ),
-                    ],
-                  ],
+              TextSpan(text: 'Qty $qty'),
+              if (unit != null) ...[
+                const TextSpan(text: ' at '),
+                TextSpan(
+                  text: _money.format(unit),
+                  style: detailBold,
                 ),
-              ),
-              Icon(
-                Icons.chevron_right,
-                color: scheme.onSurfaceVariant,
-              ),
+              ],
+              if (lineTotal != null && qty != 1) ...[
+                const TextSpan(text: ', '),
+                TextSpan(text: _money.format(lineTotal), style: detailBold),
+                const TextSpan(text: ' total'),
+              ],
+              if (heat.isNotEmpty) ...[
+                const TextSpan(text: '     Lot '),
+                TextSpan(text: heat, style: detailBold),
+              ],
             ],
           ),
         ),
-      ),
+      ],
     );
-  }
 
-  Widget _buildPriceColumn(
-    _MaterialPriceSummary prices, {
-    required TextStyle? labelStyle,
-    required TextStyle? valueStyle,
-  }) {
-    Widget row(String label, String value) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 2),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              width: 48,
-              child: Text(label, style: labelStyle),
+    final certChips = Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (var i = 0; i < certs.length; i++)
+          Tooltip(
+            message: certs[i],
+            child: ActionChip(
+              visualDensity: VisualDensity.compact,
+              avatar: const Icon(Icons.picture_as_pdf_outlined, size: 16),
+              label: Text(
+                certs.length == 1 ? 'Mill cert' : 'Mill cert ${i + 1}',
+              ),
+              onPressed: () => _openMillCert(record, certs[i]),
             ),
-            Text(value, style: valueStyle),
-          ],
-        ),
-      );
-    }
+          ),
+      ],
+    );
 
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          row('Last', '${_money.format(prices.last)}${prices.unitSuffix}'),
-          if (prices.avg != null)
-            row('Avg', '${_money.format(prices.avg!)}${prices.unitSuffix}'),
-          if (prices.perInch != null)
-            row('\$/in', _money.format(prices.perInch!)),
-        ],
+    return Material(
+      color: highlight
+          ? scheme.secondaryContainer.withValues(alpha: 0.55)
+          : Colors.transparent,
+      child: InkWell(
+        onTap: () => _openPurchase(item.purchaseId),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact = constraints.maxWidth < 560;
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: compact
+                        ? Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              dateText,
+                              const SizedBox(height: 4),
+                              details,
+                              if (certs.isNotEmpty) ...[
+                                const SizedBox(height: 8),
+                                certChips,
+                              ],
+                            ],
+                          )
+                        : Row(
+                            children: [
+                              SizedBox(width: 110, child: dateText),
+                              Expanded(child: details),
+                              if (certs.isNotEmpty) ...[
+                                const SizedBox(width: 12),
+                                certChips,
+                              ],
+                            ],
+                          ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
+                ],
+              ),
+            );
+          },
+        ),
       ),
     );
   }

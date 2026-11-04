@@ -129,7 +129,7 @@ Future<void> printOrPreviewMaterialLabel(
   await showDialog<void>(
     context: context,
     builder: (ctx) => AlertDialog(
-      title: Text('Label · ${piece.labelCode}'),
+      title: Text('Sticker ${materialLabelCodeForSticker(piece.labelCode)}'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -333,7 +333,7 @@ Future<MaterialPiece?> showEditMaterialPieceDialog(
       return StatefulBuilder(
         builder: (ctx, setLocal) {
           return AlertDialog(
-            title: Text('Edit · ${piece.labelCode}'),
+            title: Text('Edit piece ${materialLabelCodeForSticker(piece.labelCode)}'),
             content: SizedBox(
               width: 420,
               child: SingleChildScrollView(
@@ -474,7 +474,7 @@ Future<MaterialPiece?> showCutMaterialPieceDialog(
           final remaining = cut == null ? null : piece.lengthIn - cut;
 
           return AlertDialog(
-            title: Text('Cut · ${piece.labelCode}'),
+            title: Text('Cut piece ${materialLabelCodeForSticker(piece.labelCode)}'),
             content: SizedBox(
               width: 420,
               child: SingleChildScrollView(
@@ -660,7 +660,7 @@ Future<bool> showScrapMaterialPieceDialog(
     context: context,
     builder: (ctx) {
       return AlertDialog(
-        title: Text('Scrap · ${piece.labelCode}'),
+        title: Text('Scrap piece ${materialLabelCodeForSticker(piece.labelCode)}'),
         content: SizedBox(
           width: 420,
           child: Column(
@@ -827,7 +827,9 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
     final pieces = await pb.getMaterialPiecesForMaterial(material.id);
     final codeById = <String, String>{
       for (final r in pieces)
-        r.id.toString(): MaterialPiece.fromRecord(r).labelCode,
+        r.id.toString(): materialLabelCodeForSticker(
+          MaterialPiece.fromRecord(r).labelCode,
+        ),
     };
     final events = await pb.getMaterialEventsForMaterial(material.id);
     for (final rec in events) {
@@ -846,7 +848,9 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
           final pieceRec =
               (expanded is List && expanded.isNotEmpty) ? expanded.first : expanded;
           if (pieceRec != null) {
-            code = MaterialPiece.fromRecord(pieceRec).labelCode;
+            code = materialLabelCodeForSticker(
+              MaterialPiece.fromRecord(pieceRec).labelCode,
+            );
           }
         } catch (_) {}
       }
@@ -923,7 +927,7 @@ Future<void> showMaterialHistoryDialog(
       final dialogH = (size.height - 160).clamp(360.0, 720.0);
       return AlertDialog(
         insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-        title: Text('History · ${material.displayLabel}'),
+        title: Text('History of ${materialPieceLabelIdentityLine(material)}'),
         content: SizedBox(
           width: dialogW,
           height: dialogH,
