@@ -3157,11 +3157,20 @@ class PocketBaseService {
     }
   }
 
+  /// Cuts [quantity] pieces of [cutLengthIn] from a shelf piece.
+  ///
+  /// Each cut also consumes [kerfIn] (saw blade width), except that a final
+  /// cut that runs to the end of the bar needs no kerf. When [scrapRemainder]
+  /// is true, whatever is left is logged as scrap instead of staying on shelf.
   Future<dynamic> cutMaterialPiece({
     required String pieceId,
     required double cutLengthIn,
+    int quantity = 1,
+    double kerfIn = 0,
+    String? jobId,
     String? jobRef,
     String? notes,
+    bool scrapRemainder = false,
   }) async {
     try {
       final current = await pb.collection('material_pieces').getOne(pieceId);
@@ -3170,19 +3179,28 @@ class PocketBaseService {
       if (cutLengthIn <= 0) {
         throw Exception('Cut length must be greater than zero');
       }
-      if (cutLengthIn > before + 0.001) {
+      if (quantity < 1) {
+        throw Exception('Quantity must be at least 1');
+      }
+      final result = MaterialCutPlan.compute(
+        onShelfIn: before,
+        cutLengthIn: cutLengthIn,
+        quantity: quantity,
+        kerfIn: kerfIn,
+      );
+      if (!result.fits) {
         throw Exception(
-          'Cut length (${cutLengthIn.toStringAsFixed(1)} in) exceeds '
-          'remaining (${before.toStringAsFixed(1)} in)',
+          'Needs ${formatInchesValue(result.usedIn)} in but only '
+          '${formatInchesValue(before)} in is on the shelf',
         );
       }
-      final after = before - cutLengthIn;
-      final depleted = after <= 0.001;
-      final lengthAfter = depleted ? 0.0 : after;
+      final remaining = result.remainingIn;
+      final depleted = remaining <= 0.001;
+      final scrapLeft = scrapRemainder && !depleted;
       // PocketBase required number fields reject 0 as "blank" — omit length_in when depleted.
       final body = <String, dynamic>{
-        'status': depleted ? 'depleted' : 'on_shelf',
-        if (!depleted) 'length_in': lengthAfter,
+        'status': depleted ? 'depleted' : (scrapLeft ? 'scrap' : 'on_shelf'),
+        if (!depleted) 'length_in': remaining,
       };
       final updated = await pb.collection('material_pieces').update(
         pieceId,
@@ -3192,16 +3210,85 @@ class PocketBaseService {
         pieceId: pieceId,
         eventType: 'cut',
         lengthBefore: before,
-        lengthAfter: lengthAfter,
+        lengthAfter: depleted ? 0 : remaining,
         cutLength: cutLengthIn,
+        quantity: quantity,
+        kerfIn: kerfIn,
+        jobId: jobId,
         jobRef: jobRef,
         notes: notes,
       );
+      if (scrapLeft) {
+        await _recordMaterialEvent(
+          pieceId: pieceId,
+          eventType: 'scrap',
+          lengthBefore: remaining,
+          lengthAfter: 0,
+          jobId: jobId,
+          notes: 'Leftover after cut',
+        );
+      }
+      if (jobId != null && jobId.isNotEmpty) {
+        await _linkJobToPiecePurchase(
+          jobId: jobId,
+          purchaseItemId: (data['purchase_item'] ?? '').toString(),
+          heatLot: (data['heat_lot'] ?? '').toString(),
+        );
+      }
       return updated;
     } catch (e) {
       print('Error cutting material piece: $e');
       rethrow;
     }
+  }
+
+  /// Fills the job's material lot (purchase line → mill certs) from the piece
+  /// that was cut for it. Never overwrites a lot already chosen on the job.
+  Future<void> _linkJobToPiecePurchase({
+    required String jobId,
+    required String purchaseItemId,
+    String heatLot = '',
+  }) async {
+    if (purchaseItemId.trim().isEmpty) return;
+    try {
+      final job = await pb.collection('jobs').getOne(jobId);
+      final existing =
+          (job.data['material_purchase_item'] ?? '').toString().trim();
+      if (existing.isNotEmpty) return;
+      final existingLot = (job.data['material_lot'] ?? '').toString().trim();
+      await pb.collection('jobs').update(
+        jobId,
+        body: {
+          'material_purchase_item': purchaseItemId.trim(),
+          if (existingLot.isEmpty && heatLot.trim().isNotEmpty)
+            'material_lot': heatLot.trim(),
+        },
+      );
+    } catch (e) {
+      print('Warning: could not link job $jobId to material lot: $e');
+    }
+  }
+
+  /// Jobs you can cut material for: planning or in progress, with customer.
+  Future<List<dynamic>> getOpenJobsForMaterial() async {
+    try {
+      return await pb.collection('jobs').getFullList(
+        filter: 'status = "planning" || status = "in_progress"',
+        sort: '-updated',
+        expand: 'customer',
+      );
+    } catch (e) {
+      print('Error getting open jobs: $e');
+      rethrow;
+    }
+  }
+
+  /// Material cut for a job (newest first), with piece + material expanded.
+  Future<List<dynamic>> getMaterialEventsForJob(String jobId) async {
+    return _listMaterialEvents(
+      filter: 'job = "$jobId"',
+      expand: 'piece,piece.material',
+    );
   }
 
   Future<void> scrapMaterialPiece(String pieceId, {String? notes}) async {
@@ -3237,11 +3324,15 @@ class PocketBaseService {
     double? lengthBefore,
     double? lengthAfter,
     double? cutLength,
+    int? quantity,
+    double? kerfIn,
+    String? jobId,
     String? jobRef,
     String? notes,
   }) async {
     try {
       final email = pb.authStore.record?.getStringValue('email') ?? '';
+      final name = pb.authStore.record?.getStringValue('name').trim() ?? '';
       final body = <String, dynamic>{
         'piece': pieceId,
         'event_type': eventType,
@@ -3250,11 +3341,23 @@ class PocketBaseService {
           'length_before': lengthBefore,
         if (lengthAfter != null && lengthAfter > 0) 'length_after': lengthAfter,
         if (cutLength != null && cutLength > 0) 'cut_length': cutLength,
+        if (quantity != null && quantity > 0) 'quantity': quantity,
+        if (kerfIn != null && kerfIn > 0) 'kerf_in': kerfIn,
+        if (jobId != null && jobId.trim().isNotEmpty) 'job': jobId.trim(),
         if (jobRef != null && jobRef.trim().isNotEmpty) 'job_ref': jobRef.trim(),
         if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
         if (email.isNotEmpty) 'created_by_email': email,
+        if (name.isNotEmpty) 'created_by_name': name,
       };
-      await pb.collection('material_events').create(body: body);
+      try {
+        await pb.collection('material_events').create(body: body);
+      } catch (e) {
+        // Keep the cut in History even if the job link is rejected.
+        if (!body.containsKey('job')) rethrow;
+        print('material_events job link rejected, saving without it: $e');
+        body.remove('job');
+        await pb.collection('material_events').create(body: body);
+      }
       return null;
     } catch (e) {
       print('Warning: $eventType event not recorded for $pieceId: $e');

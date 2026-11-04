@@ -11,7 +11,8 @@ $files = @(
   '1776820000_material_events_create.js',
   '1776830000_material_events_auth_rules.js',
   '1776840000_material_events_autodate.js',
-  '1776850000_material_events_backfill_created.js'
+  '1776850000_material_events_backfill_created.js',
+  '1776860000_material_events_job_link.js'
 )
 foreach ($f in $files) {
   $src = Join-Path $repo "pb_migrations\$f"
@@ -42,8 +43,8 @@ Write-Host "material_events row count..." -ForegroundColor Cyan
 ssh $ct 'echo SELECT count(*) FROM material_events | sqlite3 /opt/pocketbase-erp-dev/pb_data/data.db'
 
 Write-Host "material_events fields (expect created + updated)..." -ForegroundColor Cyan
-ssh $ct 'echo SELECT name, fields FROM _collections | sqlite3 /opt/pocketbase-erp-dev/pb_data/data.db | grep ^material_events | tr "," "\n" | grep -E "created|updated|event_type|piece" | head -20'
+ssh $ct 'echo SELECT name, fields FROM _collections | sqlite3 /opt/pocketbase-erp-dev/pb_data/data.db | grep ^material_events | tr "," "\n" | grep -E "created|updated|event_type|piece|job|quantity|kerf" | head -20'
 
 Write-Host ""
-Write-Host "Expect 177684 in _migrations and created/updated on material_events." -ForegroundColor Green
+Write-Host "Expect 177686 in _migrations and job/quantity/kerf_in/created_by_name on material_events." -ForegroundColor Green
 Write-Host "Then: .\scripts\build_web_shop.ps1 and deploy shop-web.zip; hard-refresh History." -ForegroundColor Yellow

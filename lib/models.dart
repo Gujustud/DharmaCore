@@ -568,6 +568,72 @@ String formatInchesValue(double v) {
   return s;
 }
 
+/// Inches used and left over when cutting [quantity] pieces from a bar.
+class MaterialCutPlan {
+  const MaterialCutPlan._({
+    required this.usedIn,
+    required this.remainingIn,
+    required this.kerfTotalIn,
+    required this.fits,
+  });
+
+  /// Material consumed, including kerf.
+  final double usedIn;
+
+  /// Left on the bar after cutting (0 when the last cut runs to the end).
+  final double remainingIn;
+
+  final double kerfTotalIn;
+  final bool fits;
+
+  static const _eps = 0.0005;
+
+  /// A kerf is taken for every cut except one that runs to the end of the
+  /// bar — there is nothing past it for the blade to eat.
+  factory MaterialCutPlan.compute({
+    required double onShelfIn,
+    required double cutLengthIn,
+    required int quantity,
+    double kerfIn = 0,
+  }) {
+    final pieces = quantity * cutLengthIn;
+    final fullKerf = quantity * kerfIn;
+    var remaining = onShelfIn - pieces - fullKerf;
+    var kerfTotal = fullKerf;
+    if (remaining < -_eps && remaining >= -kerfIn - _eps) {
+      kerfTotal = (onShelfIn - pieces).clamp(0.0, fullKerf);
+      remaining = 0;
+    }
+    final fits = remaining >= -_eps;
+    if (fits && remaining < _eps) remaining = 0;
+    return MaterialCutPlan._(
+      usedIn: pieces + kerfTotal,
+      remainingIn: fits ? remaining : onShelfIn - pieces - fullKerf,
+      kerfTotalIn: kerfTotal,
+      fits: fits,
+    );
+  }
+}
+
+/// Parses a typed length to inches. Accepts decimals (`12.5`) and metric with
+/// a unit (`300mm`, `30 cm`).
+double? parseLengthToInches(String raw) {
+  final t = raw.trim().toLowerCase().replaceAll(',', '.');
+  if (t.isEmpty) return null;
+  final m = RegExp(r'^(\d*\.?\d+)\s*(mm|cm|in|")?$').firstMatch(t);
+  if (m == null) return null;
+  final v = double.tryParse(m.group(1)!);
+  if (v == null) return null;
+  switch (m.group(2)) {
+    case 'mm':
+      return v / 25.4;
+    case 'cm':
+      return v / 2.54;
+    default:
+      return v;
+  }
+}
+
 /// One physical stick/plate remnant on the shelf (QR sticker target).
 class MaterialPiece {
   final String id;
