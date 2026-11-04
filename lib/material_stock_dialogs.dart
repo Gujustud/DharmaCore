@@ -718,15 +718,38 @@ Future<bool> showScrapMaterialPieceDialog(
   return ok == true;
 }
 
+enum _HistoryKind { purchase, intake, cut, adjust, scrap, other, error }
+
 class _MaterialHistoryRow {
   _MaterialHistoryRow({
     required this.when,
-    required this.title,
-    required this.subtitle,
+    required this.kind,
+    required this.headline,
+    this.detail = '',
+    this.dateOnly = false,
   });
   final DateTime? when;
-  final String title;
-  final String subtitle;
+  final _HistoryKind kind;
+  final String headline;
+  final String detail;
+
+  /// Purchase dates are calendar days (no meaningful time of day).
+  final bool dateOnly;
+}
+
+_HistoryKind _historyKindForEvent(String type) {
+  switch (type) {
+    case 'intake':
+      return _HistoryKind.intake;
+    case 'cut':
+      return _HistoryKind.cut;
+    case 'adjust':
+      return _HistoryKind.adjust;
+    case 'scrap':
+      return _HistoryKind.scrap;
+    default:
+      return _HistoryKind.other;
+  }
 }
 
 /// PocketBase autodate may live in [data] and/or [record.created].
@@ -761,7 +784,6 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
   ShopMaterial material,
 ) async {
   final pb = PocketBaseService();
-  final dateFmt = DateFormat('MMM d yyyy · HH:mm');
   final rows = <_MaterialHistoryRow>[];
 
   // Purchases = incoming stock for this alloy/form/size.
@@ -785,7 +807,8 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
           final purchaseRec = (p is List && p.isNotEmpty) ? p.first : p;
           final s = purchaseRec?.expand?['supplier'];
           final supplierRec = (s is List && s.isNotEmpty) ? s.first : s;
-          return (supplierRec?.data?['name'] ?? '').toString().trim();
+          final d = supplierRec?.data as Map<String, dynamic>? ?? {};
+          return (d['company_name'] ?? d['name'] ?? '').toString().trim();
         } catch (_) {
           return '';
         }
@@ -793,21 +816,18 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
       final lot = (item.heatLot ?? '').trim();
       final qty = item.quantity;
       final cost = item.unitCost;
-      final bits = <String>[
-        if (supplier.isNotEmpty) supplier,
-        'Qty $qty',
-        if (cost != null) '\$${cost.toStringAsFixed(2)}/unit',
-        if (lot.isNotEmpty) 'lot $lot',
-      ];
       rows.add(
         _MaterialHistoryRow(
           when: when,
-          title: 'Purchased · ${bits.join(' · ')}',
-          // Purchase dates are calendar days; converting to local time shifts
-          // them to the previous evening in North American time zones.
-          subtitle: when != null
-              ? DateFormat('MMM d yyyy').format(when.toUtc())
-              : 'Purchase',
+          kind: _HistoryKind.purchase,
+          dateOnly: true,
+          headline: supplier.isEmpty ? 'Purchased' : 'Purchased from $supplier',
+          detail: [
+            cost != null
+                ? 'Qty $qty at \$${cost.toStringAsFixed(2)}'
+                : 'Qty $qty',
+            if (lot.isNotEmpty) 'Lot $lot',
+          ].join('     '),
         ),
       );
     }
@@ -848,15 +868,15 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
         } catch (_) {}
       }
       final by = (data['created_by_email'] ?? '').toString().trim();
-      final desc = describeMaterialEvent(rec);
       rows.add(
         _MaterialHistoryRow(
           when: when,
-          title: code.isEmpty ? desc : '$code · $desc',
-          subtitle: [
-            when != null ? dateFmt.format(when.toLocal()) : 'Date not recorded',
+          kind: _historyKindForEvent((data['event_type'] ?? '').toString()),
+          headline: describeMaterialEvent(rec),
+          detail: [
+            if (code.isNotEmpty) code,
             if (by.isNotEmpty) by,
-          ].join(' · '),
+          ].join('     '),
         ),
       );
     }
@@ -879,12 +899,13 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
     rows.add(
       _MaterialHistoryRow(
         when: null,
-        title: missingCollection
+        kind: _HistoryKind.error,
+        headline: missingCollection
             ? 'Cut / scrap log not on this server yet'
             : needsAutodate
                 ? 'Cut / scrap log needs a PocketBase schema update'
                 : 'Could not load cut / scrap log',
-        subtitle: missingCollection
+        detail: missingCollection
             ? 'On the laptop run: scp pb_migrations/1776820000_material_events_create.js '
                 'to CT105 /opt/pocketbase-erp-dev/pb_migrations/ then '
                 'systemctl restart pocketbase-erp-dev. ($msg)'
@@ -949,16 +970,8 @@ Future<void> showMaterialHistoryDialog(
               }
               return ListView.separated(
                 itemCount: rows.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (ctx, i) {
-                  final row = rows[i];
-                  return ListTile(
-                    contentPadding: const EdgeInsets.symmetric(vertical: 4),
-                    title: Text(row.title),
-                    subtitle:
-                        row.subtitle.isEmpty ? null : Text(row.subtitle),
-                  );
-                },
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (ctx, i) => _MaterialHistoryRowView(row: rows[i]),
               );
             },
           ),
@@ -972,4 +985,111 @@ Future<void> showMaterialHistoryDialog(
       );
     },
   );
+}
+
+class _MaterialHistoryRowView extends StatelessWidget {
+  const _MaterialHistoryRowView({required this.row});
+
+  final _MaterialHistoryRow row;
+
+  static final _dayFmt = DateFormat('MMM d yyyy');
+  static final _timeFmt = DateFormat('HH:mm');
+
+  IconData get _icon {
+    switch (row.kind) {
+      case _HistoryKind.purchase:
+        return Icons.local_shipping_outlined;
+      case _HistoryKind.intake:
+        return Icons.add_box_outlined;
+      case _HistoryKind.cut:
+        return Icons.content_cut;
+      case _HistoryKind.adjust:
+        return Icons.edit_outlined;
+      case _HistoryKind.scrap:
+        return Icons.delete_sweep_outlined;
+      case _HistoryKind.error:
+        return Icons.error_outline;
+      case _HistoryKind.other:
+        return Icons.circle_outlined;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+    final muted = textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
+    final isProblem =
+        row.kind == _HistoryKind.scrap || row.kind == _HistoryKind.error;
+
+    final when = row.when;
+    // Purchase dates are calendar days; showing them in local time would
+    // shift them to the previous evening.
+    final day = when == null
+        ? null
+        : _dayFmt.format(row.dateOnly ? when.toUtc() : when.toLocal());
+    final time = when == null || row.dateOnly
+        ? null
+        : _timeFmt.format(when.toLocal());
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 104,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  day ?? 'No date',
+                  style: textTheme.bodyMedium?.copyWith(
+                    fontWeight: day == null ? FontWeight.w400 : FontWeight.w600,
+                    color: day == null ? scheme.onSurfaceVariant : null,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+                if (time != null)
+                  Text(
+                    time,
+                    style: muted?.copyWith(
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Padding(
+            padding: const EdgeInsets.only(top: 1),
+            child: Icon(
+              _icon,
+              size: 18,
+              color: isProblem ? scheme.error : scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  row.headline,
+                  style: textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w500,
+                    color: row.kind == _HistoryKind.error ? scheme.error : null,
+                  ),
+                ),
+                if (row.detail.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(row.detail, style: muted),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

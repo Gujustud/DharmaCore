@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -363,7 +364,6 @@ class LabelPrintService {
     const metaFontSize = 24.0;
     const lineGap = 1.0;
     const maxChars = 34;
-    const gap = 8.0;
 
     final imageHeight = height ?? labelHeightPx;
     final qrMaxSide = imageHeight - 2 * qrVerticalMargin;
@@ -377,6 +377,9 @@ class LabelPrintService {
     final qrModuleCount = qrImage.moduleCount;
     final qrModulePixel = (qrMaxSide / qrModuleCount).floor().clamp(1, 20);
     final qrSize = qrModuleCount * qrModulePixel;
+    // Text must not crowd the QR: scanners need a blank quiet zone of a few
+    // modules beside it, and the label reads better with clear separation.
+    final gap = math.max(24.0, 3.0 * qrModulePixel);
     final qrY = (imageHeight - qrSize) / 2;
 
     String trimLine(String s) {
