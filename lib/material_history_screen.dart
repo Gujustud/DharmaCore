@@ -459,18 +459,17 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                           final selected = _selected?.id == m.id;
                           final q = _searchController.text.trim().toLowerCase();
                           final matchedLot = _firstMatchingLot(m, q);
-                          final subtitle = matchedLot != null
-                              ? '${materialFormLabel(m.form)} · ${m.sizeLabel} · lot $matchedLot'
-                              : '${materialFormLabel(m.form)} · ${m.sizeLabel}';
                           return Card(
                             color:
                                 selected ? scheme.secondaryContainer : null,
                             child: ListTile(
-                              title: Text(m.grade, style: titleStyle),
-                              subtitle: Text(
-                                subtitle,
-                                style: muted,
+                              title: Text(
+                                _identityTitle(m),
+                                style: titleStyle,
                               ),
+                              subtitle: matchedLot != null
+                                  ? Text('Lot $matchedLot', style: muted)
+                                  : null,
                               trailing: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [

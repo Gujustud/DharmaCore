@@ -850,7 +850,7 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
           when: when,
           title: code.isEmpty ? desc : '$code · $desc',
           subtitle: [
-            if (when != null) dateFmt.format(when.toLocal()),
+            when != null ? dateFmt.format(when.toLocal()) : 'Date not recorded',
             if (by.isNotEmpty) by,
           ].join(' · '),
         ),
@@ -892,12 +892,14 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
     );
   }
 
+  // Newest first. Undated rows are shelf events logged before PocketBase had
+  // timestamps on material_events, which is newer than any purchase history.
   rows.sort((a, b) {
     final aw = a.when;
     final bw = b.when;
     if (aw == null && bw == null) return 0;
-    if (aw == null) return 1;
-    if (bw == null) return -1;
+    if (aw == null) return -1;
+    if (bw == null) return 1;
     return bw.compareTo(aw);
   });
   return rows;
