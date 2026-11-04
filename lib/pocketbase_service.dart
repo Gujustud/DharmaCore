@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'dart:async';
+import 'dart:math';
 import 'dart:typed_data';
 import 'app_config.dart';
 import 'http_client_factory.dart';
@@ -3014,10 +3015,37 @@ class PocketBaseService {
   // MATERIAL PIECES (shelf stock)
   // ============================================================================
 
-  String _newMaterialLabelCode() {
-    final t = DateTime.now().microsecondsSinceEpoch.toRadixString(36).toUpperCase();
-    final tail = t.length <= 5 ? t : t.substring(t.length - 5);
+  /// No I, O, 0 or 1: they get misread when typed in from a sticker.
+  static const _labelCodeAlphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  static final _labelCodeRandom = Random.secure();
+
+  String _randomMaterialLabelCode() {
+    final tail = List.generate(
+      5,
+      (_) => _labelCodeAlphabet[
+          _labelCodeRandom.nextInt(_labelCodeAlphabet.length)],
+    ).join();
     return 'P-$tail';
+  }
+
+  /// The sticker prints `P` + the first four characters, so uniqueness is
+  /// checked on that prefix rather than the full stored code.
+  Future<String> _newMaterialLabelCode() async {
+    for (var attempt = 0; attempt < 8; attempt++) {
+      final code = _randomMaterialLabelCode();
+      final stickerPrefix = code.substring(0, code.length - 1);
+      try {
+        final clash = await pb.collection('material_pieces').getList(
+              page: 1,
+              perPage: 1,
+              filter: 'label_code ~ "$stickerPrefix%"',
+            );
+        if (clash.items.isEmpty) return code;
+      } catch (_) {
+        return code;
+      }
+    }
+    return _randomMaterialLabelCode();
   }
 
   Future<List<dynamic>> getMaterialPiecesForMaterial(
@@ -3051,7 +3079,7 @@ class PocketBaseService {
     try {
       final code = (labelCode != null && labelCode.trim().isNotEmpty)
           ? labelCode.trim().toUpperCase()
-          : _newMaterialLabelCode();
+          : await _newMaterialLabelCode();
       final body = <String, dynamic>{
         'material': materialId,
         'label_code': code,
