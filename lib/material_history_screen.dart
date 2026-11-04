@@ -190,25 +190,9 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     if (onShelf.isEmpty) return 'Empty';
     final total = onShelf.fold<double>(0, (sum, p) => sum + p.lengthIn);
     final pcs = onShelf.length;
-    final totalLabel = total == total.roundToDouble()
-        ? '${total.round()} in'
-        : '${total.toStringAsFixed(1)} in';
+    final totalLabel = '${formatInchesValue(total)} in';
     if (pcs == 1) return '$totalLabel in 1 piece';
     return '$totalLabel across $pcs pieces';
-  }
-
-  /// Length a full bar represents: the piece's original length when known,
-  /// otherwise the longest of the stock length and the pieces on the shelf.
-  double _barFullLength(ShopMaterial m, MaterialPiece piece) {
-    final original = piece.originalLengthIn;
-    if (original != null && original >= piece.lengthIn && original > 0) {
-      return original;
-    }
-    var full = _lengthInchesFromSize(m.sizeLabel) ?? 0;
-    for (final p in _onShelfPieces) {
-      if (p.lengthIn > full) full = p.lengthIn;
-    }
-    return full > 0 ? full : piece.lengthIn;
   }
 
   Map<String, dynamic>? _expandFirst(dynamic expand, String key) {
@@ -1012,43 +996,12 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
       if (heat.isNotEmpty) 'Lot $heat',
       if (loc.isNotEmpty) loc,
     ].join('   ');
-    final full = _barFullLength(material, piece);
-    final fraction = full > 0 ? (piece.lengthIn / full).clamp(0.0, 1.0) : 1.0;
-    final fullLabel =
-        full == full.roundToDouble() ? '${full.round()}' : full.toStringAsFixed(1);
-
     final lengthText = Text(
       piece.lengthLabel,
       textAlign: TextAlign.right,
       style: textTheme.titleMedium?.copyWith(
         fontWeight: FontWeight.w600,
         fontFeatures: const [FontFeature.tabularFigures()],
-      ),
-    );
-
-    final bar = Tooltip(
-      message: '${piece.lengthLabel} of $fullLabel in',
-      child: SizedBox(
-        height: 10,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(2),
-          ),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: FractionallySizedBox(
-              widthFactor: fraction < 0.015 ? 0.015 : fraction,
-              heightFactor: 1,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: scheme.onSurface.withValues(alpha: 0.62),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-          ),
-        ),
       ),
     );
 
@@ -1134,47 +1087,17 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
       ],
     );
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 640;
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 4, 10),
-          child: compact
-              ? Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              SizedBox(width: 72, child: lengthText),
-                              const SizedBox(width: 16),
-                              Expanded(child: code),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          bar,
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    actions,
-                  ],
-                )
-              : Row(
-                  children: [
-                    SizedBox(width: 72, child: lengthText),
-                    const SizedBox(width: 16),
-                    Expanded(child: bar),
-                    const SizedBox(width: 20),
-                    SizedBox(width: 210, child: code),
-                    const SizedBox(width: 12),
-                    actions,
-                  ],
-                ),
-        );
-      },
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 4, 10),
+      child: Row(
+        children: [
+          SizedBox(width: 84, child: lengthText),
+          const SizedBox(width: 20),
+          Expanded(child: code),
+          const SizedBox(width: 12),
+          actions,
+        ],
+      ),
     );
   }
 

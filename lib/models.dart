@@ -558,6 +558,16 @@ class ShopMaterial {
   }
 }
 
+/// Inches without rounding away real precision: `18.25`, `3.125`, `12`.
+/// Machinists cut to these numbers, so never round 18.25 to 18.3.
+String formatInchesValue(double v) {
+  if (v == v.roundToDouble()) return '${v.round()}';
+  var s = v.toStringAsFixed(3);
+  s = s.replaceFirst(RegExp(r'0+$'), '');
+  if (s.endsWith('.')) s = s.substring(0, s.length - 1);
+  return s;
+}
+
 /// One physical stick/plate remnant on the shelf (QR sticker target).
 class MaterialPiece {
   final String id;
@@ -588,11 +598,7 @@ class MaterialPiece {
 
   bool get isOnShelf => status == 'on_shelf';
 
-  String get lengthLabel {
-    final v = lengthIn;
-    if (v == v.roundToDouble()) return '${v.round()} in';
-    return '${v.toStringAsFixed(1)} in';
-  }
+  String get lengthLabel => '${formatInchesValue(lengthIn)} in';
 
   factory MaterialPiece.fromRecord(dynamic record) {
     final data = record.data as Map<String, dynamic>? ?? {};

@@ -41,10 +41,7 @@ String materialPieceLabelIdentityLine(ShopMaterial m) {
 }
 
 String formatRemnantForLabel(double lengthIn) {
-  final v = lengthIn;
-  final numPart =
-      v == v.roundToDouble() ? '${v.round()}' : v.toStringAsFixed(1);
-  return 'REM: $numPart';
+  return 'REM: ${formatInchesValue(lengthIn)}';
 }
 
 /// Printable piece code without dashes, shortened one char for sticker fit
@@ -63,10 +60,7 @@ String? materialHeatLotForSticker(String? heatLot) {
   return 'LOT ${bare.isEmpty ? t : bare}';
 }
 
-String _formatInches(double v) {
-  if (v == v.roundToDouble()) return '${v.round()} in';
-  return '${v.toStringAsFixed(1)} in';
-}
+String _formatInches(double v) => '${formatInchesValue(v)} in';
 
 Future<void> printOrPreviewMaterialLabel(
   BuildContext context, {
@@ -316,11 +310,8 @@ Future<MaterialPiece?> showEditMaterialPieceDialog(
   required ShopMaterial material,
   required MaterialPiece piece,
 }) async {
-  final lengthCtrl = TextEditingController(
-    text: piece.lengthIn == piece.lengthIn.roundToDouble()
-        ? '${piece.lengthIn.round()}'
-        : piece.lengthIn.toStringAsFixed(1),
-  );
+  final lengthCtrl =
+      TextEditingController(text: formatInchesValue(piece.lengthIn));
   final locationCtrl =
       TextEditingController(text: piece.locationNote ?? '');
   final heatCtrl = TextEditingController(text: piece.heatLot ?? '');
@@ -606,9 +597,7 @@ Future<MaterialPiece?> showCutMaterialPieceDialog(
 
 String _formatEventInches(num? v) {
   if (v == null) return '?';
-  final d = v.toDouble();
-  if (d == d.roundToDouble()) return '${d.round()} in';
-  return '${d.toStringAsFixed(1)} in';
+  return '${formatInchesValue(v.toDouble())} in';
 }
 
 String describeMaterialEvent(dynamic record) {
