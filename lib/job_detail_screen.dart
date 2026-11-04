@@ -7,6 +7,7 @@ import 'workspace_scaffold.dart';
 import 'auth_service.dart';
 import 'drawer_behavior.dart';
 import 'material_lot_picker.dart';
+import 'material_stock_dialogs.dart' show JobMaterialCutsSection;
 import 'packing_slip_screen.dart';
 import 'part_images_panel.dart';
 import 'pocketbase_service.dart';
@@ -1457,6 +1458,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
               ),
               showDivider: false,
             ),
+            if (widget.job != null)
+              JobMaterialCutsSection(jobId: widget.job.id as String),
           ],
         ),
       ),

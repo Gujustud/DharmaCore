@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
+import 'auth_service.dart';
 import 'label_print_service.dart';
 import 'material_form_icons.dart';
 import 'models.dart';
@@ -444,145 +445,55 @@ Future<MaterialPiece?> showEditMaterialPieceDialog(
   return saved;
 }
 
+/// Saw blade width taken per cut when "Saw kerf" is on.
+const double kDefaultSawKerfIn = 0.125;
+
+/// Leftovers shorter than this prompt "keep or scrap?" after a cut.
+const double kSmallLeftoverIn = 2.0;
+
+/// Job number of a `jobs` record (empty when missing).
+String jobNumberOf(dynamic job) {
+  final data = job.data as Map<String, dynamic>? ?? {};
+  return (data['job_number'] ?? '').toString().trim();
+}
+
+/// Customer company (or name) of a `jobs` record with `customer` expanded.
+String jobCustomerOf(dynamic job) {
+  final data = job.data as Map<String, dynamic>? ?? {};
+  dynamic c;
+  try {
+    c = job.expand?['customer'];
+  } catch (_) {}
+  if (c is List && c.isNotEmpty) c = c.first;
+  if (c != null) {
+    final cd = c.data as Map<String, dynamic>? ?? {};
+    final company = (cd['company'] ?? '').toString().trim();
+    if (company.isNotEmpty) return company;
+    final name = (cd['name'] ?? '').toString().trim();
+    if (name.isNotEmpty) return name;
+  }
+  return (data['customer_name'] ?? '').toString().trim();
+}
+
+class _CutOutcome {
+  const _CutOutcome(this.piece, {required this.printRemnant});
+  final MaterialPiece piece;
+  final bool printRemnant;
+}
+
 /// Returns the updated piece after a cut, or null if cancelled.
 Future<MaterialPiece?> showCutMaterialPieceDialog(
   BuildContext context, {
   required ShopMaterial material,
   required MaterialPiece piece,
 }) async {
-  final cutCtrl = TextEditingController();
-  final jobCtrl = TextEditingController();
-  final notesCtrl = TextEditingController();
-  var printAfter = true;
-
-  final updated = await showDialog<MaterialPiece>(
+  final outcome = await showDialog<_CutOutcome>(
     context: context,
-    builder: (ctx) {
-      return StatefulBuilder(
-        builder: (ctx, setLocal) {
-          final raw = cutCtrl.text.trim().replaceAll(',', '');
-          final cut = double.tryParse(raw);
-          final remaining = cut == null ? null : piece.lengthIn - cut;
-
-          return AlertDialog(
-            title: Text('Cut piece ${materialLabelCodeForSticker(piece.labelCode)}'),
-            content: SizedBox(
-              width: 420,
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      '${materialPieceIdentityLine(material)} · ${piece.lengthLabel} on shelf',
-                      style: Theme.of(ctx).textTheme.titleSmall,
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: cutCtrl,
-                      autofocus: true,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                      decoration: const InputDecoration(
-                        labelText: 'Cut length (inches)',
-                        hintText: 'e.g. 12',
-                      ),
-                      onChanged: (_) => setLocal(() {}),
-                    ),
-                    if (remaining != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        remaining < -0.001
-                            ? 'Cut exceeds remaining length'
-                            : remaining <= 0.001
-                                ? 'Remaining: none (piece depleted)'
-                                : 'Remaining: ${_formatInches(remaining)}',
-                        style: TextStyle(
-                          color: remaining < -0.001
-                              ? Theme.of(ctx).colorScheme.error
-                              : Theme.of(ctx).colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: jobCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Job # (optional)',
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: notesCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Notes (optional)',
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    CheckboxListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Print remnant sticker'),
-                      value: printAfter,
-                      onChanged: (v) =>
-                          setLocal(() => printAfter = v ?? true),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () async {
-                  final rawCut = cutCtrl.text.trim().replaceAll(',', '');
-                  final cutLen = double.tryParse(rawCut);
-                  if (cutLen == null || cutLen <= 0) {
-                    ScaffoldMessenger.of(ctx).showSnackBar(
-                      const SnackBar(
-                        content: Text('Enter a cut length greater than zero'),
-                      ),
-                    );
-                    return;
-                  }
-                  try {
-                    final rec = await PocketBaseService().cutMaterialPiece(
-                      pieceId: piece.id,
-                      cutLengthIn: cutLen,
-                      jobRef: jobCtrl.text,
-                      notes: notesCtrl.text,
-                    );
-                    final next = MaterialPiece.fromRecord(rec);
-                    if (ctx.mounted) Navigator.pop(ctx, next);
-                  } catch (e) {
-                    if (ctx.mounted) {
-                      ScaffoldMessenger.of(ctx).showSnackBar(
-                        SnackBar(
-                          content: Text('Cut failed: $e'),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                    }
-                  }
-                },
-                child: const Text('Cut'),
-              ),
-            ],
-          );
-        },
-      );
-    },
+    builder: (_) => _CutPieceDialog(material: material, piece: piece),
   );
-
-  cutCtrl.dispose();
-  jobCtrl.dispose();
-  notesCtrl.dispose();
-
-  if (updated != null &&
-      printAfter &&
+  if (outcome == null) return null;
+  final updated = outcome.piece;
+  if (outcome.printRemnant &&
       updated.isOnShelf &&
       updated.lengthIn > 0 &&
       context.mounted) {
@@ -595,17 +506,540 @@ Future<MaterialPiece?> showCutMaterialPieceDialog(
   return updated;
 }
 
+class _CutPieceDialog extends StatefulWidget {
+  const _CutPieceDialog({required this.material, required this.piece});
+
+  final ShopMaterial material;
+  final MaterialPiece piece;
+
+  @override
+  State<_CutPieceDialog> createState() => _CutPieceDialogState();
+}
+
+class _CutPieceDialogState extends State<_CutPieceDialog> {
+  final _lengthCtrl = TextEditingController();
+  final _qtyCtrl = TextEditingController(text: '1');
+  final _notesCtrl = TextEditingController();
+  TextEditingController? _jobFieldCtrl;
+
+  bool _useKerf = true;
+  bool _printRemnant = true;
+  bool _saving = false;
+
+  List<dynamic> _jobs = const [];
+  bool _jobsLoading = true;
+  bool _jobsFailed = false;
+  dynamic _job;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadJobs();
+  }
+
+  Future<void> _loadJobs() async {
+    try {
+      final jobs = await PocketBaseService().getOpenJobsForMaterial();
+      if (!mounted) return;
+      setState(() {
+        _jobs = jobs;
+        _jobsLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _jobsLoading = false;
+        _jobsFailed = true;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _lengthCtrl.dispose();
+    _qtyCtrl.dispose();
+    _notesCtrl.dispose();
+    super.dispose();
+  }
+
+  double? get _cutIn => parseLengthToInches(_lengthCtrl.text);
+
+  int? get _qty {
+    final q = int.tryParse(_qtyCtrl.text.trim());
+    if (q == null || q < 1) return null;
+    return q;
+  }
+
+  double get _kerf => _useKerf ? kDefaultSawKerfIn : 0;
+
+  MaterialCutPlan? get _plan {
+    final cut = _cutIn;
+    final qty = _qty;
+    if (cut == null || cut <= 0 || qty == null) return null;
+    return MaterialCutPlan.compute(
+      onShelfIn: widget.piece.lengthIn,
+      cutLengthIn: cut,
+      quantity: qty,
+      kerfIn: _kerf,
+    );
+  }
+
+  String _jobLabel(dynamic job) {
+    final number = jobNumberOf(job);
+    final customer = jobCustomerOf(job);
+    if (customer.isEmpty) return number;
+    return '$number — $customer';
+  }
+
+  Iterable<dynamic> _matchJobs(String query) {
+    final q = query.trim().toLowerCase();
+    if (q.isEmpty) return _jobs.take(8);
+    final starts = <dynamic>[];
+    final contains = <dynamic>[];
+    for (final j in _jobs) {
+      final number = jobNumberOf(j).toLowerCase();
+      final customer = jobCustomerOf(j).toLowerCase();
+      if (number.startsWith(q)) {
+        starts.add(j);
+      } else if (number.contains(q) || customer.contains(q)) {
+        contains.add(j);
+      }
+    }
+    return [...starts, ...contains].take(12);
+  }
+
+  Future<bool?> _askAboutSmallLeftover(double remainingIn) {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Only ${_formatInches(remainingIn)} left'),
+        content: const Text(
+          'Keep the leftover on the shelf, or scrap it?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Back'),
+          ),
+          OutlinedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Scrap leftover'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Keep on shelf'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _submit() async {
+    final plan = _plan;
+    final cut = _cutIn;
+    final qty = _qty;
+    if (plan == null || !plan.fits || cut == null || qty == null) return;
+
+    var scrapRemainder = false;
+    if (plan.remainingIn > 0 && plan.remainingIn < kSmallLeftoverIn) {
+      final choice = await _askAboutSmallLeftover(plan.remainingIn);
+      if (choice == null) return;
+      scrapRemainder = choice;
+    }
+
+    final typedJob = _jobFieldCtrl?.text.trim() ?? '';
+    final jobId = _job?.id as String?;
+    final jobRef = _job != null ? jobNumberOf(_job) : typedJob;
+
+    setState(() => _saving = true);
+    try {
+      final rec = await PocketBaseService().cutMaterialPiece(
+        pieceId: widget.piece.id,
+        cutLengthIn: cut,
+        quantity: qty,
+        kerfIn: _kerf,
+        jobId: jobId,
+        jobRef: jobRef,
+        notes: _notesCtrl.text,
+        scrapRemainder: scrapRemainder,
+      );
+      if (!mounted) return;
+      Navigator.pop(
+        context,
+        _CutOutcome(
+          MaterialPiece.fromRecord(rec),
+          printRemnant: _printRemnant && !scrapRemainder,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Cut failed: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Widget _summary(ThemeData theme) {
+    final scheme = theme.colorScheme;
+    final raw = _lengthCtrl.text.trim();
+    final plan = _plan;
+    final cut = _cutIn;
+    final qty = _qty;
+
+    String headline;
+    String? detail;
+    var isError = false;
+
+    if (raw.isEmpty) {
+      headline = 'Enter a length';
+      detail = 'Decimal inches, or add mm / cm';
+    } else if (cut == null || cut <= 0) {
+      headline = 'Can\'t read "$raw"';
+      detail = 'Try 12.5 or 300mm';
+      isError = true;
+    } else if (qty == null) {
+      headline = 'Quantity must be 1 or more';
+      isError = true;
+    } else if (plan == null || !plan.fits) {
+      headline = 'Too long for this piece';
+      detail = 'Needs ${_formatInches(plan?.usedIn ?? cut * qty)}, '
+          '${widget.piece.lengthLabel} on shelf';
+      isError = true;
+    } else {
+      headline = plan.remainingIn <= 0
+          ? 'Uses the whole piece'
+          : 'Leaves ${_formatInches(plan.remainingIn)}';
+      final parts = <String>[
+        qty > 1
+            ? '$qty × ${_formatInches(cut)}'
+            : _formatInches(cut),
+        if (plan.kerfTotalIn > 0)
+          '${formatInchesValue(plan.kerfTotalIn)} in kerf',
+      ];
+      detail = parts.length > 1 || qty > 1
+          ? '${parts.join(' + ')} = ${_formatInches(plan.usedIn)}'
+          : null;
+    }
+
+    final color = isError ? scheme.error : scheme.onSurface;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: isError
+            ? scheme.errorContainer.withValues(alpha: 0.35)
+            : scheme.surfaceContainerHighest.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            headline,
+            style: theme.textTheme.titleSmall?.copyWith(
+              color: color,
+              fontWeight: FontWeight.w600,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+          if (detail != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              detail,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: isError ? scheme.error : scheme.onSurfaceVariant,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _jobField(ThemeData theme) {
+    final scheme = theme.colorScheme;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Autocomplete<Object>(
+          displayStringForOption: _jobLabel,
+          optionsBuilder: (value) => _matchJobs(value.text).cast<Object>(),
+          onSelected: (job) => setState(() => _job = job),
+          fieldViewBuilder: (context, ctrl, focusNode, onSubmit) {
+            _jobFieldCtrl = ctrl;
+            return TextField(
+              controller: ctrl,
+              focusNode: focusNode,
+              decoration: InputDecoration(
+                labelText: 'Job (optional)',
+                hintText: 'Type a job # or customer',
+                helperText: _jobsFailed
+                    ? 'Couldn\'t load jobs — what you type is saved as text'
+                    : _job == null && ctrl.text.trim().isNotEmpty
+                        ? 'Not linked — pick a job from the list to link it'
+                        : null,
+                prefixIcon: Icon(
+                  _job != null ? Icons.link : Icons.work_outline,
+                  size: 20,
+                  color: _job != null ? scheme.primary : null,
+                ),
+                suffixIcon: _jobsLoading
+                    ? const Padding(
+                        padding: EdgeInsets.all(14),
+                        child: SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                      )
+                    : ctrl.text.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: 'Clear',
+                            icon: const Icon(Icons.close, size: 18),
+                            onPressed: () => setState(() {
+                              ctrl.clear();
+                              _job = null;
+                            }),
+                          ),
+              ),
+              onChanged: (text) {
+                setState(() {
+                  if (_job != null && text != _jobLabel(_job)) _job = null;
+                });
+              },
+              onSubmitted: (_) => onSubmit(),
+            );
+          },
+          optionsViewBuilder: (context, onSelected, options) {
+            final list = options.toList();
+            return Align(
+              alignment: Alignment.topLeft,
+              child: Material(
+                elevation: 4,
+                borderRadius: BorderRadius.circular(8),
+                clipBehavior: Clip.antiAlias,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: 280,
+                    maxWidth: constraints.maxWidth,
+                  ),
+                  child: ListView.builder(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    shrinkWrap: true,
+                    itemCount: list.length,
+                    itemBuilder: (context, i) {
+                      final job = list[i];
+                      final highlighted =
+                          AutocompleteHighlightedOption.of(context) == i;
+                      final customer = jobCustomerOf(job);
+                      return InkWell(
+                        onTap: () => onSelected(job),
+                        child: Container(
+                          color: highlighted
+                              ? scheme.primary.withValues(alpha: 0.08)
+                              : null,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 96,
+                                child: Text(
+                                  jobNumberOf(job),
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    fontFeatures: const [
+                                      FontFeature.tabularFigures(),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              Expanded(
+                                child: Text(
+                                  customer.isEmpty ? '—' : customer,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: scheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final piece = widget.piece;
+    final plan = _plan;
+    final canCut = !_saving && plan != null && plan.fits;
+    final leavesRemnant = plan != null && plan.fits && plan.remainingIn > 0;
+    final lot = materialHeatLotForSticker(piece.heatLot);
+
+    return AlertDialog(
+      title: Text('Cut piece ${materialLabelCodeForSticker(piece.labelCode)}'),
+      content: SizedBox(
+        width: 440,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                materialPieceLabelIdentityLine(widget.material),
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                [
+                  '${piece.lengthLabel} on shelf',
+                  ?lot,
+                ].join('     '),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _lengthCtrl,
+                      autofocus: true,
+                      keyboardType: TextInputType.text,
+                      decoration: const InputDecoration(
+                        labelText: 'Length each (in)',
+                        hintText: '12.5  or  300mm',
+                      ),
+                      onChanged: (_) => setState(() {}),
+                      onSubmitted: (_) {
+                        if (canCut) _submit();
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    width: 88,
+                    child: TextField(
+                      controller: _qtyCtrl,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      decoration: const InputDecoration(
+                        labelText: 'Qty',
+                        prefixText: '× ',
+                      ),
+                      onChanged: (_) => setState(() {}),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              CheckboxListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: Text(
+                  'Saw kerf ${formatInchesValue(kDefaultSawKerfIn)} in per cut',
+                ),
+                value: _useKerf,
+                onChanged: (v) => setState(() => _useKerf = v ?? true),
+              ),
+              const SizedBox(height: 4),
+              _summary(theme),
+              const SizedBox(height: 16),
+              _jobField(theme),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _notesCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Notes (optional)',
+                ),
+              ),
+              if (leavesRemnant)
+                CheckboxListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: const Text('Print sticker for the leftover'),
+                  value: _printRemnant,
+                  onChanged: (v) => setState(() => _printRemnant = v ?? true),
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          onPressed: canCut ? _submit : null,
+          icon: _saving
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.content_cut, size: 18),
+          label: const Text('Cut'),
+        ),
+      ],
+    );
+  }
+}
+
 String _formatEventInches(num? v) {
   if (v == null) return '?';
   return '${formatInchesValue(v.toDouble())} in';
 }
 
-String describeMaterialEvent(dynamic record) {
+/// Who logged a material event: saved name, else the signed-in user's name
+/// for their own older events, else the email.
+String materialEventByName(Map<String, dynamic> data) {
+  final name = (data['created_by_name'] ?? '').toString().trim();
+  if (name.isNotEmpty) return name;
+  final email = (data['created_by_email'] ?? '').toString().trim();
+  final auth = AuthService.instance;
+  final me = auth.name;
+  if (me != null &&
+      email.isNotEmpty &&
+      email.toLowerCase() == (auth.email ?? '').trim().toLowerCase()) {
+    return me;
+  }
+  return email;
+}
+
+String describeMaterialEvent(dynamic record, {bool includeJob = true}) {
   final data = record.data as Map<String, dynamic>? ?? {};
   final type = (data['event_type'] ?? '').toString();
   final before = data['length_before'] as num?;
   final after = data['length_after'] as num?;
   final cut = data['cut_length'] as num?;
+  final qty = (data['quantity'] as num?)?.toInt() ?? 1;
   final job = (data['job_ref'] ?? '').toString().trim();
   final notes = (data['notes'] ?? '').toString().trim();
 
@@ -615,9 +1049,14 @@ String describeMaterialEvent(dynamic record) {
       base = 'Received ${_formatEventInches(after ?? before)}';
       break;
     case 'cut':
-      base =
-          'Cut ${_formatEventInches(cut)} → ${_formatEventInches(after)} left';
-      if (job.isNotEmpty) base = '$base · job $job';
+      final pieces = qty > 1
+          ? '$qty × ${_formatEventInches(cut)}'
+          : _formatEventInches(cut);
+      final left = (after ?? 0) > 0
+          ? '${_formatEventInches(after)} left'
+          : 'none left';
+      base = 'Cut $pieces → $left';
+      if (includeJob && job.isNotEmpty) base = '$base · job $job';
       break;
     case 'adjust':
       base =
@@ -867,7 +1306,7 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
           }
         } catch (_) {}
       }
-      final by = (data['created_by_email'] ?? '').toString().trim();
+      final by = materialEventByName(data);
       rows.add(
         _MaterialHistoryRow(
           when: when,
@@ -1090,6 +1529,161 @@ class _MaterialHistoryRowView extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// "Material cut for this job" list on the job page (cut events linked via
+/// `material_events.job`). Renders nothing until something has been cut.
+class JobMaterialCutsSection extends StatefulWidget {
+  const JobMaterialCutsSection({super.key, required this.jobId});
+
+  final String jobId;
+
+  @override
+  State<JobMaterialCutsSection> createState() => _JobMaterialCutsSectionState();
+}
+
+class _JobMaterialCutsSectionState extends State<JobMaterialCutsSection> {
+  List<dynamic> _events = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant JobMaterialCutsSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.jobId != widget.jobId) _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final events =
+          await PocketBaseService().getMaterialEventsForJob(widget.jobId);
+      final cuts = events.where((e) {
+        final d = e.data as Map<String, dynamic>? ?? {};
+        return (d['event_type'] ?? '') == 'cut';
+      }).toList()
+        ..sort((a, b) {
+          final ta = _recordCreatedAt(a);
+          final tb = _recordCreatedAt(b);
+          if (ta == null || tb == null) return 0;
+          return tb.compareTo(ta);
+        });
+      if (mounted) setState(() => _events = cuts);
+    } catch (_) {
+      // Older servers without material_events.job: just show nothing.
+    }
+  }
+
+  static dynamic _single(dynamic expanded) =>
+      (expanded is List && expanded.isNotEmpty) ? expanded.first : expanded;
+
+  @override
+  Widget build(BuildContext context) {
+    if (_events.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final dateFmt = DateFormat('MMM d');
+    final tabular = const [FontFeature.tabularFigures()];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 16),
+        Text(
+          'Material cut for this job',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 4),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            border: Border.all(color: scheme.outlineVariant),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            children: [
+              for (var i = 0; i < _events.length; i++) ...[
+                if (i > 0) Divider(height: 1, color: scheme.outlineVariant),
+                () {
+                  final rec = _events[i];
+                  final data = rec.data as Map<String, dynamic>? ?? {};
+                  final when = _recordCreatedAt(rec);
+                  var identity = '';
+                  var code = '';
+                  try {
+                    final pieceRec = _single(rec.expand?['piece']);
+                    if (pieceRec != null) {
+                      code = materialLabelCodeForSticker(
+                        MaterialPiece.fromRecord(pieceRec).labelCode,
+                      );
+                      final matRec = _single(pieceRec.expand?['material']);
+                      if (matRec != null) {
+                        identity = materialPieceLabelIdentityLine(
+                          ShopMaterial.fromRecord(matRec),
+                        );
+                      }
+                    }
+                  } catch (_) {}
+                  final by = materialEventByName(data);
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: 56,
+                          child: Text(
+                            when == null ? '—' : dateFmt.format(when.toLocal()),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                              fontFeatures: tabular,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                identity.isEmpty ? 'Material' : identity,
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              Text(
+                                [
+                                  describeMaterialEvent(rec, includeJob: false),
+                                  if (code.isNotEmpty) code,
+                                  if (by.isNotEmpty) by,
+                                ].join('     '),
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                  color: scheme.onSurfaceVariant,
+                                  fontFeatures: tabular,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }(),
+              ],
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
