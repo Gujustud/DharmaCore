@@ -803,7 +803,11 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
         _MaterialHistoryRow(
           when: when,
           title: 'Purchased · ${bits.join(' · ')}',
-          subtitle: when != null ? dateFmt.format(when.toLocal()) : 'Purchase',
+          // Purchase dates are calendar days; converting to local time shifts
+          // them to the previous evening in North American time zones.
+          subtitle: when != null
+              ? DateFormat('MMM d yyyy').format(when.toUtc())
+              : 'Purchase',
         ),
       );
     }
