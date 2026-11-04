@@ -740,6 +740,34 @@ class _MaterialHistoryRow {
   final String subtitle;
 }
 
+/// PocketBase autodate may live in [data] and/or [record.created].
+DateTime? _parsePbDate(dynamic raw) {
+  if (raw == null) return null;
+  if (raw is DateTime) return raw;
+  var s = raw.toString().trim();
+  if (s.isEmpty) return null;
+  // PB often returns "2026-11-03 12:00:00.000Z" (space); normalize for parse.
+  if (s.length > 10 && s[10] == ' ') {
+    s = '${s.substring(0, 10)}T${s.substring(11)}';
+  }
+  return DateTime.tryParse(s);
+}
+
+DateTime? _recordCreatedAt(dynamic rec) {
+  try {
+    final data = rec.data as Map<String, dynamic>? ?? {};
+    return _parsePbDate(data['created']) ??
+        _parsePbDate(rec.created) ??
+        _parsePbDate(data['updated']);
+  } catch (_) {
+    try {
+      return _parsePbDate(rec.created);
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
 Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
   ShopMaterial material,
 ) async {
@@ -759,9 +787,8 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
           final purchaseRec = (p is List && p.isNotEmpty) ? p.first : p;
           return purchaseRec?.data as Map<String, dynamic>?;
         }();
-        final raw = purchaseData?['purchase_date'];
-        if (raw != null) when = DateTime.tryParse(raw.toString());
-        when ??= DateTime.tryParse(rec.created?.toString() ?? '');
+        when = _parsePbDate(purchaseData?['purchase_date']);
+        when ??= _recordCreatedAt(rec);
       } catch (_) {}
       final supplier = () {
         try {
@@ -804,10 +831,7 @@ Future<List<_MaterialHistoryRow>> _loadMaterialHistoryRows(
     };
     final events = await pb.getMaterialEventsForMaterial(material.id);
     for (final rec in events) {
-      DateTime? when;
-      try {
-        when = DateTime.tryParse(rec.created?.toString() ?? '');
-      } catch (_) {}
+      final when = _recordCreatedAt(rec);
       final data = rec.data as Map<String, dynamic>? ?? {};
       final pieceId = () {
         final raw = data['piece'];

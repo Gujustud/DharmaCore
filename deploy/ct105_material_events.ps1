@@ -10,7 +10,8 @@ $files = @(
   '1776810000_ensure_material_events.js',
   '1776820000_material_events_create.js',
   '1776830000_material_events_auth_rules.js',
-  '1776840000_material_events_autodate.js'
+  '1776840000_material_events_autodate.js',
+  '1776850000_material_events_backfill_created.js'
 )
 foreach ($f in $files) {
   $src = Join-Path $repo "pb_migrations\$f"
