@@ -31,7 +31,7 @@ class JobDetailScreen extends StatefulWidget {
 class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMixin {
   static const _statusOptions = [
     ('planning', 'Planning'),
-    ('in_progress', 'In Progress'),
+    ('in_progress', 'In progress'),
     ('done', 'Done'),
     ('cancelled', 'Cancelled'),
   ];
@@ -78,7 +78,13 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
   bool _loading = true;
   bool _isSaving = false;
   bool _showTracking2 = false;
+  bool _showShipOverride = false;
   List<String> _partImages = [];
+
+  /// Lot as loaded, so saving an untouched lot never clears one that was
+  /// filled in on the server meanwhile (e.g. by cutting material for the job).
+  String? _loadedMaterialPurchaseItemId;
+  String _loadedMaterialLot = '';
 
   /// Fresh record from server (expand, created, updated); null while new job.
   dynamic _record;
@@ -146,7 +152,10 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
     if (_packingSlipNumber!.isEmpty) _packingSlipNumber = null;
     _partImages = PartImagesPanel.normalizeFilenames(d['part_images']);
     _showTracking2 = _trackingNumber2Controller.text.trim().isNotEmpty;
+    _showShipOverride = _shipToOverrideController.text.trim().isNotEmpty;
     _hydrateMaterialLotFromRecord(d);
+    _loadedMaterialPurchaseItemId = _materialPurchaseItemId;
+    _loadedMaterialLot = _materialLotController.text.trim();
   }
 
   void _hydrateMaterialLotFromRecord(Map<String, dynamic> d) {
@@ -641,8 +650,12 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
       'tracking_link_2': _optText(_trackingLink2Controller),
       'wave_invoice_number': _optText(_waveInvoiceNumberController),
       'po_number': _optText(_poNumberController),
-      'material_lot': _optText(_materialLotController),
-      'material_purchase_item': _materialPurchaseItemId,
+      if (_isNew || _materialLotController.text.trim() != _loadedMaterialLot)
+        'material_lot': _optText(_materialLotController),
+      if (_isNew ||
+          (_materialPurchaseItemId ?? '') !=
+              (_loadedMaterialPurchaseItemId ?? ''))
+        'material_purchase_item': _materialPurchaseItemId,
       'material_source': _optText(_materialSourceController),
       'project_notes': _optText(_projectNotesController),
       'ship_to': _shipToId,
@@ -872,12 +885,6 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
     );
   }
 
-  Color _notionDividerColor(BuildContext context) {
-    return Theme.of(context).brightness == Brightness.dark
-        ? const Color(0xFF374151)
-        : const Color(0xFFF3F4F6);
-  }
-
   TextStyle _notionLabelStyle(BuildContext context) {
     return TextStyle(
       fontSize: 14,
@@ -885,31 +892,6 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
       color: Theme.of(context).brightness == Brightness.dark
           ? const Color(0xFF9CA3AF)
           : const Color(0xFF6B7280),
-    );
-  }
-
-  Widget _notionRow(
-    BuildContext context,
-    String label,
-    Widget child, {
-    bool showDivider = true,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(width: 140, child: Text(label, style: _notionLabelStyle(context))),
-              Expanded(child: child),
-            ],
-          ),
-        ),
-        if (showDivider)
-          Divider(height: 1, thickness: 1, color: _notionDividerColor(context)),
-      ],
     );
   }
 
@@ -1039,7 +1021,21 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
       lastDate: DateTime(2100),
     );
     if (picked != null && mounted) {
-      setState(() => c.text = DateFormat('yyyy-MM-dd').format(picked));
+      setState(() {
+        c.text = DateFormat('yyyy-MM-dd').format(picked);
+        _syncTrackingFromDates();
+      });
+    }
+  }
+
+  /// A delivered date means delivered; a ship date moves "not shipped" to
+  /// "in transit". Never moves the status backwards.
+  void _syncTrackingFromDates() {
+    if (_parseFlexibleDate(_deliveredDateController.text.trim()) != null) {
+      _trackingStatus = 'delivered';
+    } else if (_trackingStatus == 'not_shipped' &&
+        _parseFlexibleDate(_shipDateController.text.trim()) != null) {
+      _trackingStatus = 'in_transit';
     }
   }
 
@@ -1065,10 +1061,16 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
               keyboardType: TextInputType.datetime,
               decoration: fieldDeco,
               onEditingComplete: () {
-                _normalizeDateField(c);
+                setState(() {
+                  _normalizeDateField(c);
+                  _syncTrackingFromDates();
+                });
                 FocusScope.of(context).unfocus();
               },
-              onTapOutside: (_) => _normalizeDateField(c),
+              onTapOutside: (_) => setState(() {
+                _normalizeDateField(c);
+                _syncTrackingFromDates();
+              }),
             ),
           ),
           const SizedBox(width: 6),
@@ -1149,11 +1151,62 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
     return '${m['company_name'] ?? m['name'] ?? ''}'.trim();
   }
 
+  Widget _sectionHeading(BuildContext context, String title) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 14, bottom: 8),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          color: _labelColor(context),
+        ),
+      ),
+    );
+  }
+
+  /// Date with a short label above the field (for 2-up rows).
+  Widget _stackedDateField(
+    BuildContext context, {
+    required String label,
+    required TextEditingController controller,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(label, style: _notionLabelStyle(context)),
+        const SizedBox(height: 4),
+        _jobDateField(context, controller),
+      ],
+    );
+  }
+
+  Widget _compactTextField(
+    BuildContext context,
+    TextEditingController controller, {
+    String? hint,
+    int maxLines = 1,
+    ValueChanged<String>? onChanged,
+  }) {
+    return TextField(
+      controller: controller,
+      maxLines: maxLines,
+      style: const TextStyle(fontSize: 14),
+      decoration: QuoteSidebarTheme.fieldDecoration(context).copyWith(
+        isDense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        hintText: hint,
+      ),
+      onChanged: onChanged,
+    );
+  }
+
   Widget _existingJobHeaderBar(BuildContext context) {
     final jn = _jobNumberController.text.trim();
     final narrow = MediaQuery.sizeOf(context).width < 640;
+    final scheme = Theme.of(context).colorScheme;
 
-    final actions = [
+    final secondary = <Widget>[
       if (!_isNew)
         _headerActionButton(
           context,
@@ -1167,39 +1220,66 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
           _quoteId!.isNotEmpty)
         _headerActionButton(
           context,
-          label: 'View Quote →',
+          label: 'View quote',
           onPressed: _isSaving ? null : _openLinkedQuote,
         ),
-      _headerActionButton(
-        context,
-        label: 'Back to Jobs',
-        onPressed: _isSaving ? null : () => Navigator.maybePop(context),
-      ),
-      _headerActionButton(
-        context,
-        label: _isSaving ? 'Saving…' : 'Save',
-        onPressed: _isSaving ? null : _save,
-      ),
-      _headerActionButton(
-        context,
-        label: 'Delete job',
-        onPressed: _isSaving ? null : _confirmDelete,
-      ),
     ];
 
-    final titleBlock = Column(
+    final saveBtn = FilledButton(
+      onPressed: _isSaving ? null : _save,
+      style: FilledButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        minimumSize: const Size(0, 36),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+      child: Text(_isSaving ? 'Saving…' : 'Save'),
+    );
+
+    final overflow = PopupMenuButton<String>(
+      tooltip: 'More',
+      enabled: !_isSaving,
+      onSelected: (v) {
+        if (v == 'delete') _confirmDelete();
+      },
+      itemBuilder: (_) => const [
+        PopupMenuItem(
+          value: 'delete',
+          child: Text('Delete job', style: TextStyle(color: Colors.red)),
+        ),
+      ],
+      icon: const Icon(Icons.more_vert),
+    );
+
+    final titleBlock = Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Job: ${jn.isEmpty ? '—' : jn}',
-          style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold),
+        IconButton(
+          tooltip: 'Back to jobs',
+          onPressed: _isSaving ? null : () => Navigator.maybePop(context),
+          icon: const Icon(Icons.arrow_back),
+          visualDensity: VisualDensity.compact,
         ),
-        const SizedBox(height: 4),
-        Text(
-          _customerSubtitle(),
-          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.72),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                jn.isEmpty ? 'Job' : jn,
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
               ),
+              const SizedBox(height: 2),
+              Text(
+                _customerSubtitle(),
+                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      color: scheme.onSurface.withValues(alpha: 0.72),
+                    ),
+              ),
+            ],
+          ),
         ),
       ],
     );
@@ -1210,7 +1290,12 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
         children: [
           titleBlock,
           const SizedBox(height: 12),
-          Wrap(spacing: 8, runSpacing: 8, children: actions),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [...secondary, saveBtn, overflow],
+          ),
         ],
       );
     }
@@ -1224,239 +1309,284 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
           spacing: 8,
           runSpacing: 8,
           alignment: WrapAlignment.end,
-          children: actions,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [...secondary, saveBtn, overflow],
         ),
       ],
     );
   }
 
   Widget _dharmaLeftDetailsCard(BuildContext context) {
-    final link1 = _displayTrackingUrl(_trackingNumber1Controller.text, _trackingLink1Controller);
-    final link2 = _displayTrackingUrl(_trackingNumber2Controller.text, _trackingLink2Controller);
+    final link1 =
+        _displayTrackingUrl(_trackingNumber1Controller.text, _trackingLink1Controller);
+    final link2 =
+        _displayTrackingUrl(_trackingNumber2Controller.text, _trackingLink2Controller);
+    final scheme = Theme.of(context).colorScheme;
+    final muted = scheme.onSurfaceVariant;
 
     return Card(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _notionRow(
-              context,
-              'Status',
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _statusOptions
-                    .map((o) => _jobStatusPill(context, o.$1, o.$2))
-                    .toList(),
-              ),
+            _sectionHeading(context, 'Status and dates'),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _statusOptions
+                  .map((o) => _jobStatusPill(context, o.$1, o.$2))
+                  .toList(),
             ),
-            _notionRow(context, 'Due Date', _jobDateField(context, _dueDateController)),
-            _notionRow(context, 'Completion', _jobDateField(context, _completionDateController)),
-            _notionRow(context, 'Ship Date', _jobDateField(context, _shipDateController)),
-            _notionRow(context, 'Delivered Date', _jobDateField(context, _deliveredDateController)),
-            _notionRow(
-              context,
-              'Tracking Status',
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _trackingStatusOptions
-                    .map((o) => _jobTrackingPill(context, o.$1, o.$2))
-                    .toList(),
-              ),
-            ),
-            _notionRow(
-              context,
-              'Ship To',
-              DropdownButtonFormField<String?>(
-                // ignore: deprecated_member_use
-                value: _shipTos.any((s) => s.id == _shipToId) ? _shipToId : null,
-                decoration: QuoteSidebarTheme.fieldDecoration(context).copyWith(
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                ),
-                items: [
-                  const DropdownMenuItem<String?>(
-                    value: null,
-                    child: Text('— Customer address / override —'),
+            const SizedBox(height: 12),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: _stackedDateField(
+                    context,
+                    label: 'Due date',
+                    controller: _dueDateController,
                   ),
-                  for (final site in _shipTos)
-                    DropdownMenuItem<String?>(
-                      value: site.id as String,
-                      child: Text(
-                        () {
-                          final d = site.data as Map<String, dynamic>? ?? {};
-                          final label = '${d['label'] ?? ''}'.trim();
-                          final def = d['is_default'] == true ? ' (default)' : '';
-                          return label.isEmpty ? site.id.toString() : '$label$def';
-                        }(),
-                        overflow: TextOverflow.ellipsis,
-                      ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _stackedDateField(
+                    context,
+                    label: 'Completed',
+                    controller: _completionDateController,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: _stackedDateField(
+                    context,
+                    label: 'Shipped',
+                    controller: _shipDateController,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _stackedDateField(
+                    context,
+                    label: 'Delivered',
+                    controller: _deliveredDateController,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text('Shipping', style: _notionLabelStyle(context)),
+                ..._trackingStatusOptions.map(
+                  (o) => _jobTrackingPill(context, o.$1, o.$2),
+                ),
+              ],
+            ),
+            const Divider(height: 28),
+            _sectionHeading(context, 'Billing'),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text('PO number', style: _notionLabelStyle(context)),
+                      const SizedBox(height: 4),
+                      _compactTextField(context, _poNumberController),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text('Wave invoice', style: _notionLabelStyle(context)),
+                      const SizedBox(height: 4),
+                      _compactTextField(context, _waveInvoiceNumberController),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const Divider(height: 28),
+            _sectionHeading(context, 'Shipping'),
+            Text('Ship to', style: _notionLabelStyle(context)),
+            const SizedBox(height: 4),
+            DropdownButtonFormField<String?>(
+              // ignore: deprecated_member_use
+              value: _shipTos.any((s) => s.id == _shipToId) ? _shipToId : null,
+              decoration: QuoteSidebarTheme.fieldDecoration(context).copyWith(
+                isDense: true,
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              ),
+              items: [
+                const DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text('Customer address'),
+                ),
+                for (final site in _shipTos)
+                  DropdownMenuItem<String?>(
+                    value: site.id as String,
+                    child: Text(
+                      () {
+                        final d = site.data as Map<String, dynamic>? ?? {};
+                        final label = '${d['label'] ?? ''}'.trim();
+                        final def = d['is_default'] == true ? ' (default)' : '';
+                        return label.isEmpty ? site.id.toString() : '$label$def';
+                      }(),
+                      overflow: TextOverflow.ellipsis,
                     ),
-                ],
-                onChanged: (v) => setState(() => _shipToId = v),
-              ),
-            ),
-            _notionRow(
-              context,
-              'Ship override',
-              TextField(
-                controller: _shipToOverrideController,
-                maxLines: 3,
-                style: const TextStyle(fontSize: 14),
-                decoration: QuoteSidebarTheme.fieldDecoration(context).copyWith(
-                  isDense: true,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  hintText: 'One-off address (optional)',
-                ),
-              ),
-            ),
-            _notionRow(
-              context,
-              '# Tracking Number',
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 360),
-                child: TextField(
-                  controller: _trackingNumber1Controller,
-                  style: const TextStyle(fontSize: 14),
-                  decoration: QuoteSidebarTheme.fieldDecoration(context).copyWith(
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                   ),
-                  onChanged: (_) => setState(() {}),
-                ),
-              ),
+              ],
+              onChanged: (v) => setState(() => _shipToId = v),
             ),
-            _notionRow(
-              context,
-              'Tracking Link',
+            if (!_showShipOverride)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  onPressed: () => setState(() => _showShipOverride = true),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 4),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: const Text('+ One-off address'),
+                ),
+              )
+            else ...[
+              const SizedBox(height: 8),
               Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    child: link1.isEmpty
-                        ? Text(
-                            'Empty',
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: Theme.of(context).brightness == Brightness.dark
-                                  ? const Color(0xFF9CA3AF)
-                                  : const Color(0xFF9CA3AF),
-                            ),
-                          )
-                        : InkWell(
-                            onTap: () => _openExternalUrl(link1),
-                            child: Text(
-                              _shortLinkLabel(link1, 45),
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: QuoteSidebarTheme.primary(context),
-                                decoration: TextDecoration.underline,
-                              ),
-                            ),
-                          ),
+                    child: Text('Ship override', style: _notionLabelStyle(context)),
                   ),
                   TextButton(
-                    onPressed: () => setState(() => _showTracking2 = !_showTracking2),
+                    onPressed: () => setState(() {
+                      _showShipOverride = false;
+                      _shipToOverrideController.clear();
+                    }),
                     style: TextButton.styleFrom(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       minimumSize: Size.zero,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
-                    child: Text(_showTracking2 ? '− Hide 2nd' : '+ Add 2nd'),
+                    child: const Text('Hide'),
                   ),
                 ],
               ),
-            ),
-            if (_showTracking2) ...[
-              _notionRow(
+              const SizedBox(height: 4),
+              _compactTextField(
                 context,
-                'Tracking 2',
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 360),
-                  child: TextField(
-                    controller: _trackingNumber2Controller,
-                    style: const TextStyle(fontSize: 14),
-                    decoration: QuoteSidebarTheme.fieldDecoration(context).copyWith(
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    ),
-                    onChanged: (_) => setState(() {}),
-                  ),
-                ),
-              ),
-              _notionRow(
-                context,
-                'Tracking Link 2',
-                link2.isEmpty
-                    ? const SizedBox.shrink()
-                    : InkWell(
-                        onTap: () => _openExternalUrl(link2),
-                        child: Text(
-                          _shortLinkLabel(link2, 45),
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: QuoteSidebarTheme.primary(context),
-                            decoration: TextDecoration.underline,
-                          ),
-                        ),
-                      ),
+                _shipToOverrideController,
+                maxLines: 3,
+                hint: 'One-off address',
               ),
             ],
-            _notionRow(
+            const SizedBox(height: 12),
+            Text('Tracking number', style: _notionLabelStyle(context)),
+            const SizedBox(height: 4),
+            _compactTextField(
               context,
-              'Invoice',
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 220),
-                child: TextField(
-                  controller: _waveInvoiceNumberController,
-                  style: const TextStyle(fontSize: 14),
-                  decoration: QuoteSidebarTheme.fieldDecoration(context).copyWith(
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              _trackingNumber1Controller,
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Expanded(
+                  child: link1.isEmpty
+                      ? Text(
+                          'Link fills in from the tracking number',
+                          style: TextStyle(fontSize: 13, color: muted),
+                        )
+                      : InkWell(
+                          onTap: () => _openExternalUrl(link1),
+                          child: Text(
+                            _shortLinkLabel(link1, 52),
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: QuoteSidebarTheme.primary(context),
+                              decoration: TextDecoration.underline,
+                            ),
+                          ),
+                        ),
+                ),
+                TextButton(
+                  onPressed: () => setState(() => _showTracking2 = !_showTracking2),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: Text(_showTracking2 ? 'Hide 2nd' : '+ Add 2nd'),
+                ),
+              ],
+            ),
+            if (_showTracking2) ...[
+              const SizedBox(height: 8),
+              Text('Tracking number 2', style: _notionLabelStyle(context)),
+              const SizedBox(height: 4),
+              _compactTextField(
+                context,
+                _trackingNumber2Controller,
+                onChanged: (_) => setState(() {}),
+              ),
+              if (link2.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                InkWell(
+                  onTap: () => _openExternalUrl(link2),
+                  child: Text(
+                    _shortLinkLabel(link2, 52),
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: QuoteSidebarTheme.primary(context),
+                      decoration: TextDecoration.underline,
+                    ),
                   ),
                 ),
-              ),
-            ),
-            _notionRow(
-              context,
-              'PO #',
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 220),
-                child: TextField(
-                  controller: _poNumberController,
-                  style: const TextStyle(fontSize: 14),
-                  decoration: QuoteSidebarTheme.fieldDecoration(context).copyWith(
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  ),
-                ),
-              ),
-            ),
-            _notionRow(
-              context,
-              'Material LOT',
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 360),
-                child: _materialLotPickerField(context, compact: true),
-              ),
-            ),
-            _notionRow(
-              context,
-              'Material source',
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 300),
-                child: SupplierSearchField(
-                  suppliers: _suppliers,
-                  selectedSupplierId: _materialSourceVendorId,
-                  selectedLabelFallback: _expandedMaterialVendorName(),
-                  noneOptionLabel: '— Select vendor —',
-                  decoration: _dropdownDecoration(context),
-                  onSupplierSelected: (id) => setState(() => _materialSourceVendorId = id),
-                ),
-              ),
-              showDivider: false,
+              ],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _dharmaMaterialCard(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _sectionHeading(context, 'Material'),
+            Text('Lot', style: _notionLabelStyle(context)),
+            const SizedBox(height: 4),
+            _materialLotPickerField(context, compact: true),
+            const SizedBox(height: 12),
+            Text('Source', style: _notionLabelStyle(context)),
+            const SizedBox(height: 4),
+            SupplierSearchField(
+              suppliers: _suppliers,
+              selectedSupplierId: _materialSourceVendorId,
+              selectedLabelFallback: _expandedMaterialVendorName(),
+              noneOptionLabel: 'Select vendor',
+              decoration: _dropdownDecoration(context),
+              onSupplierSelected: (id) =>
+                  setState(() => _materialSourceVendorId = id),
             ),
             if (widget.job != null)
               JobMaterialCutsSection(jobId: widget.job.id as String),
@@ -1472,52 +1602,38 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
       children: [
         Card(
           child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: PartImagesPanel(
-              recordId: widget.job?.id as String?,
-              collectionName: 'jobs',
-              filenames: _partImages,
-              fillHeight: false,
-              saveFirstHint: 'Save this job first to upload images or PDFs.',
-              onFilenamesChanged: (list) => setState(() => _partImages = list),
-            ),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: _jobPartsEditor(context, compact: true),
           ),
         ),
         const SizedBox(height: 16),
+        _dharmaMaterialCard(context),
+        const SizedBox(height: 16),
         Card(
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  'Notes',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: _labelColor(context),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'Project notes',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: Theme.of(context).brightness == Brightness.dark
-                        ? const Color(0xFF9CA3AF)
-                        : const Color(0xFF6B7280),
-                  ),
-                ),
-                const SizedBox(height: 4),
+                _sectionHeading(context, 'Notes'),
                 TextField(
                   controller: _projectNotesController,
                   maxLines: 3,
                   style: const TextStyle(fontSize: 14),
-                  decoration: QuoteSidebarTheme.fieldDecoration(context),
+                  decoration: QuoteSidebarTheme.fieldDecoration(context).copyWith(
+                    hintText: 'Project notes…',
+                  ),
                 ),
-                const SizedBox(height: 16),
-                _jobPartsEditor(context, compact: true),
+                const SizedBox(height: 12),
+                PartImagesPanel(
+                  recordId: widget.job?.id as String?,
+                  collectionName: 'jobs',
+                  filenames: _partImages,
+                  fillHeight: false,
+                  compactEmpty: true,
+                  saveFirstHint: 'Save this job first to upload images or PDFs.',
+                  onFilenamesChanged: (list) => setState(() => _partImages = list),
+                ),
               ],
             ),
           ),
@@ -1920,19 +2036,18 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
     final titleStyle = compact
         ? TextStyle(
             fontSize: 13,
-            fontWeight: FontWeight.w500,
-            color: Theme.of(context).brightness == Brightness.dark
-                ? const Color(0xFF9CA3AF)
-                : const Color(0xFF6B7280),
+            fontWeight: FontWeight.w600,
+            color: _labelColor(context),
           )
         : Theme.of(context).textTheme.titleMedium;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (compact) const SizedBox(height: 6),
         Row(
           children: [
-            Expanded(child: Text('Parts in this job', style: titleStyle)),
+            Expanded(child: Text(compact ? 'Parts' : 'Parts in this job', style: titleStyle)),
             TextButton.icon(
               onPressed: () {
                 setState(() {

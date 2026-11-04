@@ -1593,16 +1593,16 @@ class _JobMaterialCutsSectionState extends State<JobMaterialCutsSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
         Text(
-          'Material cut for this job',
+          'Cut for this job',
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w500,
             color: scheme.onSurfaceVariant,
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 6),
         DecoratedBox(
           decoration: BoxDecoration(
             border: Border.all(color: scheme.outlineVariant),
