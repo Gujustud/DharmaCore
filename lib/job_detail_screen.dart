@@ -1346,8 +1346,6 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
         _displayTrackingUrl(_trackingNumber1Controller.text, _trackingLink1Controller);
     final link2 =
         _displayTrackingUrl(_trackingNumber2Controller.text, _trackingLink2Controller);
-    final scheme = Theme.of(context).colorScheme;
-    final muted = scheme.onSurfaceVariant;
 
     return Card(
       child: Padding(
@@ -1521,26 +1519,10 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
               ),
             ],
             const SizedBox(height: 12),
-            Text('Tracking number', style: _notionLabelStyle(context)),
-            const SizedBox(height: 4),
-            _compactTextField(
-              context,
-              _trackingNumber1Controller,
-              onChanged: (_) => setState(() {}),
-            ),
-            const SizedBox(height: 4),
             Row(
               children: [
                 Expanded(
-                  child: _trackCarrierButton(
-                        context,
-                        trackingNumber: _trackingNumber1Controller.text,
-                        url: link1,
-                      ) ??
-                      Text(
-                        'Enter a tracking number to get a carrier link',
-                        style: TextStyle(fontSize: 13, color: muted),
-                      ),
+                  child: Text('Tracking number', style: _notionLabelStyle(context)),
                 ),
                 TextButton(
                   onPressed: () => setState(() => _showTracking2 = !_showTracking2),
@@ -1553,24 +1535,53 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
                 ),
               ],
             ),
+            const SizedBox(height: 4),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: _compactTextField(
+                    context,
+                    _trackingNumber1Controller,
+                    onChanged: (_) => setState(() {}),
+                  ),
+                ),
+                if (_trackCarrierButton(
+                      context,
+                      trackingNumber: _trackingNumber1Controller.text,
+                      url: link1,
+                    )
+                    case final track1?) ...[
+                  const SizedBox(width: 8),
+                  track1,
+                ],
+              ],
+            ),
             if (_showTracking2) ...[
               const SizedBox(height: 8),
               Text('Tracking number 2', style: _notionLabelStyle(context)),
               const SizedBox(height: 4),
-              _compactTextField(
-                context,
-                _trackingNumber2Controller,
-                onChanged: (_) => setState(() {}),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: _compactTextField(
+                      context,
+                      _trackingNumber2Controller,
+                      onChanged: (_) => setState(() {}),
+                    ),
+                  ),
+                  if (_trackCarrierButton(
+                        context,
+                        trackingNumber: _trackingNumber2Controller.text,
+                        url: link2,
+                      )
+                      case final track2?) ...[
+                    const SizedBox(width: 8),
+                    track2,
+                  ],
+                ],
               ),
-              if (_trackCarrierButton(
-                    context,
-                    trackingNumber: _trackingNumber2Controller.text,
-                    url: link2,
-                  )
-                  case final track2?) ...[
-                const SizedBox(height: 4),
-                Align(alignment: Alignment.centerLeft, child: track2),
-              ],
             ],
           ],
         ),
@@ -1635,6 +1646,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
       filenames: _partImages,
       fillHeight: false,
       compactEmpty: true,
+      horizontalScroll: true,
       saveFirstHint: 'Save this job first to upload images or PDFs.',
       onFilenamesChanged: (list) => setState(() => _partImages = list),
     );
