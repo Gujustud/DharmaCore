@@ -997,17 +997,42 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
     return manualLink.text.trim();
   }
 
-  String _shortLinkLabel(String url, int maxLen) {
-    if (url.length <= maxLen) return url;
-    return '${url.substring(0, maxLen - 1)}…';
-  }
-
   Future<void> _openExternalUrl(String url) async {
     final u = Uri.tryParse(url);
     if (u == null || !u.hasScheme) return;
     if (await canLaunchUrl(u)) {
       await launchUrl(u, mode: LaunchMode.externalApplication);
     }
+  }
+
+  /// "Track on DHL" (etc.) — no raw URL. Null when we can't build a link.
+  Widget? _trackCarrierButton(
+    BuildContext context, {
+    required String trackingNumber,
+    required String url,
+  }) {
+    if (url.isEmpty) return null;
+    final carrier = trackingCarrierName(trackingNumber) ?? 'carrier';
+    return TextButton(
+      onPressed: () => _openExternalUrl(url),
+      style: TextButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('Track on $carrier'),
+          const SizedBox(width: 4),
+          Icon(
+            Icons.open_in_new,
+            size: 14,
+            color: QuoteSidebarTheme.primary(context),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _pickJobDate(BuildContext context, TextEditingController c) async {
@@ -1507,22 +1532,15 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
             Row(
               children: [
                 Expanded(
-                  child: link1.isEmpty
-                      ? Text(
-                          'Link fills in from the tracking number',
-                          style: TextStyle(fontSize: 13, color: muted),
-                        )
-                      : InkWell(
-                          onTap: () => _openExternalUrl(link1),
-                          child: Text(
-                            _shortLinkLabel(link1, 52),
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: QuoteSidebarTheme.primary(context),
-                              decoration: TextDecoration.underline,
-                            ),
-                          ),
-                        ),
+                  child: _trackCarrierButton(
+                        context,
+                        trackingNumber: _trackingNumber1Controller.text,
+                        url: link1,
+                      ) ??
+                      Text(
+                        'Enter a tracking number to get a carrier link',
+                        style: TextStyle(fontSize: 13, color: muted),
+                      ),
                 ),
                 TextButton(
                   onPressed: () => setState(() => _showTracking2 = !_showTracking2),
@@ -1544,19 +1562,14 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
                 _trackingNumber2Controller,
                 onChanged: (_) => setState(() {}),
               ),
-              if (link2.isNotEmpty) ...[
+              if (_trackCarrierButton(
+                    context,
+                    trackingNumber: _trackingNumber2Controller.text,
+                    url: link2,
+                  )
+                  case final track2?) ...[
                 const SizedBox(height: 4),
-                InkWell(
-                  onTap: () => _openExternalUrl(link2),
-                  child: Text(
-                    _shortLinkLabel(link2, 52),
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: QuoteSidebarTheme.primary(context),
-                      decoration: TextDecoration.underline,
-                    ),
-                  ),
-                ),
+                Align(alignment: Alignment.centerLeft, child: track2),
               ],
             ],
           ],
@@ -1573,20 +1586,39 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _sectionHeading(context, 'Material'),
-            Text('Lot', style: _notionLabelStyle(context)),
-            const SizedBox(height: 4),
-            _materialLotPickerField(context, compact: true),
-            const SizedBox(height: 12),
-            Text('Source', style: _notionLabelStyle(context)),
-            const SizedBox(height: 4),
-            SupplierSearchField(
-              suppliers: _suppliers,
-              selectedSupplierId: _materialSourceVendorId,
-              selectedLabelFallback: _expandedMaterialVendorName(),
-              noneOptionLabel: 'Select vendor',
-              decoration: _dropdownDecoration(context),
-              onSupplierSelected: (id) =>
-                  setState(() => _materialSourceVendorId = id),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text('Source', style: _notionLabelStyle(context)),
+                      const SizedBox(height: 4),
+                      SupplierSearchField(
+                        suppliers: _suppliers,
+                        selectedSupplierId: _materialSourceVendorId,
+                        selectedLabelFallback: _expandedMaterialVendorName(),
+                        noneOptionLabel: 'Select vendor',
+                        decoration: _dropdownDecoration(context),
+                        onSupplierSelected: (id) =>
+                            setState(() => _materialSourceVendorId = id),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text('Lot', style: _notionLabelStyle(context)),
+                      const SizedBox(height: 4),
+                      _materialLotPickerField(context, compact: true),
+                    ],
+                  ),
+                ),
+              ],
             ),
             if (widget.job != null)
               JobMaterialCutsSection(jobId: widget.job.id as String),
@@ -1597,9 +1629,32 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
   }
 
   Widget _dharmaRightColumn(BuildContext context) {
+    final images = PartImagesPanel(
+      recordId: widget.job?.id as String?,
+      collectionName: 'jobs',
+      filenames: _partImages,
+      fillHeight: false,
+      compactEmpty: true,
+      saveFirstHint: 'Save this job first to upload images or PDFs.',
+      onFilenamesChanged: (list) => setState(() => _partImages = list),
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _sectionHeading(context, 'Images'),
+                images,
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
         Card(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -1623,16 +1678,6 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
                   decoration: QuoteSidebarTheme.fieldDecoration(context).copyWith(
                     hintText: 'Project notes…',
                   ),
-                ),
-                const SizedBox(height: 12),
-                PartImagesPanel(
-                  recordId: widget.job?.id as String?,
-                  collectionName: 'jobs',
-                  filenames: _partImages,
-                  fillHeight: false,
-                  compactEmpty: true,
-                  saveFirstHint: 'Save this job first to upload images or PDFs.',
-                  onFilenamesChanged: (list) => setState(() => _partImages = list),
                 ),
               ],
             ),
