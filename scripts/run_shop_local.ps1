@@ -8,14 +8,10 @@ Set-Location $repoRoot
 $pb = if ($env:CRIBHUB_SHOP_POCKETBASE_URL) { $env:CRIBHUB_SHOP_POCKETBASE_URL } else { 'https://dharmacore.sscadcam.com/' }
 $mcp = if ($env:CRIBHUB_SHOP_MCP_URL) { $env:CRIBHUB_SHOP_MCP_URL } else { 'https://dharmacore.sscadcam.com/mcp' }
 
-# Prefer Windows (no browser CORS). Fall back to Chrome.
-$device = 'windows'
-$devices = flutter devices 2>&1 | Out-String
-if ($devices -notmatch '(?i)windows') {
-  $device = 'chrome'
-}
+# Chrome — no Visual Studio needed (Windows desktop does).
+$device = 'chrome'
 
-Write-Host "Starting shop app on $device → $pb" -ForegroundColor Cyan
+Write-Host "Starting shop app on $device -> $pb" -ForegroundColor Cyan
 Write-Host "Hot reload: press r   Hot restart: press R   Quit: press q" -ForegroundColor Yellow
 flutter run -d $device `
   --dart-define=POCKETBASE_URL=$pb `
