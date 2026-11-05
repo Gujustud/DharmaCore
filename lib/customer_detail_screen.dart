@@ -142,6 +142,8 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
   DateTime get _periodStart {
     final now = DateTime.now();
     switch (_revenuePeriod) {
+      case _CustomerRevenuePeriod.last6Months:
+        return DateTime(now.year, now.month - 5, 1);
       case _CustomerRevenuePeriod.last12Months:
         return DateTime(now.year, now.month - 11, 1);
       case _CustomerRevenuePeriod.ytd:
@@ -170,12 +172,17 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
     return sum;
   }
 
-  /// Job activity by calendar month for the last 12 months (shop load signal).
-  List<({DateTime month, int count})> get _jobActivityLast12Months {
+  /// Job activity by calendar month (shop load). Follows 6/12 mo; else last 12.
+  List<({DateTime month, int count})> get _jobActivityMonths {
     final now = DateTime.now();
-    final start = DateTime(now.year, now.month - 11, 1);
+    final monthCount = switch (_revenuePeriod) {
+      _CustomerRevenuePeriod.last6Months => 6,
+      _ => 12,
+    };
+    final start = DateTime(now.year, now.month - (monthCount - 1), 1);
     final counts = <DateTime, int>{
-      for (var i = 0; i < 12; i++) DateTime(start.year, start.month + i): 0,
+      for (var i = 0; i < monthCount; i++)
+        DateTime(start.year, start.month + i): 0,
     };
     for (final job in _jobs) {
       final data = job.data as Map<String, dynamic>? ?? {};
@@ -541,8 +548,12 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
     final muted = Theme.of(context).brightness == Brightness.dark
         ? const Color(0xFFD1D5DB)
         : const Color(0xFF4B5563);
-    final activity = _jobActivityLast12Months;
+    final activity = _jobActivityMonths;
     final maxCount = activity.fold<int>(0, (m, e) => e.count > m ? e.count : m);
+    final chartLabel = switch (_revenuePeriod) {
+      _CustomerRevenuePeriod.last6Months => 'Jobs by month · last 6 mo',
+      _ => 'Jobs by month · last 12 mo',
+    };
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -597,7 +608,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
         ),
         const SizedBox(height: 16),
         Text(
-          'Jobs by month · last 12 mo',
+          chartLabel,
           style: TextStyle(fontSize: 13, color: muted),
         ),
         const SizedBox(height: 8),
@@ -1354,11 +1365,13 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
   }
 }
 
-enum _CustomerRevenuePeriod { last12Months, ytd, all }
+enum _CustomerRevenuePeriod { last6Months, last12Months, ytd, all }
 
 extension on _CustomerRevenuePeriod {
   String get shortLabel {
     switch (this) {
+      case _CustomerRevenuePeriod.last6Months:
+        return '6 mo';
       case _CustomerRevenuePeriod.last12Months:
         return '12 mo';
       case _CustomerRevenuePeriod.ytd:
@@ -1370,6 +1383,8 @@ extension on _CustomerRevenuePeriod {
 
   String get menuLabel {
     switch (this) {
+      case _CustomerRevenuePeriod.last6Months:
+        return 'Last 6 months';
       case _CustomerRevenuePeriod.last12Months:
         return 'Last 12 months';
       case _CustomerRevenuePeriod.ytd:
