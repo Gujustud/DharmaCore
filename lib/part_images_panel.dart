@@ -22,6 +22,12 @@ class PartImagesPanel extends StatefulWidget {
   final String saveFirstHint;
   final String addTileLabel;
 
+  /// When there are no files yet, show a small button instead of a drop zone.
+  final bool compactEmpty;
+
+  /// One horizontal row you can scroll sideways (instead of a 3-column grid).
+  final bool horizontalScroll;
+
   const PartImagesPanel({
     super.key,
     required this.recordId,
@@ -42,6 +48,8 @@ class PartImagesPanel extends StatefulWidget {
     this.emptyHint = 'Click to add images or PDFs.',
     this.saveFirstHint = 'Save this record first to upload files.',
     this.addTileLabel = 'Add image\nor PDF',
+    this.compactEmpty = false,
+    this.horizontalScroll = false,
   });
 
   static List<String> normalizeFilenames(dynamic value) {
@@ -266,6 +274,16 @@ class _PartImagesPanelState extends State<PartImagesPanel> {
   }
 
   Widget _emptyDropZone() {
+    if (widget.compactEmpty) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: OutlinedButton.icon(
+          onPressed: _uploading ? null : _pickAndUpload,
+          icon: const Icon(Icons.attach_file, size: 18),
+          label: Text(_uploading ? 'Uploading…' : 'Add images or PDFs'),
+        ),
+      );
+    }
     return InkWell(
       onTap: _uploading ? null : _pickAndUpload,
       borderRadius: BorderRadius.circular(8),
@@ -425,28 +443,49 @@ class _PartImagesPanelState extends State<PartImagesPanel> {
 
     final itemCount = images.length + (canAddMore ? 1 : 0);
 
+    Widget gallery;
+    if (widget.horizontalScroll) {
+      const tile = 104.0;
+      gallery = SizedBox(
+        height: tile,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: itemCount,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (context, index) {
+            final child = (canAddMore && index == itemCount - 1)
+                ? _addTile()
+                : _fileTile(images[index], index);
+            return SizedBox(width: tile, height: tile, child: child);
+          },
+        ),
+      );
+    } else {
+      // shrinkWrap + non-scrollable: parent quote screen is already a ScrollView.
+      gallery = GridView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 3,
+          crossAxisSpacing: 8,
+          mainAxisSpacing: 8,
+          childAspectRatio: 1,
+        ),
+        itemCount: itemCount,
+        itemBuilder: (context, index) {
+          if (canAddMore && index == itemCount - 1) {
+            return _addTile();
+          }
+          return _fileTile(images[index], index);
+        },
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        // shrinkWrap + non-scrollable: parent quote screen is already a ScrollView.
-        GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 3,
-            crossAxisSpacing: 8,
-            mainAxisSpacing: 8,
-            childAspectRatio: 1,
-          ),
-          itemCount: itemCount,
-          itemBuilder: (context, index) {
-            if (canAddMore && index == itemCount - 1) {
-              return _addTile();
-            }
-            return _fileTile(images[index], index);
-          },
-        ),
+        gallery,
         if (_uploading)
           const Padding(
             padding: EdgeInsets.only(top: 8),

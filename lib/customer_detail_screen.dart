@@ -45,6 +45,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
   List<dynamic> _jobs = [];
   List<dynamic> _quotes = [];
   List<dynamic> _shipTos = [];
+  _CustomerRevenuePeriod _revenuePeriod = _CustomerRevenuePeriod.last12Months;
 
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   static final _dateDisplay = DateFormat.yMMMd();
@@ -138,14 +139,68 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
     return customerDisplayLabel(data, fallback: 'Customer');
   }
 
+  DateTime get _periodStart {
+    final now = DateTime.now();
+    switch (_revenuePeriod) {
+      case _CustomerRevenuePeriod.last6Months:
+        return DateTime(now.year, now.month - 5, 1);
+      case _CustomerRevenuePeriod.last12Months:
+        return DateTime(now.year, now.month - 11, 1);
+      case _CustomerRevenuePeriod.ytd:
+        return DateTime(now.year, 1, 1);
+      case _CustomerRevenuePeriod.all:
+        return DateTime(2000);
+    }
+  }
+
+  bool _inRevenuePeriod(DateTime? d) {
+    if (_revenuePeriod == _CustomerRevenuePeriod.all) return true;
+    if (d == null) return false;
+    final local = d.toLocal();
+    return !local.isBefore(_periodStart);
+  }
+
   double get _wonRevenue {
     var sum = 0.0;
     for (final q in _quotes) {
       final data = q.data as Map<String, dynamic>? ?? {};
       if ('${data['status'] ?? ''}'.toLowerCase() != 'won') continue;
+      final when = _parseDate(data['created'] ?? data['updated']);
+      if (!_inRevenuePeriod(when)) continue;
       sum += (data['final_total_cad'] as num?)?.toDouble() ?? 0;
     }
     return sum;
+  }
+
+  /// Job activity by calendar month (shop load). Follows 6/12 mo; else last 12.
+  List<({DateTime month, int count})> get _jobActivityMonths {
+    final now = DateTime.now();
+    final monthCount = switch (_revenuePeriod) {
+      _CustomerRevenuePeriod.last6Months => 6,
+      _ => 12,
+    };
+    final start = DateTime(now.year, now.month - (monthCount - 1), 1);
+    final counts = <DateTime, int>{
+      for (var i = 0; i < monthCount; i++)
+        DateTime(start.year, start.month + i): 0,
+    };
+    for (final job in _jobs) {
+      final data = job.data as Map<String, dynamic>? ?? {};
+      final when = _parseDate(
+            data['ship_date'] ??
+                data['delivered_date'] ??
+                data['created'] ??
+                data['updated'],
+          )
+          ?.toLocal();
+      if (when == null) continue;
+      final key = DateTime(when.year, when.month);
+      if (!counts.containsKey(key)) continue;
+      counts[key] = counts[key]! + 1;
+    }
+    return [
+      for (final e in counts.entries) (month: e.key, count: e.value),
+    ];
   }
 
   void _close({required bool saved}) {
@@ -486,6 +541,85 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)),
       child: Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: fg)),
+    );
+  }
+
+  Widget _revenueSummaryBlock() {
+    final muted = Theme.of(context).brightness == Brightness.dark
+        ? const Color(0xFFD1D5DB)
+        : const Color(0xFF4B5563);
+    final activity = _jobActivityMonths;
+    final maxCount = activity.fold<int>(0, (m, e) => e.count > m ? e.count : m);
+    final chartLabel = switch (_revenuePeriod) {
+      _CustomerRevenuePeriod.last6Months => 'Jobs by month · last 6 mo',
+      _ => 'Jobs by month · last 12 mo',
+    };
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Revenue (won quotes)',
+                style: TextStyle(fontSize: 13, color: muted),
+              ),
+            ),
+            PopupMenuButton<_CustomerRevenuePeriod>(
+              tooltip: 'Revenue period',
+              initialValue: _revenuePeriod,
+              onSelected: (v) => setState(() => _revenuePeriod = v),
+              itemBuilder: (_) => [
+                for (final p in _CustomerRevenuePeriod.values)
+                  PopupMenuItem(
+                    value: p,
+                    child: Text(p.menuLabel),
+                  ),
+              ],
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _revenuePeriod.shortLabel,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: QuoteSidebarTheme.primary(context),
+                      ),
+                    ),
+                    Icon(
+                      Icons.arrow_drop_down,
+                      size: 18,
+                      color: QuoteSidebarTheme.primary(context),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(
+          _formatCurrency(_wonRevenue),
+          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          chartLabel,
+          style: TextStyle(fontSize: 13, color: muted),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 72,
+          child: _JobActivityBars(
+            months: activity,
+            maxCount: maxCount,
+          ),
+        ),
+      ],
     );
   }
 
@@ -1076,8 +1210,8 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _sectionTitle('Summary'),
-          _summaryStat('Revenue (won quotes)', _formatCurrency(_wonRevenue)),
-          const SizedBox(height: 16),
+          _revenueSummaryBlock(),
+          const SizedBox(height: 20),
           _summaryStat('Jobs', '${_jobs.length}'),
           const SizedBox(height: 16),
           _summaryStat('Quotes', '${_quotes.length}'),
@@ -1227,6 +1361,100 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
         leading: workspaceMenuLeading(context),
       ),
       body: form,
+    );
+  }
+}
+
+enum _CustomerRevenuePeriod { last6Months, last12Months, ytd, all }
+
+extension on _CustomerRevenuePeriod {
+  String get shortLabel {
+    switch (this) {
+      case _CustomerRevenuePeriod.last6Months:
+        return '6 mo';
+      case _CustomerRevenuePeriod.last12Months:
+        return '12 mo';
+      case _CustomerRevenuePeriod.ytd:
+        return 'YTD';
+      case _CustomerRevenuePeriod.all:
+        return 'All';
+    }
+  }
+
+  String get menuLabel {
+    switch (this) {
+      case _CustomerRevenuePeriod.last6Months:
+        return 'Last 6 months';
+      case _CustomerRevenuePeriod.last12Months:
+        return 'Last 12 months';
+      case _CustomerRevenuePeriod.ytd:
+        return 'Year to date';
+      case _CustomerRevenuePeriod.all:
+        return 'All time';
+    }
+  }
+}
+
+class _JobActivityBars extends StatelessWidget {
+  const _JobActivityBars({required this.months, required this.maxCount});
+
+  final List<({DateTime month, int count})> months;
+  final int maxCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final barColor = QuoteSidebarTheme.primary(context);
+    final track = scheme.brightness == Brightness.dark
+        ? const Color(0xFF374151)
+        : const Color(0xFFE5E7EB);
+    final labelStyle = TextStyle(
+      fontSize: 9,
+      color: scheme.onSurfaceVariant,
+    );
+    final monthFmt = DateFormat('MMM');
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        for (var i = 0; i < months.length; i++) ...[
+          if (i > 0) const SizedBox(width: 3),
+          Expanded(
+            child: Tooltip(
+              message:
+                  '${monthFmt.format(months[i].month)} ${months[i].month.year}: '
+                  '${months[i].count} job${months[i].count == 1 ? '' : 's'}',
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.bottomCenter,
+                      child: FractionallySizedBox(
+                        heightFactor: maxCount <= 0
+                            ? 0.08
+                            : (0.08 + 0.92 * (months[i].count / maxCount)),
+                        widthFactor: 1,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: months[i].count == 0 ? track : barColor,
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    monthFmt.format(months[i].month)[0],
+                    style: labelStyle,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

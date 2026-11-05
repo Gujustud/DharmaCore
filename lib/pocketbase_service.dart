@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'dart:async';
+import 'dart:math';
 import 'dart:typed_data';
 import 'app_config.dart';
 import 'http_client_factory.dart';
@@ -1098,8 +1099,25 @@ class PocketBaseService {
     }
   }
 
+  /// Deletes a quote and its line items.
+  ///
+  /// Throws if a job still links to the quote — clear or delete that job first.
   Future<void> deleteQuote(String id) async {
     try {
+      final linkedJob = await getJobByQuoteId(id);
+      if (linkedJob != null) {
+        final jn =
+            (linkedJob.data['job_number'] ?? '').toString().trim();
+        throw Exception(
+          jn.isEmpty
+              ? 'This quote is linked to a job. Remove the link or delete the job first.'
+              : 'This quote is linked to job $jn. Remove the link or delete the job first.',
+        );
+      }
+      final lines = await getQuoteLineItems(id);
+      for (final line in lines) {
+        await pb.collection('quote_line_items').delete(line.id as String);
+      }
       await pb.collection('quotes').delete(id);
     } catch (e) {
       print('Error deleting quote: $e');
@@ -3014,10 +3032,37 @@ class PocketBaseService {
   // MATERIAL PIECES (shelf stock)
   // ============================================================================
 
-  String _newMaterialLabelCode() {
-    final t = DateTime.now().microsecondsSinceEpoch.toRadixString(36).toUpperCase();
-    final tail = t.length <= 5 ? t : t.substring(t.length - 5);
+  /// No I, O, 0 or 1: they get misread when typed in from a sticker.
+  static const _labelCodeAlphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  static final _labelCodeRandom = Random.secure();
+
+  String _randomMaterialLabelCode() {
+    final tail = List.generate(
+      5,
+      (_) => _labelCodeAlphabet[
+          _labelCodeRandom.nextInt(_labelCodeAlphabet.length)],
+    ).join();
     return 'P-$tail';
+  }
+
+  /// The sticker prints `P` + the first four characters, so uniqueness is
+  /// checked on that prefix rather than the full stored code.
+  Future<String> _newMaterialLabelCode() async {
+    for (var attempt = 0; attempt < 8; attempt++) {
+      final code = _randomMaterialLabelCode();
+      final stickerPrefix = code.substring(0, code.length - 1);
+      try {
+        final clash = await pb.collection('material_pieces').getList(
+              page: 1,
+              perPage: 1,
+              filter: 'label_code ~ "$stickerPrefix%"',
+            );
+        if (clash.items.isEmpty) return code;
+      } catch (_) {
+        return code;
+      }
+    }
+    return _randomMaterialLabelCode();
   }
 
   Future<List<dynamic>> getMaterialPiecesForMaterial(
@@ -3051,7 +3096,7 @@ class PocketBaseService {
     try {
       final code = (labelCode != null && labelCode.trim().isNotEmpty)
           ? labelCode.trim().toUpperCase()
-          : _newMaterialLabelCode();
+          : await _newMaterialLabelCode();
       final body = <String, dynamic>{
         'material': materialId,
         'label_code': code,
@@ -3073,15 +3118,13 @@ class PocketBaseService {
         body['notes'] = notes.trim();
       }
       final created = await pb.collection('material_pieces').create(body: body);
-      final email = pb.authStore.record?.getStringValue('email') ?? '';
-      await pb.collection('material_events').create(body: {
-        'piece': created.id,
-        'event_type': 'intake',
-        'length_before': lengthIn,
-        'length_after': lengthIn,
-        if (email.isNotEmpty) 'created_by_email': email,
-        if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
-      });
+      await _recordMaterialEvent(
+        pieceId: created.id,
+        eventType: 'intake',
+        lengthBefore: lengthIn,
+        lengthAfter: lengthIn,
+        notes: notes,
+      );
       return created;
     } catch (e) {
       print('Error creating material piece: $e');
@@ -3089,11 +3132,62 @@ class PocketBaseService {
     }
   }
 
+  /// Update an on-shelf piece (length / location / heat / notes). Logs `adjust` when length changes.
+  Future<dynamic> updateMaterialPiece({
+    required String pieceId,
+    required double lengthIn,
+    String? locationNote,
+    String? heatLot,
+    String? notes,
+  }) async {
+    try {
+      if (lengthIn <= 0) {
+        throw Exception('Length must be greater than zero');
+      }
+      final current = await pb.collection('material_pieces').getOne(pieceId);
+      final data = current.data as Map<String, dynamic>? ?? {};
+      final before = (data['length_in'] as num?)?.toDouble() ?? 0;
+      final body = <String, dynamic>{
+        'length_in': lengthIn,
+        'status': 'on_shelf',
+        'location_note': (locationNote ?? '').trim(),
+        'heat_lot': (heatLot ?? '').trim(),
+        'notes': (notes ?? '').trim(),
+      };
+      final updated = await pb.collection('material_pieces').update(
+        pieceId,
+        body: body,
+      );
+      if ((before - lengthIn).abs() > 0.0005) {
+        await _recordMaterialEvent(
+          pieceId: pieceId,
+          eventType: 'adjust',
+          lengthBefore: before,
+          lengthAfter: lengthIn,
+          notes: notes,
+        );
+      }
+      return updated;
+    } catch (e) {
+      print('Error updating material piece: $e');
+      rethrow;
+    }
+  }
+
+  /// Cuts [quantity] pieces of [cutLengthIn] from a shelf piece.
+  ///
+  /// Each cut also consumes [kerfIn] (saw blade width), except that a final
+  /// cut that runs to the end of the bar needs no kerf. When [scrapRemainder]
+  /// is true, whatever is left is logged as scrap instead of staying on shelf.
   Future<dynamic> cutMaterialPiece({
     required String pieceId,
     required double cutLengthIn,
+    int quantity = 1,
+    double kerfIn = 0,
+    String? jobId,
     String? jobRef,
     String? notes,
+    bool scrapRemainder = false,
   }) async {
     try {
       final current = await pb.collection('material_pieces').getOne(pieceId);
@@ -3102,33 +3196,62 @@ class PocketBaseService {
       if (cutLengthIn <= 0) {
         throw Exception('Cut length must be greater than zero');
       }
-      if (cutLengthIn > before + 0.001) {
+      if (quantity < 1) {
+        throw Exception('Quantity must be at least 1');
+      }
+      final result = MaterialCutPlan.compute(
+        onShelfIn: before,
+        cutLengthIn: cutLengthIn,
+        quantity: quantity,
+        kerfIn: kerfIn,
+      );
+      if (!result.fits) {
         throw Exception(
-          'Cut length (${cutLengthIn.toStringAsFixed(1)} in) exceeds '
-          'remaining (${before.toStringAsFixed(1)} in)',
+          'Needs ${formatInchesValue(result.usedIn)} in but only '
+          '${formatInchesValue(before)} in is on the shelf',
         );
       }
-      final after = (before - cutLengthIn);
-      final status = after <= 0.001 ? 'depleted' : 'on_shelf';
-      final lengthAfter = after <= 0.001 ? 0.0 : after;
+      final remaining = result.remainingIn;
+      final depleted = remaining <= 0.001;
+      final scrapLeft = scrapRemainder && !depleted;
+      // PocketBase required number fields reject 0 as "blank" — omit length_in when depleted.
+      final body = <String, dynamic>{
+        'status': depleted ? 'depleted' : (scrapLeft ? 'scrap' : 'on_shelf'),
+        if (!depleted) 'length_in': remaining,
+      };
       final updated = await pb.collection('material_pieces').update(
         pieceId,
-        body: {
-          'length_in': lengthAfter,
-          'status': status,
-        },
+        body: body,
       );
-      final email = pb.authStore.record?.getStringValue('email') ?? '';
-      await pb.collection('material_events').create(body: {
-        'piece': pieceId,
-        'event_type': 'cut',
-        'length_before': before,
-        'length_after': lengthAfter,
-        'cut_length': cutLengthIn,
-        if (jobRef != null && jobRef.trim().isNotEmpty) 'job_ref': jobRef.trim(),
-        if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
-        if (email.isNotEmpty) 'created_by_email': email,
-      });
+      await _recordMaterialEvent(
+        pieceId: pieceId,
+        eventType: 'cut',
+        lengthBefore: before,
+        lengthAfter: depleted ? 0 : remaining,
+        cutLength: cutLengthIn,
+        quantity: quantity,
+        kerfIn: kerfIn,
+        jobId: jobId,
+        jobRef: jobRef,
+        notes: notes,
+      );
+      if (scrapLeft) {
+        await _recordMaterialEvent(
+          pieceId: pieceId,
+          eventType: 'scrap',
+          lengthBefore: remaining,
+          lengthAfter: 0,
+          jobId: jobId,
+          notes: 'Leftover after cut',
+        );
+      }
+      if (jobId != null && jobId.isNotEmpty) {
+        await _linkJobToPiecePurchase(
+          jobId: jobId,
+          purchaseItemId: (data['purchase_item'] ?? '').toString(),
+          heatLot: (data['heat_lot'] ?? '').toString(),
+        );
+      }
       return updated;
     } catch (e) {
       print('Error cutting material piece: $e');
@@ -3136,29 +3259,259 @@ class PocketBaseService {
     }
   }
 
+  /// Fills the job's material lot (purchase line → mill certs) from the piece
+  /// that was cut for it. Never overwrites a lot already chosen on the job.
+  Future<void> _linkJobToPiecePurchase({
+    required String jobId,
+    required String purchaseItemId,
+    String heatLot = '',
+  }) async {
+    if (purchaseItemId.trim().isEmpty) return;
+    try {
+      final job = await pb.collection('jobs').getOne(jobId);
+      final existing =
+          (job.data['material_purchase_item'] ?? '').toString().trim();
+      if (existing.isNotEmpty) return;
+      final existingLot = (job.data['material_lot'] ?? '').toString().trim();
+      await pb.collection('jobs').update(
+        jobId,
+        body: {
+          'material_purchase_item': purchaseItemId.trim(),
+          if (existingLot.isEmpty && heatLot.trim().isNotEmpty)
+            'material_lot': heatLot.trim(),
+        },
+      );
+    } catch (e) {
+      print('Warning: could not link job $jobId to material lot: $e');
+    }
+  }
+
+  /// Jobs you can cut material for: planning or in progress, with customer.
+  Future<List<dynamic>> getOpenJobsForMaterial() async {
+    try {
+      return await pb.collection('jobs').getFullList(
+        filter: 'status = "planning" || status = "in_progress"',
+        sort: '-updated',
+        expand: 'customer',
+      );
+    } catch (e) {
+      print('Error getting open jobs: $e');
+      rethrow;
+    }
+  }
+
+  /// Material cut for a job (newest first), with piece + material expanded.
+  Future<List<dynamic>> getMaterialEventsForJob(String jobId) async {
+    return _listMaterialEvents(
+      filter: 'job = "$jobId"',
+      expand: 'piece,piece.material',
+    );
+  }
+
   Future<void> scrapMaterialPiece(String pieceId, {String? notes}) async {
     try {
       final current = await pb.collection('material_pieces').getOne(pieceId);
       final data = current.data as Map<String, dynamic>? ?? {};
       final before = (data['length_in'] as num?)?.toDouble() ?? 0;
+      // Keep length_in as-is: PB rejects 0 on required numbers; status removes it from shelf.
       await pb.collection('material_pieces').update(
         pieceId,
         body: {
           'status': 'scrap',
-          'length_in': 0,
         },
       );
-      final email = pb.authStore.record?.getStringValue('email') ?? '';
-      await pb.collection('material_events').create(body: {
-        'piece': pieceId,
-        'event_type': 'scrap',
-        'length_before': before,
-        'length_after': 0,
-        if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
-        if (email.isNotEmpty) 'created_by_email': email,
-      });
+      await _recordMaterialEvent(
+        pieceId: pieceId,
+        eventType: 'scrap',
+        lengthBefore: before,
+        lengthAfter: 0,
+        notes: notes,
+      );
     } catch (e) {
       print('Error scrapping material piece: $e');
+      rethrow;
+    }
+  }
+
+  /// Writes a material_events row. Never throws — piece ops must still succeed.
+  /// Returns an error message when logging failed (for optional UI snackbars).
+  Future<String?> _recordMaterialEvent({
+    required String pieceId,
+    required String eventType,
+    double? lengthBefore,
+    double? lengthAfter,
+    double? cutLength,
+    int? quantity,
+    double? kerfIn,
+    String? jobId,
+    String? jobRef,
+    String? notes,
+  }) async {
+    try {
+      final email = pb.authStore.record?.getStringValue('email') ?? '';
+      final name = pb.authStore.record?.getStringValue('name').trim() ?? '';
+      final body = <String, dynamic>{
+        'piece': pieceId,
+        'event_type': eventType,
+        // Avoid sending literal 0 on number fields — some PB setups treat it as blank.
+        if (lengthBefore != null && lengthBefore > 0)
+          'length_before': lengthBefore,
+        if (lengthAfter != null && lengthAfter > 0) 'length_after': lengthAfter,
+        if (cutLength != null && cutLength > 0) 'cut_length': cutLength,
+        if (quantity != null && quantity > 0) 'quantity': quantity,
+        if (kerfIn != null && kerfIn > 0) 'kerf_in': kerfIn,
+        if (jobId != null && jobId.trim().isNotEmpty) 'job': jobId.trim(),
+        if (jobRef != null && jobRef.trim().isNotEmpty) 'job_ref': jobRef.trim(),
+        if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+        if (email.isNotEmpty) 'created_by_email': email,
+        if (name.isNotEmpty) 'created_by_name': name,
+      };
+      try {
+        await pb.collection('material_events').create(body: body);
+      } catch (e) {
+        // Keep the cut in History even if the job link is rejected.
+        if (!body.containsKey('job')) rethrow;
+        print('material_events job link rejected, saving without it: $e');
+        body.remove('job');
+        await pb.collection('material_events').create(body: body);
+      }
+      return null;
+    } catch (e) {
+      print('Warning: $eventType event not recorded for $pieceId: $e');
+      return '$e';
+    }
+  }
+
+  Future<List<dynamic>> getMaterialEventsForPiece(String pieceId) async {
+    try {
+      return await _listMaterialEvents(
+        filter: 'piece = "$pieceId"',
+        expand: 'piece',
+      );
+    } catch (e) {
+      print('Error getting material events: $e');
+      rethrow;
+    }
+  }
+
+  /// True when `material_events` is listable (migration applied).
+  Future<bool> materialEventsCollectionAvailable() async {
+    return (await materialEventsUnavailableReason()) == null;
+  }
+
+  static bool _looksLikeMissingCollection(String raw, {String? status}) {
+    final s = raw.toLowerCase();
+    if (status == '404') return true;
+    return s.contains('missing collection') ||
+        s.contains("collection 'material_events' not found") ||
+        s.contains('collection not found') ||
+        s.contains("couldn't find the collection") ||
+        (s.contains('material_events') && s.contains('not found'));
+  }
+
+  String _formatPbError(Object e) {
+    final s = '$e';
+    final msgMatch = RegExp(r'message:\s*([^,}]+)').firstMatch(s);
+    final statusMatch = RegExp(r'statusCode:\s*(\d+)').firstMatch(s);
+    final status = statusMatch?.group(1);
+    final msg = msgMatch?.group(1)?.trim();
+    if (status != null && msg != null) return 'HTTP $status — $msg';
+    if (s.length <= 180) return s;
+    return '${s.substring(0, 180)}…';
+  }
+
+  /// Null if listable; otherwise a short reason (for History UI).
+  Future<String?> materialEventsUnavailableReason() async {
+    try {
+      await pb.collection('material_events').getList(page: 1, perPage: 1);
+      return null;
+    } catch (e) {
+      print('material_events not available: $e');
+      return _formatPbError(e);
+    }
+  }
+
+  String _pieceIdFromEventData(dynamic raw) {
+    if (raw == null) return '';
+    if (raw is String) return raw;
+    if (raw is Map) return (raw['id'] ?? '').toString();
+    try {
+      // Expanded relation record
+      final id = raw.id;
+      if (id != null) return id.toString();
+    } catch (_) {}
+    return raw.toString();
+  }
+
+  /// List material_events with resilient sort/expand.
+  /// PB returns HTTP 400 on sort=-created when AutodateFields are missing
+  /// (fixed by migration 1776840000_material_events_autodate.js).
+  Future<List<dynamic>> _listMaterialEvents({
+    String? filter,
+    String? expand,
+  }) async {
+    Object? lastError;
+    // Prefer created; fall back when autodate migration is not applied yet.
+    final sorts = <String?>['-created', '-id', null];
+    final expands = expand == null ? <String?>[null] : <String?>[expand, null];
+    for (final sort in sorts) {
+      for (final exp in expands) {
+        try {
+          return await pb.collection('material_events').getFullList(
+            filter: filter,
+            sort: sort,
+            expand: exp,
+          );
+        } catch (e) {
+          lastError = e;
+          print(
+            'material_events list failed filter=$filter sort=$sort expand=$exp: $e',
+          );
+        }
+      }
+    }
+    throw lastError ?? StateError('Error listing material_events');
+  }
+
+  /// Events for every piece of a catalog material (incoming/outgoing timeline).
+  Future<List<dynamic>> getMaterialEventsForMaterial(String materialId) async {
+    final unavailable = await materialEventsUnavailableReason();
+    if (unavailable != null) {
+      final statusMatch =
+          RegExp(r'HTTP (\d+)').firstMatch(unavailable)?.group(1);
+      if (_looksLikeMissingCollection(unavailable, status: statusMatch)) {
+        throw StateError(
+          'material_events collection missing — apply '
+          '1776820000_material_events_create.js on CT 105 ($unavailable)',
+        );
+      }
+      throw StateError('material_events not readable ($unavailable)');
+    }
+    final pieces = await getMaterialPiecesForMaterial(materialId);
+    final ids =
+        pieces.map((p) => p.id.toString()).where((id) => id.isNotEmpty).toSet();
+    if (ids.isEmpty) return [];
+
+    // Preferred: nested relation filter (one request).
+    try {
+      return await _listMaterialEvents(
+        filter: 'piece.material = "$materialId"',
+        expand: 'piece',
+      );
+    } catch (e) {
+      print('piece.material filter failed, falling back: $e');
+    }
+
+    // Fallback: load events and keep those whose piece belongs to this material.
+    try {
+      final all = await _listMaterialEvents(expand: 'piece');
+      return all.where((rec) {
+        final data = rec.data as Map<String, dynamic>? ?? {};
+        final pid = _pieceIdFromEventData(data['piece']);
+        return ids.contains(pid);
+      }).toList();
+    } catch (e) {
+      print('Error listing material_events: $e');
       rethrow;
     }
   }

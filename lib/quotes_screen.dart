@@ -217,14 +217,20 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
 
   Future<void> _deleteQuote(dynamic quote) async {
     final data = quote.data as Map<String, dynamic>? ?? {};
-    final label = _str(data['job_number']).isEmpty ? 'this quote' : data['job_number'];
+    final label =
+        _str(data['job_number']).isEmpty ? 'this quote' : data['job_number'];
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete quote?'),
-        content: Text('Delete quote $label? This cannot be undone.'),
+        content: Text(
+          'Delete quote $label and its line items? This cannot be undone.',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             style: TextButton.styleFrom(foregroundColor: Colors.red),
@@ -235,17 +241,27 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
     );
     if (confirm != true) return;
     try {
-      await PocketBaseService().deleteQuote(quote.id);
+      await PocketBaseService().deleteQuote(quote.id as String);
       _loadData();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Quote deleted'), backgroundColor: Colors.green),
+          const SnackBar(
+            content: Text('Quote deleted'),
+            backgroundColor: Colors.green,
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
+        final msg = '$e';
+        final friendly = msg.contains('Exception: ')
+            ? msg.split('Exception: ').last
+            : msg;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text(friendly),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -391,66 +407,25 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
     if (changed == true) _loadData();
   }
 
-  Widget _statCard(String label, String value) {
+  Widget _summaryLine(
+    BuildContext context, {
+    required int quotesThisMonth,
+    required int wonCount,
+    required int pendingCount,
+    required String revenue,
+  }) {
     final muted = Theme.of(context).brightness == Brightness.dark
-        ? const Color(0xFFD1D5DB)
-        : const Color(0xFF4B5563);
-    return QuoteSidebarCard(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(label, style: TextStyle(fontSize: 13, color: muted)),
-          const SizedBox(height: 2),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _statsRow(int quotesThisMonth, int wonCount, int pendingCount, String revenue) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth >= 700) {
-          return IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(child: _statCard('Quotes this month', '$quotesThisMonth')),
-                const SizedBox(width: 12),
-                Expanded(child: _statCard('Won', '$wonCount')),
-                const SizedBox(width: 12),
-                Expanded(child: _statCard('Pending', '$pendingCount')),
-                const SizedBox(width: 12),
-                Expanded(child: _statCard('Revenue this month', revenue)),
-              ],
-            ),
-          );
-        }
-        return Column(
-          children: [
-            Row(
-              children: [
-                Expanded(child: _statCard('Quotes this month', '$quotesThisMonth')),
-                const SizedBox(width: 12),
-                Expanded(child: _statCard('Won', '$wonCount')),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(child: _statCard('Pending', '$pendingCount')),
-                const SizedBox(width: 12),
-                Expanded(child: _statCard('Revenue this month', revenue)),
-              ],
-            ),
-          ],
-        );
-      },
+        ? const Color(0xFF9CA3AF)
+        : const Color(0xFF6B7280);
+    final parts = <String>[
+      '$quotesThisMonth this month',
+      '$wonCount won',
+      '$pendingCount pending',
+      if (revenue != '—') '$revenue revenue',
+    ];
+    return Text(
+      parts.join('  ·  '),
+      style: TextStyle(fontSize: 14, color: muted, height: 1.3),
     );
   }
 
@@ -493,6 +468,52 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
         : const Color(0xFFF9FAFB);
   }
 
+  Widget _sortableHeader(
+    BuildContext context, {
+    required String label,
+    required String sortKey,
+    String defaultDir = 'asc',
+  }) {
+    final active = _sortKey == sortKey;
+    final style = _tableHeaderStyle(context);
+    return InkWell(
+      onTap: () {
+        setState(() {
+          if (_sortKey == sortKey) {
+            _sortDir = _sortDir == 'asc' ? 'desc' : 'asc';
+          } else {
+            _sortKey = sortKey;
+            _sortDir = defaultDir;
+          }
+        });
+      },
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: style.copyWith(
+              fontWeight: active ? FontWeight.w700 : style.fontWeight,
+              color: active
+                  ? (Theme.of(context).brightness == Brightness.dark
+                      ? Colors.white
+                      : const Color(0xFF111827))
+                  : style.color,
+            ),
+          ),
+          if (active) ...[
+            const SizedBox(width: 2),
+            Icon(
+              _sortDir == 'asc' ? Icons.arrow_upward : Icons.arrow_downward,
+              size: 14,
+              color: style.color,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _tableHeaderRow(BuildContext context) {
     final border = _tableBorderColor(context);
     return Container(
@@ -502,18 +523,41 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
       ),
       child: Row(
         children: [
-          Expanded(flex: 2, child: Text('Job #', style: _tableHeaderStyle(context))),
-          Expanded(flex: 4, child: Text('Customer', style: _tableHeaderStyle(context))),
+          Expanded(
+            flex: 2,
+            child: _sortableHeader(
+              context,
+              label: 'Job #',
+              sortKey: 'job_number',
+              defaultDir: 'desc',
+            ),
+          ),
+          Expanded(
+            flex: 5,
+            child: _sortableHeader(
+              context,
+              label: 'Customer',
+              sortKey: 'customer',
+            ),
+          ),
           Expanded(flex: 2, child: Text('Status', style: _tableHeaderStyle(context))),
           Expanded(
             flex: 2,
             child: Row(
-              mainAxisSize: MainAxisSize.min,
               children: [
-                Text('Total (CAD)', style: _tableHeaderStyle(context)),
+                Flexible(
+                  child: _sortableHeader(
+                    context,
+                    label: 'Total',
+                    sortKey: 'total',
+                    defaultDir: 'desc',
+                  ),
+                ),
                 IconButton(
                   icon: Icon(
-                    _showTotals ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                    _showTotals
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
                     size: 18,
                   ),
                   padding: EdgeInsets.zero,
@@ -524,7 +568,7 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
               ],
             ),
           ),
-          Expanded(flex: 5, child: Text('Actions', style: _tableHeaderStyle(context))),
+          const SizedBox(width: 40),
         ],
       ),
     );
@@ -541,6 +585,7 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
       color: Colors.transparent,
       child: InkWell(
         hoverColor: _tableHoverColor(context),
+        onTap: () => _openQuote(q),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           decoration: BoxDecoration(
@@ -551,19 +596,16 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
             children: [
               Expanded(
                 flex: 2,
-                child: GestureDetector(
-                  onTap: () => _openQuote(q),
-                  child: Text(
-                    job.isEmpty ? '—' : job,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: QuoteSidebarTheme.primary(context),
-                    ),
+                child: Text(
+                  job.isEmpty ? '—' : job,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: QuoteSidebarTheme.primary(context),
                   ),
                 ),
               ),
               Expanded(
-                flex: 4,
+                flex: 5,
                 child: Text(
                   _customerDisplay(q),
                   overflow: TextOverflow.ellipsis,
@@ -574,49 +616,52 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
                 flex: 2,
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: IntrinsicWidth(
-                    child: _statusBadge(status),
-                  ),
+                  child: IntrinsicWidth(child: _statusBadge(status)),
                 ),
               ),
               Expanded(
                 flex: 2,
                 child: Text(
                   _showTotals ? _formatCurrency(data['final_total_cad']) : '—',
-                  style: const TextStyle(fontFeatures: [FontFeature.tabularFigures()]),
+                  style: const TextStyle(
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
                 ),
               ),
-              Expanded(
-                flex: 5,
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      QuoteTableActionButton(
-                        label: 'View',
-                        onPressed: () => _openQuote(q),
+              SizedBox(
+                width: 40,
+                child: PopupMenuButton<String>(
+                  tooltip: 'More',
+                  padding: EdgeInsets.zero,
+                  onSelected: (v) {
+                    if (v == 'copy' && !copying) {
+                      _copyQuote(q);
+                    } else if (v == 'job') {
+                      _viewJob(q.id as String);
+                    } else if (v == 'delete') {
+                      _deleteQuote(q);
+                    }
+                  },
+                  itemBuilder: (_) => [
+                    PopupMenuItem(
+                      value: 'copy',
+                      enabled: !copying,
+                      child: Text(copying ? 'Copying…' : 'Copy quote'),
+                    ),
+                    if (status == 'won')
+                      const PopupMenuItem(
+                        value: 'job',
+                        child: Text('View job'),
                       ),
-                      const SizedBox(width: 6),
-                      QuoteTableActionButton(
-                        label: copying ? '…' : 'Copy',
-                        onPressed: copying ? null : () => _copyQuote(q),
+                    const PopupMenuItem(
+                      value: 'delete',
+                      child: Text(
+                        'Delete quote',
+                        style: TextStyle(color: Colors.red),
                       ),
-                      if (status == 'won') ...[
-                        const SizedBox(width: 6),
-                        QuoteTableActionButton(
-                          label: 'View Job',
-                          onPressed: () => _viewJob(q.id as String),
-                        ),
-                      ],
-                      const SizedBox(width: 6),
-                      QuoteTableActionButton(
-                        label: 'Delete',
-                        danger: true,
-                        onPressed: () => _deleteQuote(q),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
+                  icon: const Icon(Icons.more_vert, size: 20),
                 ),
               ),
             ],
@@ -685,40 +730,6 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
     );
   }
 
-  Widget _sortLink(String label, String key, {String? defaultDir}) {
-    final active = _sortKey == key;
-  final color = active
-        ? (Theme.of(context).brightness == Brightness.dark
-            ? Colors.white
-            : const Color(0xFF111827))
-        : (Theme.of(context).brightness == Brightness.dark
-            ? const Color(0xFF9CA3AF)
-            : const Color(0xFF4B5563));
-    return InkWell(
-      onTap: () {
-        setState(() {
-          if (_sortKey == key) {
-            _sortDir = _sortDir == 'asc' ? 'desc' : 'asc';
-          } else {
-            _sortKey = key;
-            _sortDir = defaultDir ?? 'asc';
-          }
-        });
-      },
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: color,
-          ),
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
@@ -745,9 +756,6 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
     }
 
     final filtered = _filteredQuotes;
-    final titleColor = Theme.of(context).brightness == Brightness.dark
-        ? Colors.white
-        : const Color(0xFF111827);
 
     final revenueLabel =
         _showTotals ? _formatCurrency(revenueThisMonth) : '—';
@@ -764,85 +772,38 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    const Spacer(),
-                    Flexible(
-                      flex: 3,
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 480),
-                        child: InventoryListSearchField(
-                          controller: _searchController,
-                          hintText: 'Search…',
-                          onChanged: _onSearchChanged,
+                    Expanded(
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 420),
+                          child: InventoryListSearchField(
+                            controller: _searchController,
+                            hintText: 'Search…',
+                            onChanged: _onSearchChanged,
+                          ),
                         ),
                       ),
                     ),
                     const SizedBox(width: 12),
+                    SizedBox(
+                      width: 160,
+                      child: _statusFilterDropdown(),
+                    ),
+                    const SizedBox(width: 12),
                     InventoryListActionButton(
-                      label: 'New Quote',
+                      label: 'New quote',
                       onPressed: _newQuote,
                     ),
                   ],
                 ),
-                const SizedBox(height: 16),
-                _statsRow(
-                  quotesThisMonth,
-                  wonCount,
-                  pendingCount,
-                  revenueLabel,
-                ),
-                const SizedBox(height: 16),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 8,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    _statusFilterDropdown(),
-                    Container(
-                      width: 1,
-                      height: 28,
-                      margin: const EdgeInsets.symmetric(horizontal: 4),
-                      color: _tableBorderColor(context),
-                    ),
-                    _sortLink('Job #', 'job_number', defaultDir: 'desc'),
-                    _sortLink('Customer', 'customer', defaultDir: 'asc'),
-                    Text(
-                      'Order',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: titleColor,
-                      ),
-                    ),
-                    InkWell(
-                      onTap: () => setState(() => _sortDir = 'asc'),
-                      child: Padding(
-                        padding: const EdgeInsets.all(4),
-                        child: Text(
-                          'A→Z',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color:
-                                _sortDir == 'asc' ? titleColor : Colors.grey,
-                          ),
-                        ),
-                      ),
-                    ),
-                    InkWell(
-                      onTap: () => setState(() => _sortDir = 'desc'),
-                      child: Padding(
-                        padding: const EdgeInsets.all(4),
-                        child: Text(
-                          'Z→A',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w600,
-                            color: _sortDir == 'desc'
-                                ? titleColor
-                                : Colors.grey,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+                const SizedBox(height: 12),
+                _summaryLine(
+                  context,
+                  quotesThisMonth: quotesThisMonth,
+                  wonCount: wonCount,
+                  pendingCount: pendingCount,
+                  revenue: revenueLabel,
                 ),
                 const SizedBox(height: 16),
                 QuoteSidebarCard(
