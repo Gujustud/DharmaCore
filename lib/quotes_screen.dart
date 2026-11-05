@@ -217,14 +217,20 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
 
   Future<void> _deleteQuote(dynamic quote) async {
     final data = quote.data as Map<String, dynamic>? ?? {};
-    final label = _str(data['job_number']).isEmpty ? 'this quote' : data['job_number'];
+    final label =
+        _str(data['job_number']).isEmpty ? 'this quote' : data['job_number'];
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete quote?'),
-        content: Text('Delete quote $label? This cannot be undone.'),
+        content: Text(
+          'Delete quote $label and its line items? This cannot be undone.',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             style: TextButton.styleFrom(foregroundColor: Colors.red),
@@ -235,17 +241,27 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
     );
     if (confirm != true) return;
     try {
-      await PocketBaseService().deleteQuote(quote.id);
+      await PocketBaseService().deleteQuote(quote.id as String);
       _loadData();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Quote deleted'), backgroundColor: Colors.green),
+          const SnackBar(
+            content: Text('Quote deleted'),
+            backgroundColor: Colors.green,
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
+        final msg = '$e';
+        final friendly = msg.contains('Exception: ')
+            ? msg.split('Exception: ').last
+            : msg;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text(friendly),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }

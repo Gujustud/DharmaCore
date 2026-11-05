@@ -1099,8 +1099,25 @@ class PocketBaseService {
     }
   }
 
+  /// Deletes a quote and its line items.
+  ///
+  /// Throws if a job still links to the quote — clear or delete that job first.
   Future<void> deleteQuote(String id) async {
     try {
+      final linkedJob = await getJobByQuoteId(id);
+      if (linkedJob != null) {
+        final jn =
+            (linkedJob.data['job_number'] ?? '').toString().trim();
+        throw Exception(
+          jn.isEmpty
+              ? 'This quote is linked to a job. Remove the link or delete the job first.'
+              : 'This quote is linked to job $jn. Remove the link or delete the job first.',
+        );
+      }
+      final lines = await getQuoteLineItems(id);
+      for (final line in lines) {
+        await pb.collection('quote_line_items').delete(line.id as String);
+      }
       await pb.collection('quotes').delete(id);
     } catch (e) {
       print('Error deleting quote: $e');
