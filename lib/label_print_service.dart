@@ -167,8 +167,8 @@ class LabelPrintService {
     int? width,
     int? height,
   }) async {
-    // 360dpi layout: slightly larger type + tight margins so content fills
-    // more of the 18mm printable height (closer to desktop Brother driver).
+    // 360dpi layout: BIN then tool name stacked tightly at the top of the
+    // tape (across-tape axis). Name must not be bottom-anchored.
     const leftMargin = 14.0;
     const rightMargin = 14;
     const qrVerticalMargin = 4;
@@ -176,7 +176,8 @@ class LabelPrintService {
     const toolMaxCharsPerLine = 26;
     const binFontSize = 68.0;
     const nameFontSize = 58.0;
-    const edgePad = 6.0;
+    // Keep clear of TZe edge / Brother printable margins (~1mm) + glyph ascent.
+    const edgePad = 20.0;
 
     final imageHeight = height ?? labelHeightPx;
     final qrMaxSide = imageHeight - 2 * qrVerticalMargin;
@@ -211,33 +212,54 @@ class LabelPrintService {
       }
     }
 
-    final binPainter = _labelTextPainter(binLine, fontSize: binFontSize);
-    final namePainters = nameLines
-        .map((l) => _labelTextPainter(l, fontSize: nameFontSize))
-        .toList();
+    // One TextPainter so BIN + name are a single stacked paragraph.
+    // height > 1.0 so ascenders are not clipped when rasterized.
+    final textPainter = TextPainter(
+      text: TextSpan(
+        children: [
+          TextSpan(
+            text: binLine,
+            style: const TextStyle(
+              fontFamily: 'NotoSans',
+              fontWeight: FontWeight.w700,
+              fontSize: binFontSize,
+              color: Color(0xFF000000),
+              height: 1.15,
+            ),
+          ),
+          for (final line in nameLines)
+            TextSpan(
+              text: '\n$line',
+              style: const TextStyle(
+                fontFamily: 'NotoSans',
+                fontWeight: FontWeight.w700,
+                fontSize: nameFontSize,
+                color: Color(0xFF000000),
+                height: 1.15,
+              ),
+            ),
+        ],
+      ),
+      textDirection: TextDirection.ltr,
+      maxLines: 1 + nameLines.length,
+    )..layout(maxWidth: maxLabelWidthPx.toDouble());
 
-    var textCol = binPainter.width;
-    for (final p in namePainters) {
-      if (p.width > textCol) textCol = p.width;
-    }
-
+    final textCol = textPainter.width;
     final computedWidth =
         (leftMargin + textCol + gap + qrSize + rightMargin).ceil();
     final imageWidth = (width ?? computedWidth).clamp(0, maxLabelWidthPx);
+
+    // Inset from tape edge; prefer aligning with the QR block so BIN isn't
+    // jammed into the unprintable margin.
+    final textY = (qrY + (qrSize - textPainter.height) / 2)
+        .clamp(edgePad, imageHeight - textPainter.height - edgePad);
 
     return _canvasLabelToPng(
       imageWidth: imageWidth,
       imageHeight: imageHeight,
       rightPad: rightMargin,
       paint: (canvas) {
-        // Stack BIN + name from the top (no gap down to the bottom edge).
-        var y = edgePad;
-        binPainter.paint(canvas, Offset(leftMargin, y));
-        y += binPainter.height + 2;
-        for (final p in namePainters) {
-          p.paint(canvas, Offset(leftMargin, y));
-          y += p.height;
-        }
+        textPainter.paint(canvas, Offset(leftMargin, textY));
         _paintQr(
           canvas,
           qrImage: qrImage,
