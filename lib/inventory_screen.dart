@@ -393,17 +393,30 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
         children: [
           for (var i = 0; i < _availableSubcats.length; i++) ...[
             if (i > 0) const SizedBox(width: 8),
-            ToolFilterChipButton(
-              label: _availableSubcats[i],
-              selected: false,
-              onTap: () {
+            Builder(builder: (_) {
+              final type = _availableSubcats[i];
+              void select() {
                 setState(() {
-                  _selectedSubcatFilter = _availableSubcats[i];
+                  _selectedSubcatFilter = type;
                   _selectedSubSubcatFilter = null;
                 });
                 _applyFilters();
-              },
-            ),
+              }
+
+              if (ToolStyleIcons.hasTypeIcon(type)) {
+                return ToolStyleIconButton(
+                  label: type,
+                  assetPath: ToolStyleIcons.assetForType(type),
+                  selected: false,
+                  onTap: select,
+                );
+              }
+              return ToolFilterChipButton(
+                label: type,
+                selected: false,
+                onTap: select,
+              );
+            }),
           ],
         ],
       );

@@ -1,38 +1,53 @@
 import 'package:flutter/material.dart';
 
-/// Maps Cutting Tools style names (2nd subcategory segment) to tip-profile icons.
+/// Maps Cutting Tools type/style names to tip-profile icons.
 ///
-/// Current assets sourced from https://cnctools.dev/tagger (owner-approved).
-/// CR → Radius Mill. Special → Probe.
+/// Style icons (Flat/Ball/…) currently from https://cnctools.dev/tagger
+/// (owner-approved). CR → Radius Mill. Special → Probe.
 ///
-/// Style reference for any future hand-drawn icons:
+/// Type icons (Endmills/Drills/Threading) are original drafts in
+/// [assets/icons/tool_types] (Endmills reuses Flat; Threading = zigzag A).
+///
+/// Style reference for future hand-drawn icons:
 /// https://label.alch.shop/ (ModuBOX Label Generator — clean small glyph buttons).
 class ToolStyleIcons {
   ToolStyleIcons._();
 
-  static const String assetDir = 'assets/icons/tool_styles';
+  static const String styleAssetDir = 'assets/icons/tool_styles';
+  static const String typeAssetDir = 'assets/icons/tool_types';
 
-  /// Normalized style key → asset path.
+  /// Normalized endmill style key → asset path.
   static const Map<String, String> endmillAssets = {
-    'flat': '$assetDir/flat.png',
-    'ball': '$assetDir/ball.png',
-    'cr': '$assetDir/cr.png',
-    'chamfer': '$assetDir/chamfer.png',
-    'tslot': '$assetDir/tslot.png',
-    't-slot': '$assetDir/tslot.png',
-    't_slot': '$assetDir/tslot.png',
-    'special': '$assetDir/special.png',
+    'flat': '$styleAssetDir/flat.png',
+    'ball': '$styleAssetDir/ball.png',
+    'cr': '$styleAssetDir/cr.png',
+    'chamfer': '$styleAssetDir/chamfer.png',
+    'tslot': '$styleAssetDir/tslot.png',
+    't-slot': '$styleAssetDir/tslot.png',
+    't_slot': '$styleAssetDir/tslot.png',
+    'special': '$styleAssetDir/special.png',
   };
 
-  static String normalize(String style) =>
-      style.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '');
+  /// Normalized tool-type key → asset path.
+  static const Map<String, String> typeAssets = {
+    'endmills': '$typeAssetDir/endmills.png',
+    'endmill': '$typeAssetDir/endmills.png',
+    'drills': '$typeAssetDir/drills.png',
+    'drill': '$typeAssetDir/drills.png',
+    'threading': '$typeAssetDir/threading.png',
+    'thread': '$typeAssetDir/threading.png',
+  };
 
-  static String? assetForStyle(String style) {
-    final key = normalize(style);
-    return endmillAssets[key];
-  }
+  static String normalize(String name) =>
+      name.trim().toLowerCase().replaceAll(RegExp(r'[\s_-]+'), '');
+
+  static String? assetForStyle(String style) => endmillAssets[normalize(style)];
 
   static bool hasIcon(String style) => assetForStyle(style) != null;
+
+  static String? assetForType(String type) => typeAssets[normalize(type)];
+
+  static bool hasTypeIcon(String type) => assetForType(type) != null;
 }
 
 /// Circular tip-profile button (white fill, dark stroke icons).

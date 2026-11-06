@@ -78,6 +78,7 @@ flutter:
     - assets/certs/cribhub.pem
     - assets/ss_cadcam_logo.png
     - assets/icons/tool_styles/
+    - assets/icons/tool_types/
 
   fonts:
     - family: Polaris
