@@ -7,6 +7,7 @@ import 'add_tool_screen.dart';
 import 'return_dialog.dart';
 import 'drawer_behavior.dart';
 import 'list_toolbar_widgets.dart';
+import 'tool_style_icons.dart';
 import 'workspace_layout.dart';
 import 'workspace_scaffold.dart';
 
@@ -366,6 +367,96 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
     }
   }
 
+  List<String> _stylesForSelectedType() {
+    if (_selectedSubcatFilter == null) return const [];
+    final type = _selectedSubcatFilter!.toLowerCase();
+    return _toolsWithLocations
+        .where((t) {
+          final parts = (t.tool.subcategory ?? '').split(' > ');
+          return parts.isNotEmpty &&
+              parts[0].trim().toLowerCase() == type &&
+              parts.length > 1 &&
+              parts[1].trim().isNotEmpty;
+        })
+        .map((t) => (t.tool.subcategory ?? '').split(' > ')[1].trim())
+        .toSet()
+        .toList()
+      ..sort();
+  }
+
+  /// Type chips when idle; All + style icons after a type is picked.
+  /// Parent provides horizontal scrolling.
+  Widget _buildTypeOrStyleFilterStrip() {
+    if (_selectedSubcatFilter == null) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < _availableSubcats.length; i++) ...[
+            if (i > 0) const SizedBox(width: 8),
+            ToolFilterChipButton(
+              label: _availableSubcats[i],
+              selected: false,
+              onTap: () {
+                setState(() {
+                  _selectedSubcatFilter = _availableSubcats[i];
+                  _selectedSubSubcatFilter = null;
+                });
+                _applyFilters();
+              },
+            ),
+          ],
+        ],
+      );
+    }
+
+    final styles = _stylesForSelectedType();
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Returns to type chips (Endmills / Drills / Threading)
+        ToolFilterChipButton(
+          label: 'All',
+          selected: false,
+          onTap: () {
+            setState(() {
+              _selectedSubcatFilter = null;
+              _selectedSubSubcatFilter = null;
+            });
+            _applyFilters();
+          },
+        ),
+        for (final style in styles) ...[
+          const SizedBox(width: 8),
+          if (ToolStyleIcons.hasIcon(style))
+            ToolStyleIconButton(
+              label: style,
+              assetPath: ToolStyleIcons.assetForStyle(style),
+              selected: _selectedSubSubcatFilter == style,
+              onTap: () {
+                setState(() {
+                  _selectedSubSubcatFilter =
+                      _selectedSubSubcatFilter == style ? null : style;
+                });
+                _applyFilters();
+              },
+            )
+          else
+            ToolFilterChipButton(
+              label: style,
+              selected: _selectedSubSubcatFilter == style,
+              onTap: () {
+                setState(() {
+                  _selectedSubSubcatFilter =
+                      _selectedSubSubcatFilter == style ? null : style;
+                });
+                _applyFilters();
+              },
+            ),
+        ],
+      ],
+    );
+  }
+
   Future<void> _handleTransfer({
     required Tool tool,
     required ToolLocation sourceLocation,
@@ -462,26 +553,39 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
           ),
         ),
 
-        // Filter dropdowns (brand + subcategory)
+        // Filter bar: brand dropdown + type chips / style icons (same row)
         if (!_isLoading && (_availableBrands.isNotEmpty || _availableSubcats.isNotEmpty))
           Container(
             color: Theme.of(context).cardColor,
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Row(
               children: [
-                // Brand dropdown
                 if (_availableBrands.isNotEmpty) ...[
-                  Expanded(
+                  SizedBox(
+                    width: isNarrow ? 120 : 160,
+                    height: 40,
                     child: DropdownButtonFormField<String>(
                       value: _selectedBrandFilter,
+                      isExpanded: true,
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
                         isDense: true,
                       ),
                       items: [
-                        const DropdownMenuItem<String>(value: null, child: Text('All brands')),
-                        ..._availableBrands.map((b) => DropdownMenuItem<String>(value: b, child: Text(b))),
+                        const DropdownMenuItem<String>(
+                          value: null,
+                          child: Text('All brands'),
+                        ),
+                        ..._availableBrands.map(
+                          (b) => DropdownMenuItem<String>(
+                            value: b,
+                            child: Text(b, overflow: TextOverflow.ellipsis),
+                          ),
+                        ),
                       ],
                       onChanged: (v) {
                         setState(() => _selectedBrandFilter = v);
@@ -489,81 +593,19 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
                       },
                     ),
                   ),
+                  if (_availableSubcats.isNotEmpty) const SizedBox(width: 12),
                 ],
-                if (_availableBrands.isNotEmpty && _availableSubcats.isNotEmpty)
-                  const SizedBox(width: 12),
-                // Subcategory dropdown
-                if (_availableSubcats.isNotEmpty) ...[
+                if (_availableSubcats.isNotEmpty)
                   Expanded(
-                    child: DropdownButtonFormField<String>(
-                      value: _selectedSubcatFilter,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        isDense: true,
-                      ),
-                      items: [
-                        const DropdownMenuItem<String>(value: null, child: Text('All types')),
-                        ..._availableSubcats.map((s) => DropdownMenuItem<String>(value: s, child: Text(s))),
-                      ],
-                      onChanged: (v) {
-                        setState(() {
-                          _selectedSubcatFilter = v;
-                          _selectedSubSubcatFilter = null; // reset sub-sub when type changes
-                        });
-                        _applyFilters();
-                      },
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: _buildTypeOrStyleFilterStrip(),
                     ),
                   ),
-                ],
-                // Sub-subcategory dropdown (only shown when a type is selected and has sub-options)
-                if (_selectedSubcatFilter != null) ...[
-                  Builder(builder: (context) {
-                    final subSubOptions = _toolsWithLocations
-                        .where((t) {
-                          final parts = (t.tool.subcategory ?? '').split(' > ');
-                          return parts.isNotEmpty &&
-                              parts[0].trim().toLowerCase() == _selectedSubcatFilter!.toLowerCase() &&
-                              parts.length > 1 &&
-                              parts[1].trim().isNotEmpty;
-                        })
-                        .map((t) => (t.tool.subcategory ?? '').split(' > ')[1].trim())
-                        .toSet()
-                        .toList()
-                      ..sort();
-
-                    if (subSubOptions.isEmpty) return const SizedBox.shrink();
-
-                    return Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const SizedBox(width: 12),
-                        SizedBox(
-                          width: 160,
-                          child: DropdownButtonFormField<String>(
-                            value: _selectedSubSubcatFilter,
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                              isDense: true,
-                            ),
-                            items: [
-                              const DropdownMenuItem<String>(value: null, child: Text('All styles')),
-                              ...subSubOptions.map((s) => DropdownMenuItem<String>(value: s, child: Text(s))),
-                            ],
-                            onChanged: (v) {
-                              setState(() => _selectedSubSubcatFilter = v);
-                              _applyFilters();
-                            },
-                          ),
-                        ),
-                      ],
-                    );
-                  }),
-                ],
-                // Clear button (only when a filter is active)
-                if (_selectedBrandFilter != null || _selectedSubcatFilter != null || _selectedSubSubcatFilter != null) ...[
-                  const SizedBox(width: 8),
+                if (_selectedBrandFilter != null ||
+                    _selectedSubcatFilter != null ||
+                    _selectedSubSubcatFilter != null) ...[
+                  const SizedBox(width: 4),
                   IconButton(
                     icon: const Icon(Icons.close),
                     tooltip: 'Clear filters',
