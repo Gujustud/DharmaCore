@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 
-/// Maps Cutting Tools style names (2nd subcategory segment) to cnctools tip icons.
+/// Maps Cutting Tools style names (2nd subcategory segment) to tip-profile icons.
 ///
-/// Icons sourced from https://cnctools.dev/tagger (owner-approved).
+/// Current assets sourced from https://cnctools.dev/tagger (owner-approved).
 /// CR → Radius Mill. Special → Probe.
+///
+/// Style reference for any future hand-drawn icons:
+/// https://label.alch.shop/ (ModuBOX Label Generator — clean small glyph buttons).
 class ToolStyleIcons {
   ToolStyleIcons._();
 
