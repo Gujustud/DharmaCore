@@ -167,13 +167,12 @@ class LabelPrintService {
     int? width,
     int? height,
   }) async {
-    // 360dpi layout: BIN then tool name stacked tightly at the top of the
-    // tape (across-tape axis). Name must not be bottom-anchored.
+    // 360dpi layout: BIN + name stacked at the TOP of the tape. QR is also
+    // top-aligned (not vertically centered). Gap is horizontal text→QR space.
     const leftMargin = 14.0;
     const rightMargin = 14;
-    const qrVerticalMargin = 4;
-    // Horizontal space between text column and QR (quiet zone + readability).
-    const gap = 28.0;
+    // Horizontal space between the text column and the QR along the tape.
+    const gap = 48.0;
     const toolMaxCharsPerLine = 26;
     const binFontSize = 68.0;
     const nameFontSize = 58.0;
@@ -181,7 +180,8 @@ class LabelPrintService {
     const edgePad = 20.0;
 
     final imageHeight = height ?? labelHeightPx;
-    final qrMaxSide = imageHeight - 2 * qrVerticalMargin;
+    // QR top-aligned with text; leave matching bottom inset so it fits.
+    final qrMaxSide = imageHeight - 2 * edgePad;
 
     final binNumber = binCode.contains('-')
         ? binCode.substring(binCode.lastIndexOf('-') + 1)
@@ -195,7 +195,7 @@ class LabelPrintService {
     final qrModuleCount = qrImage.moduleCount;
     final qrModulePixel = (qrMaxSide / qrModuleCount).floor().clamp(1, 40);
     final qrSize = qrModuleCount * qrModulePixel;
-    final qrY = (imageHeight - qrSize) / 2;
+    const qrY = edgePad;
 
     final binLine = 'BIN: $binNumber';
     final nameLines = <String>[];
