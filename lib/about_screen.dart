@@ -92,11 +92,18 @@ class _AboutScreenState extends State<AboutScreen> with AutoOpenDrawerMixin {
                               color: Theme.of(context).colorScheme.onSurfaceVariant,
                             ),
                       ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Built ${GitInfo.buildDate} · ${GitInfo.shortHash}',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            ),
+                      ),
                     ],
                   ),
                 ),
                 const SizedBox(height: 32),
-                
+
                 // Description Section
                 Card(
                   child: Padding(
@@ -122,7 +129,7 @@ class _AboutScreenState extends State<AboutScreen> with AutoOpenDrawerMixin {
                   ),
                 ),
                 const SizedBox(height: 16),
-                
+
                 // Build Information Section
                 Card(
                   child: Padding(
@@ -137,20 +144,22 @@ class _AboutScreenState extends State<AboutScreen> with AutoOpenDrawerMixin {
                               ),
                         ),
                         const SizedBox(height: 12),
+                        _buildInfoRow('Version', _version),
+                        _buildInfoRow('Built', GitInfo.buildDate),
                         _buildInfoRow('Branch', GitInfo.branch),
-                        _buildInfoRow('Commit', GitInfo.shortHash, 
+                        _buildInfoRow('Commit', GitInfo.shortHash,
                           onTap: () => _openUrl(GitInfo.commitUrl), isLink: true),
                         const SizedBox(height: 8),
                         Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: Colors.grey[100],
+                            color: Theme.of(context).colorScheme.surfaceContainerHighest,
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Icon(Icons.message, size: 16, color: Colors.grey),
+                              Icon(Icons.message, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
                               const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
@@ -166,12 +175,12 @@ class _AboutScreenState extends State<AboutScreen> with AutoOpenDrawerMixin {
                           onTap: () => _openUrl(GitInfo.repoUrl),
                           child: Row(
                             children: [
-                              const Icon(Icons.code, size: 20, color: Colors.blue),
+                              Icon(Icons.code, size: 20, color: Theme.of(context).colorScheme.primary),
                               const SizedBox(width: 8),
                               Text(
                                 'View on GitHub',
                                 style: TextStyle(
-                                  color: Colors.blue,
+                                  color: Theme.of(context).colorScheme.primary,
                                   decoration: TextDecoration.underline,
                                 ),
                               ),
@@ -183,7 +192,7 @@ class _AboutScreenState extends State<AboutScreen> with AutoOpenDrawerMixin {
                   ),
                 ),
                 const SizedBox(height: 16),
-                
+
                 // Features Section
                 Card(
                   child: Padding(
@@ -211,7 +220,7 @@ class _AboutScreenState extends State<AboutScreen> with AutoOpenDrawerMixin {
                   ),
                 ),
                 const SizedBox(height: 16),
-                
+
                 // Technology Section
                 Card(
                   child: Padding(

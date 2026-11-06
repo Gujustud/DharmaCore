@@ -18,6 +18,7 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : FlutterActivity() {
 
@@ -57,7 +58,7 @@ class MainActivity : FlutterActivity() {
                                 executor.execute { runPrintLabel(bytes, result) }
                             }
                         } else {
-                            result.error("INVALID_ARGS", "imageBytes required", null)
+                            replyError(result, "INVALID_ARGS", "imageBytes required")
                         }
                     }
                     "exportLabelPng" -> {
@@ -72,12 +73,12 @@ class MainActivity : FlutterActivity() {
                                 val fileName = "label_${safeBin}_${System.currentTimeMillis()}.png"
                                 val file = File(cacheDir, fileName)
                                 FileOutputStream(file).use { it.write(bytes) }
-                                result.success(file.absolutePath)
+                                replySuccess(result, file.absolutePath)
                             } catch (e: Exception) {
-                                result.error("EXPORT_ERROR", e.message ?: "Failed to export label PNG", null)
+                                replyError(result, "EXPORT_ERROR", e.message ?: "Failed to export label PNG")
                             }
                         } else {
-                            result.error("INVALID_ARGS", "imageBytes required", null)
+                            replyError(result, "INVALID_ARGS", "imageBytes required")
                         }
                     }
                     else -> result.notImplemented()
@@ -103,16 +104,48 @@ class MainActivity : FlutterActivity() {
                 runOnUiThread {
                     Toast.makeText(this, "Bluetooth permission needed for printing", Toast.LENGTH_LONG).show()
                 }
-                res.error("PERMISSION_DENIED", "Bluetooth permission required for label printing", null)
+                replyError(res, "PERMISSION_DENIED", "Bluetooth permission required for label printing")
+            }
+        }
+    }
+
+    /**
+     * Flutter MethodChannel.Result must be invoked on the main/UI thread.
+     * Calling it from [executor] hard-crashes the activity ("app closes").
+     */
+    private fun replySuccess(result: MethodChannel.Result, value: Any? = null) {
+        runOnUiThread {
+            try {
+                result.success(value)
+            } catch (_: Exception) {
+                // Reply already submitted or channel gone — ignore.
+            }
+        }
+    }
+
+    private fun replyError(result: MethodChannel.Result, code: String, message: String?) {
+        runOnUiThread {
+            try {
+                result.error(code, message, null)
+            } catch (_: Exception) {
+                // Reply already submitted or channel gone — ignore.
             }
         }
     }
 
     private fun runPrintLabel(pngBytes: ByteArray, result: MethodChannel.Result) {
+        val replied = AtomicBoolean(false)
+        fun success() {
+            if (replied.compareAndSet(false, true)) replySuccess(result)
+        }
+        fun error(code: String, message: String?) {
+            if (replied.compareAndSet(false, true)) replyError(result, code, message)
+        }
+
         try {
             val bitmap = BitmapFactory.decodeByteArray(pngBytes, 0, pngBytes.size)
                 ?: run {
-                    result.error("DECODE_ERROR", "Failed to decode image", null)
+                    error("DECODE_ERROR", "Failed to decode image")
                     return
                 }
 
@@ -120,12 +153,17 @@ class MainActivity : FlutterActivity() {
             val adapter: BluetoothAdapter? = bluetoothManager?.adapter
             if (adapter == null || !adapter.isEnabled) {
                 runOnUiThread { Toast.makeText(this, "Bluetooth is off", Toast.LENGTH_SHORT).show() }
-                result.error("BLUETOOTH_OFF", "Bluetooth is disabled", null)
+                error("BLUETOOTH_OFF", "Bluetooth is disabled")
                 return
             }
 
             // Prefer P910BT when paired; fall back to any Brother/PT device (e.g. P710BT).
-            val bonded = adapter.bondedDevices.orEmpty()
+            val bonded = try {
+                adapter.bondedDevices.orEmpty()
+            } catch (e: SecurityException) {
+                error("PERMISSION_DENIED", "Bluetooth permission required for label printing")
+                return
+            }
             val pairedDevice = bonded.firstOrNull { device ->
                 (device.name ?: "").contains("P910", ignoreCase = true)
             } ?: bonded.firstOrNull { device ->
@@ -134,7 +172,7 @@ class MainActivity : FlutterActivity() {
             }
             if (pairedDevice == null) {
                 runOnUiThread { Toast.makeText(this, "No Brother/PT printer paired", Toast.LENGTH_LONG).show() }
-                result.error("NO_PRINTER", "Pair the PT-P910BT (or PT-P710BT) in Bluetooth settings first", null)
+                error("NO_PRINTER", "Pair the PT-P910BT (or PT-P710BT) in Bluetooth settings first")
                 return
             }
 
@@ -163,22 +201,28 @@ class MainActivity : FlutterActivity() {
             printer.setPrinterInfo(printerInfo)
 
             if (!printer.startCommunication()) {
-                result.error("CONNECT_FAILED", "Could not connect to printer", null)
+                error("CONNECT_FAILED", "Could not connect to printer")
                 return
             }
 
-            val status: PrinterStatus = printer.printImage(bitmap)
-            printer.endCommunication()
+            val status: PrinterStatus = try {
+                printer.printImage(bitmap)
+            } finally {
+                try {
+                    printer.endCommunication()
+                } catch (_: Exception) {
+                }
+            }
 
             if (status.errorCode != PrinterInfo.ErrorCode.ERROR_NONE) {
-                result.error("PRINT_FAILED", "Print error: ${status.errorCode}", null)
+                error("PRINT_FAILED", "Print error: ${status.errorCode}")
                 return
             }
 
             runOnUiThread { Toast.makeText(this, "Label sent to printer", Toast.LENGTH_SHORT).show() }
-            result.success(null)
-        } catch (e: Exception) {
-            result.error("PRINT_ERROR", e.message ?: "Unknown error", null)
+            success()
+        } catch (e: Throwable) {
+            error("PRINT_ERROR", e.message ?: "Unknown error")
         }
     }
 

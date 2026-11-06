@@ -93,11 +93,27 @@ Replace `192.168.1.192` with the laptop’s current LAN IP (`ipconfig`).
 
 ---
 
+## Android APK (tablet)
+
+Shop tablet builds must use **dharmacore** URLs (not `buildapk.bat`, which still targets cribhub):
+
+    cd c:\cribhub
+    .\scripts\buildapk_shop.bat
+
+Output: `build\app\outputs\flutter-apk\app-release.apk`
+
+The script refreshes `lib\git_info.dart` first. After install, **About** shows Version, Built date, branch, and commit so you know which APK is on the tablet.
+
+Uninstall the old app on the tablet before sideloading if auth/cache looks stale.
+
+---
+
 ## Related
 
 | Doc / script | Use for |
 |--------------|---------|
 | `SHOP_NEXT.md` | Living shop checklist |
 | `.\scripts\build_web_shop.ps1` | Live shop web build + zip |
+| `.\scripts\buildapk_shop.bat` | Live shop Android APK |
 | `DEPLOY.md` | Old CribHub production |
 | `DEPLOY_ERP.md` | erp-dev CT **103** (`.104`) |
