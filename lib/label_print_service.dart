@@ -172,7 +172,8 @@ class LabelPrintService {
     const leftMargin = 14.0;
     const rightMargin = 14;
     const qrVerticalMargin = 4;
-    const gap = 12.0;
+    // Horizontal space between text column and QR (quiet zone + readability).
+    const gap = 28.0;
     const toolMaxCharsPerLine = 26;
     const binFontSize = 68.0;
     const nameFontSize = 58.0;
