@@ -2,7 +2,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
@@ -264,26 +264,60 @@ class LabelPrintService {
     );
   }
 
+  /// When true (via `--dart-define=BROTHER_SDK_PRINT=true`), Android uses the
+  /// Brother Bluetooth SDK. Default is false: the SDK was hard-crashing the
+  /// tablet APK (JNI abort inside printImage), so Android uses the system
+  /// print sheet like web unless explicitly re-enabled after a verified fix.
+  static const bool androidUseBrotherSdk = bool.fromEnvironment(
+    'BROTHER_SDK_PRINT',
+    defaultValue: false,
+  );
+
   /// Send a label PNG to the printer (Android Bluetooth) or system print (web).
+  ///
+  /// Default Android path = system print dialog (pick PT-P910BT / 18mm).
+  /// Optional Brother SDK path when [androidUseBrotherSdk] is true; on
+  /// PlatformException falls back to system print.
   static Future<void> sendLabelPng(
     Uint8List pngBytes, {
     String jobName = 'label',
   }) async {
-    if (kIsWeb) {
-      final decoded = img.decodePng(pngBytes);
-      final src = decoded ??
-          img.Image(width: maxLabelWidthPx, height: labelHeightPx);
-      final format = _labelPageFormat(src);
-      await Printing.layoutPdf(
-        name: jobName,
-        format: format,
-        onLayout: (_) => _pngAsLabelPdf(pngBytes),
-      );
+    if (kIsWeb || !androidUseBrotherSdk) {
+      await _sendViaSystemPrint(pngBytes, jobName: jobName);
       return;
     }
-    await _channel.invokeMethod<void>('printLabel', {
-      'imageBytes': pngBytes.toList(),
-    });
+    try {
+      // Pass Uint8List directly (becomes byte[] on Android) — not List<int>.
+      await _channel.invokeMethod<void>('printLabel', {
+        'imageBytes': pngBytes,
+      });
+      return;
+    } on MissingPluginException catch (e) {
+      debugPrint('LabelPrintService: MissingPluginException, system print fallback: $e');
+    } on PlatformException catch (e) {
+      debugPrint(
+        'LabelPrintService: Brother print failed (${e.code}: ${e.message}), '
+        'system print fallback',
+      );
+    } catch (e) {
+      debugPrint('LabelPrintService: Brother print error, system print fallback: $e');
+    }
+    await _sendViaSystemPrint(pngBytes, jobName: jobName);
+  }
+
+  static Future<void> _sendViaSystemPrint(
+    Uint8List pngBytes, {
+    required String jobName,
+  }) async {
+    final decoded = img.decodePng(pngBytes);
+    final src = decoded ??
+        img.Image(width: maxLabelWidthPx, height: labelHeightPx);
+    final format = _labelPageFormat(src);
+    await Printing.layoutPdf(
+      name: jobName,
+      format: format,
+      onLayout: (_) => _pngAsLabelPdf(pngBytes),
+    );
   }
 
   /// Wrap PNG in a PDF for the browser → Brother print dialog.
