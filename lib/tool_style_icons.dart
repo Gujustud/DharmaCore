@@ -170,8 +170,8 @@ class ToolStyleIconButton extends StatelessWidget {
 
 /// Compact text chip for "All" and styles/types without an icon.
 ///
-/// When [square] is true (e.g. the All control), uses the same 40×40 footprint
-/// as [ToolStyleIconButton].
+/// Always matches [ToolStyleIcons.iconButtonSize] height. When [square] is
+/// true (e.g. All), also locks width to that size.
 class ToolFilterChipButton extends StatelessWidget {
   final String label;
   final bool selected;
@@ -190,6 +190,7 @@ class ToolFilterChipButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final radius = BorderRadius.circular(kToolFilterIconRadius);
+    final size = ToolStyleIcons.iconButtonSize;
     final text = Text(
       label,
       style: TextStyle(
@@ -212,17 +213,16 @@ class ToolFilterChipButton extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           borderRadius: radius,
-          child: square
-              ? SizedBox(
-                  width: ToolStyleIcons.iconButtonSize,
-                  height: ToolStyleIcons.iconButtonSize,
-                  child: Center(child: text),
-                )
-              : Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  child: text,
-                ),
+          child: SizedBox(
+            width: square ? size : null,
+            height: size,
+            child: square
+                ? Center(child: text)
+                : Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Center(child: text),
+                  ),
+          ),
         ),
       ),
     );
