@@ -275,9 +275,9 @@ class LabelPrintService {
 
   /// Send a label PNG to the printer (Android Bluetooth) or system print (web).
   ///
-  /// Android: one-tap via Brother SDK when possible. If the SDK returns an
-  /// error — or previously JNI-crashed (BROTHER_UNSAFE) — opens the system
-  /// print sheet instead of killing the app.
+  /// Android: one-tap via Brother SDK in a separate `:brother_print` process.
+  /// Soft errors or process death (`BROTHER_CRASH`) fall back to the system
+  /// print sheet so the Flutter UI is not killed by Brother JNI aborts.
   static Future<void> sendLabelPng(
     Uint8List pngBytes, {
     String jobName = 'label',

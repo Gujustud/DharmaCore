@@ -4538,7 +4538,7 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
             content: Text(
               kIsWeb
                   ? 'Opened system print — pick PT-P910BT, 18mm, short Length'
-                  : 'Label sent (or system print opened if Brother needed a fallback)',
+                  : 'Print finished (Brother one-tap, or system print if Brother failed)',
             ),
             backgroundColor: Colors.green,
           ),
