@@ -230,10 +230,10 @@ class LabelPrintService {
       imageHeight: imageHeight,
       rightPad: rightMargin,
       paint: (canvas) {
-        binPainter.paint(canvas, const Offset(leftMargin, edgePad));
-        final nameBlockH =
-            namePainters.fold<double>(0, (s, p) => s + p.height);
-        var y = imageHeight - nameBlockH - edgePad;
+        // Stack BIN + name from the top (no gap down to the bottom edge).
+        var y = edgePad;
+        binPainter.paint(canvas, Offset(leftMargin, y));
+        y += binPainter.height + 2;
         for (final p in namePainters) {
           p.paint(canvas, Offset(leftMargin, y));
           y += p.height;
