@@ -167,17 +167,18 @@ class LabelPrintService {
     int? width,
     int? height,
   }) async {
-    // 360dpi layout: BIN then tool name stacked tightly at the top of the
-    // tape (across-tape axis). Name must not be bottom-anchored.
+    // 360dpi: TEXT top-aligned (y = edgePad). QR vertically centered.
+    // [gap] = clear horizontal pixels between text column and QR.
+    // NOTE: main@2.0.12 still centered text with the QR — that was wrong.
     const leftMargin = 14.0;
-    const rightMargin = 14;
+    const rightMargin = 16;
     const qrVerticalMargin = 4;
-    const gap = 12.0;
+    const gap = 72.0; // ~5mm @ 360dpi — obvious space before QR
     const toolMaxCharsPerLine = 26;
     const binFontSize = 68.0;
     const nameFontSize = 58.0;
-    // Keep clear of TZe edge / Brother printable margins (~1mm) + glyph ascent.
-    const edgePad = 20.0;
+    // Inset from tape edge so BIN isn't cropped; still clearly "top".
+    const edgePad = 16.0;
 
     final imageHeight = height ?? labelHeightPx;
     final qrMaxSide = imageHeight - 2 * qrVerticalMargin;
@@ -249,17 +250,13 @@ class LabelPrintService {
         (leftMargin + textCol + gap + qrSize + rightMargin).ceil();
     final imageWidth = (width ?? computedWidth).clamp(0, maxLabelWidthPx);
 
-    // Inset from tape edge; prefer aligning with the QR block so BIN isn't
-    // jammed into the unprintable margin.
-    final textY = (qrY + (qrSize - textPainter.height) / 2)
-        .clamp(edgePad, imageHeight - textPainter.height - edgePad);
-
     return _canvasLabelToPng(
       imageWidth: imageWidth,
       imageHeight: imageHeight,
       rightPad: rightMargin,
       paint: (canvas) {
-        textPainter.paint(canvas, Offset(leftMargin, textY));
+        // Top-aligned (not centered): edgePad keeps BIN clear of tape crop.
+        textPainter.paint(canvas, const Offset(leftMargin, edgePad));
         _paintQr(
           canvas,
           qrImage: qrImage,
