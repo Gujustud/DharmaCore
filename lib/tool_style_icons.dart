@@ -1,38 +1,56 @@
 import 'package:flutter/material.dart';
 
-/// Maps Cutting Tools style names (2nd subcategory segment) to cnctools tip icons.
+/// Corner radius for tip-profile filter buttons (matches brand dropdown).
+const double kToolFilterIconRadius = 8;
+
+/// Maps Cutting Tools type/style names to tip-profile icons.
 ///
-/// Icons sourced from https://cnctools.dev/tagger (owner-approved).
+/// Style icons (Flat/Ball/…) from https://cnctools.dev/tagger (owner-approved).
 /// CR → Radius Mill. Special → Probe.
+///
+/// Type icons (Endmills/Drills/Threading) in [assets/icons/tool_types]
+/// (Endmills = Flat tip; Threading = zigzag A).
+///
+/// Style reference: https://label.alch.shop/
 class ToolStyleIcons {
   ToolStyleIcons._();
 
-  static const String assetDir = 'assets/icons/tool_styles';
+  static const String styleAssetDir = 'assets/icons/tool_styles';
+  static const String typeAssetDir = 'assets/icons/tool_types';
 
-  /// Normalized style key → asset path.
   static const Map<String, String> endmillAssets = {
-    'flat': '$assetDir/flat.png',
-    'ball': '$assetDir/ball.png',
-    'cr': '$assetDir/cr.png',
-    'chamfer': '$assetDir/chamfer.png',
-    'tslot': '$assetDir/tslot.png',
-    't-slot': '$assetDir/tslot.png',
-    't_slot': '$assetDir/tslot.png',
-    'special': '$assetDir/special.png',
+    'flat': '$styleAssetDir/flat.png',
+    'ball': '$styleAssetDir/ball.png',
+    'cr': '$styleAssetDir/cr.png',
+    'chamfer': '$styleAssetDir/chamfer.png',
+    'tslot': '$styleAssetDir/tslot.png',
+    't-slot': '$styleAssetDir/tslot.png',
+    't_slot': '$styleAssetDir/tslot.png',
+    'special': '$styleAssetDir/special.png',
   };
 
-  static String normalize(String style) =>
-      style.trim().toLowerCase().replaceAll(RegExp(r'\s+'), '');
+  static const Map<String, String> typeAssets = {
+    'endmills': '$typeAssetDir/endmills.png',
+    'endmill': '$typeAssetDir/endmills.png',
+    'drills': '$typeAssetDir/drills.png',
+    'drill': '$typeAssetDir/drills.png',
+    'threading': '$typeAssetDir/threading.png',
+    'thread': '$typeAssetDir/threading.png',
+  };
 
-  static String? assetForStyle(String style) {
-    final key = normalize(style);
-    return endmillAssets[key];
-  }
+  static String normalize(String name) =>
+      name.trim().toLowerCase().replaceAll(RegExp(r'[\s_-]+'), '');
+
+  static String? assetForStyle(String style) => endmillAssets[normalize(style)];
 
   static bool hasIcon(String style) => assetForStyle(style) != null;
+
+  static String? assetForType(String type) => typeAssets[normalize(type)];
+
+  static bool hasTypeIcon(String type) => assetForType(type) != null;
 }
 
-/// Circular tip-profile button (white fill, dark stroke icons).
+/// Square tip-profile filter button (white fill, dark stroke icons).
 class ToolStyleIconButton extends StatelessWidget {
   final String label;
   final bool selected;
@@ -53,6 +71,7 @@ class ToolStyleIconButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final ring = selected ? scheme.primary : scheme.outlineVariant;
+    final radius = BorderRadius.circular(kToolFilterIconRadius);
 
     final child = assetPath != null
         ? Image.asset(
@@ -69,19 +88,21 @@ class ToolStyleIconButton extends StatelessWidget {
 
     return Tooltip(
       message: label,
-      child: InkWell(
-        onTap: onTap,
-        customBorder: const CircleBorder(),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: Colors.white,
-            border: Border.all(color: ring, width: selected ? 2.5 : 1),
+      child: Material(
+        color: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: radius,
+          side: BorderSide(color: ring, width: selected ? 2.5 : 1),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: radius,
+          child: SizedBox(
+            width: 40,
+            height: 40,
+            child: child,
           ),
-          child: ClipOval(child: child),
         ),
       ),
     );
@@ -103,8 +124,7 @@ class ToolStyleIconButton extends StatelessWidget {
   }
 }
 
-/// Compact text chip used for tool types (Endmills / Drills / Threading)
-/// and for styles that do not yet have an icon.
+/// Compact text chip for "All" and styles/types without an icon.
 class ToolFilterChipButton extends StatelessWidget {
   final String label;
   final bool selected;
@@ -120,18 +140,20 @@ class ToolFilterChipButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final radius = BorderRadius.circular(kToolFilterIconRadius);
     return Tooltip(
       message: label,
       child: Material(
         color: selected ? scheme.primary : Colors.white,
-        shape: StadiumBorder(
+        shape: RoundedRectangleBorder(
+          borderRadius: radius,
           side: BorderSide(
             color: selected ? scheme.primary : scheme.outlineVariant,
           ),
         ),
         child: InkWell(
           onTap: onTap,
-          customBorder: const StadiumBorder(),
+          borderRadius: radius,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: Text(
