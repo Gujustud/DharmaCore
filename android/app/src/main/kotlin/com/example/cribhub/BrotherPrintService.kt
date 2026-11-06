@@ -170,9 +170,9 @@ class BrotherPrintService : Service() {
             info.port = port
             info.macAddress = mac
             info.workPath = workDir.absolutePath
-            // Bitmap is already tape-width × feed-length @ ~360dpi. FIT_TO_PAPER
-            // uses the full W18 printable area (matches desktop driver fill).
-            info.printMode = PrinterInfo.PrintMode.FIT_TO_PAPER
+            // ORIGINAL: preserve pixel layout (top-aligned text + gap). FIT_TO_PAPER
+            // can reflow/center content and undo Flutter's placement.
+            info.printMode = PrinterInfo.PrintMode.ORIGINAL
             info.isAutoCut = true
             info.isCutAtEnd = true
             info.isHalfCut = false

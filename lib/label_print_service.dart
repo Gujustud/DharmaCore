@@ -167,18 +167,18 @@ class LabelPrintService {
     int? width,
     int? height,
   }) async {
-    // 360dpi: TEXT is top-aligned (BIN + name stacked). QR stays vertically
-    // centered on the tape. [gap] is horizontal space between text and QR.
+    // 360dpi: TEXT top-aligned (y = edgePad). QR vertically centered.
+    // [gap] = clear horizontal pixels between text column and QR.
+    // NOTE: main@2.0.12 still centered text with the QR — that was wrong.
     const leftMargin = 14.0;
-    const rightMargin = 14;
+    const rightMargin = 16;
     const qrVerticalMargin = 4;
-    // Horizontal space between the text column and the QR along the tape.
-    const gap = 48.0;
+    const gap = 72.0; // ~5mm @ 360dpi — obvious space before QR
     const toolMaxCharsPerLine = 26;
     const binFontSize = 68.0;
     const nameFontSize = 58.0;
-    // Keep clear of TZe edge / Brother printable margins (~1mm) + glyph ascent.
-    const edgePad = 20.0;
+    // Inset from tape edge so BIN isn't cropped; still clearly "top".
+    const edgePad = 16.0;
 
     final imageHeight = height ?? labelHeightPx;
     final qrMaxSide = imageHeight - 2 * qrVerticalMargin;
