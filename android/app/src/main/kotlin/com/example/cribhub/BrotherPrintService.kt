@@ -170,14 +170,15 @@ class BrotherPrintService : Service() {
             info.port = port
             info.macAddress = mac
             info.workPath = workDir.absolutePath
-            // Bitmap width already matches W18 printable dots @ high-res.
-            info.printMode = PrinterInfo.PrintMode.ORIGINAL
+            // Bitmap is already tape-width × feed-length @ ~360dpi. FIT_TO_PAPER
+            // uses the full W18 printable area (matches desktop driver fill).
+            info.printMode = PrinterInfo.PrintMode.FIT_TO_PAPER
             info.isAutoCut = true
             info.isCutAtEnd = true
             info.isHalfCut = false
             info.isSpecialTape = false
             info.labelNameIndex = LabelInfo.PT.W18.ordinal
-            info.printQuality = PrinterInfo.PrintQuality.HIGH_RESOLUTION
+            info.printQuality = PrinterInfo.PrintQuality.HIGH_RESOLUTION_USING_HR_IMAGE
             info.skipStatusCheck = true
             if (!printer.setPrinterInfo(info)) {
                 lastError = "setPrinterInfo failed for $port"
@@ -256,7 +257,8 @@ class BrotherPrintService : Service() {
     }
 
     private fun scaleToTapeWidth(src: Bitmap, targetWidth: Int): Bitmap {
-        if (targetWidth <= 0 || kotlin.math.abs(src.width - targetWidth) <= 2) return src
+        // Only upscale — never shrink HR art; FIT_TO_PAPER fills remaining room.
+        if (targetWidth <= 0 || src.width >= targetWidth - 2) return src
         val scale = targetWidth.toFloat() / src.width.toFloat()
         val targetHeight = (src.height * scale).toInt().coerceAtLeast(1)
         return Bitmap.createScaledBitmap(src, targetWidth, targetHeight, true)
