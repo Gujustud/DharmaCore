@@ -249,17 +249,13 @@ class LabelPrintService {
         (leftMargin + textCol + gap + qrSize + rightMargin).ceil();
     final imageWidth = (width ?? computedWidth).clamp(0, maxLabelWidthPx);
 
-    // Inset from tape edge; prefer aligning with the QR block so BIN isn't
-    // jammed into the unprintable margin.
-    final textY = (qrY + (qrSize - textPainter.height) / 2)
-        .clamp(edgePad, imageHeight - textPainter.height - edgePad);
-
     return _canvasLabelToPng(
       imageWidth: imageWidth,
       imageHeight: imageHeight,
       rightPad: rightMargin,
       paint: (canvas) {
-        textPainter.paint(canvas, Offset(leftMargin, textY));
+        // Top-aligned (not centered): edgePad keeps BIN clear of tape crop.
+        textPainter.paint(canvas, const Offset(leftMargin, edgePad));
         _paintQr(
           canvas,
           qrImage: qrImage,
