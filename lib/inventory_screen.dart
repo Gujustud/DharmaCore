@@ -384,79 +384,76 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
       ..sort();
   }
 
-  /// Same-row strip: type chips when idle; All + style icons after a type is picked.
+  /// Type chips when idle; All + style icons after a type is picked.
+  /// Parent provides horizontal scrolling.
   Widget _buildTypeOrStyleFilterStrip() {
     if (_selectedSubcatFilter == null) {
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            for (var i = 0; i < _availableSubcats.length; i++) ...[
-              if (i > 0) const SizedBox(width: 8),
-              ToolFilterChipButton(
-                label: _availableSubcats[i],
-                selected: false,
-                onTap: () {
-                  setState(() {
-                    _selectedSubcatFilter = _availableSubcats[i];
-                    _selectedSubSubcatFilter = null;
-                  });
-                  _applyFilters();
-                },
-              ),
-            ],
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < _availableSubcats.length; i++) ...[
+            if (i > 0) const SizedBox(width: 8),
+            ToolFilterChipButton(
+              label: _availableSubcats[i],
+              selected: false,
+              onTap: () {
+                setState(() {
+                  _selectedSubcatFilter = _availableSubcats[i];
+                  _selectedSubSubcatFilter = null;
+                });
+                _applyFilters();
+              },
+            ),
           ],
-        ),
+        ],
       );
     }
 
     final styles = _stylesForSelectedType();
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          // Returns to type chips (Endmills / Drills / Threading)
-          ToolFilterChipButton(
-            label: 'All',
-            selected: false,
-            onTap: () {
-              setState(() {
-                _selectedSubcatFilter = null;
-                _selectedSubSubcatFilter = null;
-              });
-              _applyFilters();
-            },
-          ),
-          for (final style in styles) ...[
-            const SizedBox(width: 8),
-            if (ToolStyleIcons.hasIcon(style))
-              ToolStyleIconButton(
-                label: style,
-                assetPath: ToolStyleIcons.assetForStyle(style),
-                selected: _selectedSubSubcatFilter == style,
-                onTap: () {
-                  setState(() {
-                    _selectedSubSubcatFilter =
-                        _selectedSubSubcatFilter == style ? null : style;
-                  });
-                  _applyFilters();
-                },
-              )
-            else
-              ToolFilterChipButton(
-                label: style,
-                selected: _selectedSubSubcatFilter == style,
-                onTap: () {
-                  setState(() {
-                    _selectedSubSubcatFilter =
-                        _selectedSubSubcatFilter == style ? null : style;
-                  });
-                  _applyFilters();
-                },
-              ),
-          ],
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Returns to type chips (Endmills / Drills / Threading)
+        ToolFilterChipButton(
+          label: 'All',
+          selected: false,
+          onTap: () {
+            setState(() {
+              _selectedSubcatFilter = null;
+              _selectedSubSubcatFilter = null;
+            });
+            _applyFilters();
+          },
+        ),
+        for (final style in styles) ...[
+          const SizedBox(width: 8),
+          if (ToolStyleIcons.hasIcon(style))
+            ToolStyleIconButton(
+              label: style,
+              assetPath: ToolStyleIcons.assetForStyle(style),
+              selected: _selectedSubSubcatFilter == style,
+              onTap: () {
+                setState(() {
+                  _selectedSubSubcatFilter =
+                      _selectedSubSubcatFilter == style ? null : style;
+                });
+                _applyFilters();
+              },
+            )
+          else
+            ToolFilterChipButton(
+              label: style,
+              selected: _selectedSubSubcatFilter == style,
+              onTap: () {
+                setState(() {
+                  _selectedSubSubcatFilter =
+                      _selectedSubSubcatFilter == style ? null : style;
+                });
+                _applyFilters();
+              },
+            ),
         ],
-      ),
+      ],
     );
   }
 
@@ -566,16 +563,29 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
                 if (_availableBrands.isNotEmpty) ...[
                   SizedBox(
                     width: isNarrow ? 120 : 160,
+                    height: 40,
                     child: DropdownButtonFormField<String>(
                       value: _selectedBrandFilter,
+                      isExpanded: true,
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
                         isDense: true,
                       ),
                       items: [
-                        const DropdownMenuItem<String>(value: null, child: Text('All brands')),
-                        ..._availableBrands.map((b) => DropdownMenuItem<String>(value: b, child: Text(b))),
+                        const DropdownMenuItem<String>(
+                          value: null,
+                          child: Text('All brands'),
+                        ),
+                        ..._availableBrands.map(
+                          (b) => DropdownMenuItem<String>(
+                            value: b,
+                            child: Text(b, overflow: TextOverflow.ellipsis),
+                          ),
+                        ),
                       ],
                       onChanged: (v) {
                         setState(() => _selectedBrandFilter = v);
@@ -586,7 +596,12 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
                   if (_availableSubcats.isNotEmpty) const SizedBox(width: 12),
                 ],
                 if (_availableSubcats.isNotEmpty)
-                  Expanded(child: _buildTypeOrStyleFilterStrip()),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: _buildTypeOrStyleFilterStrip(),
+                    ),
+                  ),
                 if (_selectedBrandFilter != null ||
                     _selectedSubcatFilter != null ||
                     _selectedSubSubcatFilter != null) ...[

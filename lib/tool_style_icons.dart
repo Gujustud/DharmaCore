@@ -32,7 +32,7 @@ class ToolStyleIcons {
   static bool hasIcon(String style) => assetForStyle(style) != null;
 }
 
-/// Circular tip-profile button matching the cnctools Tagger strip.
+/// Circular tip-profile button (white fill, dark stroke icons).
 class ToolStyleIconButton extends StatelessWidget {
   final String label;
   final bool selected;
@@ -52,7 +52,7 @@ class ToolStyleIconButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final ring = selected ? scheme.primary : Colors.transparent;
+    final ring = selected ? scheme.primary : scheme.outlineVariant;
 
     final child = assetPath != null
         ? Image.asset(
@@ -60,11 +60,11 @@ class ToolStyleIconButton extends StatelessWidget {
             fit: BoxFit.cover,
             filterQuality: FilterQuality.medium,
             errorBuilder: (_, __, ___) =>
-                fallback ?? _letterFallback(label),
+                fallback ?? _letterFallback(label, scheme),
           )
         : ColoredBox(
-            color: const Color(0xFF1C1F24),
-            child: fallback ?? _letterFallback(label),
+            color: Colors.white,
+            child: fallback ?? _letterFallback(label, scheme),
           );
 
     return Tooltip(
@@ -78,7 +78,8 @@ class ToolStyleIconButton extends StatelessWidget {
           height: 40,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            border: Border.all(color: ring, width: 2.5),
+            color: Colors.white,
+            border: Border.all(color: ring, width: selected ? 2.5 : 1),
           ),
           child: ClipOval(child: child),
         ),
@@ -86,13 +87,13 @@ class ToolStyleIconButton extends StatelessWidget {
     );
   }
 
-  Widget _letterFallback(String label) {
+  Widget _letterFallback(String label, ColorScheme scheme) {
     final letter = label.isNotEmpty ? label[0].toUpperCase() : '?';
     return Center(
       child: Text(
         letter,
-        style: const TextStyle(
-          color: Color(0xFFE8E8E8),
+        style: TextStyle(
+          color: scheme.onSurface,
           fontSize: 14,
           fontWeight: FontWeight.w600,
           height: 1,
@@ -122,11 +123,15 @@ class ToolFilterChipButton extends StatelessWidget {
     return Tooltip(
       message: label,
       child: Material(
-        color: selected ? scheme.primary : scheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(20),
+        color: selected ? scheme.primary : Colors.white,
+        shape: StadiumBorder(
+          side: BorderSide(
+            color: selected ? scheme.primary : scheme.outlineVariant,
+          ),
+        ),
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(20),
+          customBorder: const StadiumBorder(),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: Text(
