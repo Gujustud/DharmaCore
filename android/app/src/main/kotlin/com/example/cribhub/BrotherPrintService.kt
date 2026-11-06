@@ -32,6 +32,9 @@ class BrotherPrintService : Service() {
 
         private const val BLE_TIMEOUT_MS = 5_000L
 
+        /** 18mm printable width @ Brother HIGH_RESOLUTION (~360 dpi). */
+        private const val W18_HIGH_RES_DOTS = 256
+
         fun jobsDir(context: Context): File =
             File(context.applicationContext.filesDir, "brother_jobs").apply { mkdirs() }
 
@@ -103,32 +106,6 @@ class BrotherPrintService : Service() {
             }
         }
 
-        // Flutter builds landscape PNGs (along-tape × 18mm). Brother PT printImage
-        // expects width = tape width and height = feed length, or FIT_TO_PAPER
-        // squeezes the long side into 18mm (tiny sideways text).
-        val srcW = argb.width
-        val srcH = argb.height
-        val bitmap = rotateLandscapeForPtTape(argb).also {
-            if (it !== argb) argb.recycle()
-        }
-        Log.i(TAG, "job=$jobId bitmap ${srcW}x${srcH} → ${bitmap.width}x${bitmap.height}")
-
-        val workDir = (getExternalFilesDir(null) ?: filesDir)
-            .let { File(it, "brother_print") }
-            .apply { mkdirs() }
-        val rotatedPng = File(workDir, "job_${jobId}_pt.png")
-        try {
-            FileOutputStream(rotatedPng).use { out ->
-                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
-                    writeResult(this, jobId, "ENCODE_ERROR", "Failed to write rotated label")
-                    return
-                }
-            }
-        } catch (e: Exception) {
-            writeResult(this, jobId, "ENCODE_ERROR", e.message ?: "Failed to write rotated label")
-            return
-        }
-
         val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
         if (adapter == null || !adapter.isEnabled) {
             writeResult(this, jobId, "BLUETOOTH_OFF", "Bluetooth is disabled")
@@ -139,6 +116,39 @@ class BrotherPrintService : Service() {
             "PT_P710BT" -> PrinterInfo.Model.PT_P710BT
             "PT_P715eBT" -> PrinterInfo.Model.PT_P715eBT
             else -> PrinterInfo.Model.PT_P910BT
+        }
+
+        // Flutter PNGs are landscape @ ~180dpi. Brother PT wants tape-width ×
+        // feed-length, and HIGH_RESOLUTION is 360dpi (~2× dots across 18mm).
+        // Without rotate+scale, text is sideways and/or only ~half tape height.
+        val srcW = argb.width
+        val srcH = argb.height
+        val rotated = rotateLandscapeForPtTape(argb).also {
+            if (it !== argb) argb.recycle()
+        }
+        val targetTapeDots = w18ImageAreaWidthDots(model)
+        val bitmap = scaleToTapeWidth(rotated, targetTapeDots).also {
+            if (it !== rotated) rotated.recycle()
+        }
+        Log.i(
+            TAG,
+            "job=$jobId bitmap ${srcW}x${srcH} → ${bitmap.width}x${bitmap.height} (W18 dots=$targetTapeDots)",
+        )
+
+        val workDir = (getExternalFilesDir(null) ?: filesDir)
+            .let { File(it, "brother_print") }
+            .apply { mkdirs() }
+        val printPng = File(workDir, "job_${jobId}_pt.png")
+        try {
+            FileOutputStream(printPng).use { out ->
+                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                    writeResult(this, jobId, "ENCODE_ERROR", "Failed to write print label")
+                    return
+                }
+            }
+        } catch (e: Exception) {
+            writeResult(this, jobId, "ENCODE_ERROR", e.message ?: "Failed to write print label")
+            return
         }
 
         // Prefer app-specific external dir (Brother docs / SO: unset workPath → JNI abort).
@@ -160,7 +170,7 @@ class BrotherPrintService : Service() {
             info.port = port
             info.macAddress = mac
             info.workPath = workDir.absolutePath
-            // ORIGINAL: bitmap already sized for W18 tape width after rotate.
+            // Bitmap width already matches W18 printable dots @ high-res.
             info.printMode = PrinterInfo.PrintMode.ORIGINAL
             info.isAutoCut = true
             info.isCutAtEnd = true
@@ -191,7 +201,7 @@ class BrotherPrintService : Service() {
             }
 
             val status = try {
-                val fileStatus = printer.printFile(rotatedPng.absolutePath)
+                val fileStatus = printer.printFile(printPng.absolutePath)
                 if (fileStatus.errorCode == PrinterInfo.ErrorCode.ERROR_NONE) {
                     fileStatus
                 } else {
@@ -217,13 +227,39 @@ class BrotherPrintService : Service() {
     }
 
     /**
-     * Brother PT print head spans the tape width: bitmap width must be ~tape
-     * dots (127 @ 180dpi for 18mm). Flutter labels are landscape — rotate 90° CW.
+     * Brother PT print head spans the tape width: bitmap width must be tape
+     * dots. Flutter labels are landscape — rotate 90° CW.
      */
     private fun rotateLandscapeForPtTape(src: Bitmap): Bitmap {
         if (src.width <= src.height) return src
         val matrix = Matrix().apply { postRotate(90f) }
         return Bitmap.createBitmap(src, 0, 0, src.width, src.height, matrix, true)
+    }
+
+    /** Printable dots across 18mm tape at HIGH_RESOLUTION (~360dpi). */
+    private fun w18ImageAreaWidthDots(model: PrinterInfo.Model): Int {
+        try {
+            val list = Printer.getLabelParamList(model) ?: return W18_HIGH_RES_DOTS
+            val w18Id = LabelInfo.PT.W18.id
+            val match = list.firstOrNull { it.paperID == w18Id }
+                ?: list.firstOrNull { it.paperName?.contains("18") == true }
+            if (match != null) {
+                val area = match.imageAreaWidth
+                if (area > 0) return area
+                val pins = match.headPinNum - match.pinOffsetLeft - match.pinOffsetRight
+                if (pins > 0) return pins
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "getLabelParamList: ${e.message}")
+        }
+        return W18_HIGH_RES_DOTS
+    }
+
+    private fun scaleToTapeWidth(src: Bitmap, targetWidth: Int): Bitmap {
+        if (targetWidth <= 0 || kotlin.math.abs(src.width - targetWidth) <= 2) return src
+        val scale = targetWidth.toFloat() / src.width.toFloat()
+        val targetHeight = (src.height * scale).toInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(src, targetWidth, targetHeight, true)
     }
 
     override fun onDestroy() {
