@@ -176,7 +176,8 @@ class LabelPrintService {
     const toolMaxCharsPerLine = 26;
     const binFontSize = 68.0;
     const nameFontSize = 58.0;
-    const edgePad = 4.0;
+    // Keep clear of TZe edge / Brother printable margins (~1mm) + glyph ascent.
+    const edgePad = 20.0;
 
     final imageHeight = height ?? labelHeightPx;
     final qrMaxSide = imageHeight - 2 * qrVerticalMargin;
@@ -211,8 +212,8 @@ class LabelPrintService {
       }
     }
 
-    // One TextPainter so BIN + name are a single top-stacked paragraph
-    // (impossible for the name to jump to the bottom edge).
+    // One TextPainter so BIN + name are a single stacked paragraph.
+    // height > 1.0 so ascenders are not clipped when rasterized.
     final textPainter = TextPainter(
       text: TextSpan(
         children: [
@@ -223,7 +224,7 @@ class LabelPrintService {
               fontWeight: FontWeight.w700,
               fontSize: binFontSize,
               color: Color(0xFF000000),
-              height: 1.0,
+              height: 1.15,
             ),
           ),
           for (final line in nameLines)
@@ -234,7 +235,7 @@ class LabelPrintService {
                 fontWeight: FontWeight.w700,
                 fontSize: nameFontSize,
                 color: Color(0xFF000000),
-                height: 1.0,
+                height: 1.15,
               ),
             ),
         ],
@@ -248,12 +249,17 @@ class LabelPrintService {
         (leftMargin + textCol + gap + qrSize + rightMargin).ceil();
     final imageWidth = (width ?? computedWidth).clamp(0, maxLabelWidthPx);
 
+    // Inset from tape edge; prefer aligning with the QR block so BIN isn't
+    // jammed into the unprintable margin.
+    final textY = (qrY + (qrSize - textPainter.height) / 2)
+        .clamp(edgePad, imageHeight - textPainter.height - edgePad);
+
     return _canvasLabelToPng(
       imageWidth: imageWidth,
       imageHeight: imageHeight,
       rightPad: rightMargin,
       paint: (canvas) {
-        textPainter.paint(canvas, const Offset(leftMargin, edgePad));
+        textPainter.paint(canvas, Offset(leftMargin, textY));
         _paintQr(
           canvas,
           qrImage: qrImage,
