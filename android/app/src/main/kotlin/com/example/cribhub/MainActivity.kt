@@ -25,8 +25,9 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val TAG = "DharmaLabelPrint"
         private const val REQUEST_BLUETOOTH_CONNECT = 9001
-        private const val PRINT_TIMEOUT_MS = 60_000L
-        private const val POLL_MS = 250L
+        // Keep short: if :brother_print JNI-dies we shouldn't wait a full minute.
+        private const val PRINT_TIMEOUT_MS = 20_000L
+        private const val POLL_MS = 200L
     }
 
     private val executor = Executors.newSingleThreadExecutor()
@@ -233,7 +234,7 @@ class MainActivity : FlutterActivity() {
             }
             error(
                 "BROTHER_CRASH",
-                "Brother print process did not finish (crashed or timed out); use system print",
+                "Brother print process crashed or timed out. PT-P910BT needs the Brother SDK (it will not appear in Android's system printer list).",
             )
         } catch (e: Throwable) {
             Log.e(TAG, "printLabel exception", e)

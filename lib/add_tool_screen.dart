@@ -4530,15 +4530,36 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
     final location = toolLocation.location;
     if (location == null || widget.tool == null) return;
     final binCode = LabelPrintService.getBinCodeForLocation(location, _allLocations);
+
+    if (!kIsWeb && mounted) {
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const PopScope(
+          canPop: false,
+          child: AlertDialog(
+            content: Row(
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(width: 20),
+                Expanded(child: Text('Sending label to Brother printer…')),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     try {
       await LabelPrintService.printLabel(toolName: widget.tool!.toolName, binCode: binCode);
       if (mounted) {
+        if (!kIsWeb) Navigator.of(context, rootNavigator: true).pop();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
               kIsWeb
                   ? 'Opened system print — pick PT-P910BT, 18mm, short Length'
-                  : 'Print finished (Brother one-tap, or system print if Brother failed)',
+                  : 'Label sent to Brother printer',
             ),
             backgroundColor: Colors.green,
           ),
@@ -4546,14 +4567,24 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
       }
     } on PlatformException catch (e) {
       if (mounted) {
+        if (!kIsWeb) Navigator.of(context, rootNavigator: true).pop();
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Print failed: ${e.message ?? e.code}'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('Print failed (${e.code}): ${e.message ?? e.code}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 8),
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
+        if (!kIsWeb) Navigator.of(context, rootNavigator: true).pop();
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Print failed: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text('Print failed: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 8),
+          ),
         );
       }
     }

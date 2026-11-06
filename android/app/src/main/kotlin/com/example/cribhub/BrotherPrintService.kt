@@ -114,7 +114,10 @@ class BrotherPrintService : Service() {
             else -> PrinterInfo.Model.PT_P910BT
         }
 
-        val workDir = File(filesDir, "brother_print").apply { mkdirs() }
+        // Prefer app-specific external dir (Brother docs / SO: unset workPath → JNI abort).
+        val workDir = (getExternalFilesDir(null) ?: filesDir)
+            .let { File(it, "brother_print") }
+            .apply { mkdirs() }
         val ports = listOf(PrinterInfo.Port.BLUETOOTH, PrinterInfo.Port.BLE)
         var lastError = "Print failed"
 

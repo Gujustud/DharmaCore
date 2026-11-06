@@ -93,7 +93,7 @@ Future<void> printOrPreviewMaterialLabel(
           content: Text(
             kIsWeb
                 ? 'Opened system print — PT-P910BT, 18mm paper, short Length (not 100mm)'
-                : 'Label sent to printer',
+                : 'Label sent to Brother printer',
           ),
           backgroundColor: Colors.green,
         ),
@@ -104,20 +104,25 @@ Future<void> printOrPreviewMaterialLabel(
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Print failed: ${e.message ?? e.code}'),
+          content: Text('Print failed (${e.code}): ${e.message ?? e.code}'),
           backgroundColor: Colors.red,
+          duration: const Duration(seconds: 8),
         ),
       );
     }
+    // On Android, do not open the system print sheet — BT PT-P910BT never appears there.
+    if (!kIsWeb) return;
   } catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Print failed: $e'),
           backgroundColor: Colors.red,
+          duration: const Duration(seconds: 8),
         ),
       );
     }
+    if (!kIsWeb) return;
   }
 
   if (!context.mounted) return;

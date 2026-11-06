@@ -265,9 +265,8 @@ class LabelPrintService {
   }
 
   /// When false (`--dart-define=BROTHER_SDK_PRINT=false`), Android skips the
-  /// Brother Bluetooth SDK and always uses the system print sheet.
-  /// Default true = one-tap print when the SDK works; soft failures and the
-  /// native crash latch fall back to the system print sheet.
+  /// Brother Bluetooth SDK and uses the system print sheet (useful on web /
+  /// Windows only — Android's print sheet cannot see a BT PT-P910BT).
   static const bool androidUseBrotherSdk = bool.fromEnvironment(
     'BROTHER_SDK_PRINT',
     defaultValue: true,
@@ -276,8 +275,9 @@ class LabelPrintService {
   /// Send a label PNG to the printer (Android Bluetooth) or system print (web).
   ///
   /// Android: one-tap via Brother SDK in a separate `:brother_print` process.
-  /// Soft errors or process death (`BROTHER_CRASH`) fall back to the system
-  /// print sheet so the Flutter UI is not killed by Brother JNI aborts.
+  /// PT-P910BT is Bluetooth-only — Android's system print dialog will **not**
+  /// list it (Brother Print Service Plugin is Wi‑Fi models only), so we do
+  /// **not** fall back to that dialog on Android; errors surface to the UI.
   static Future<void> sendLabelPng(
     Uint8List pngBytes, {
     String jobName = 'label',
@@ -286,23 +286,10 @@ class LabelPrintService {
       await _sendViaSystemPrint(pngBytes, jobName: jobName);
       return;
     }
-    try {
-      // Pass Uint8List directly (becomes byte[] on Android) — not List<int>.
-      await _channel.invokeMethod<void>('printLabel', {
-        'imageBytes': pngBytes,
-      });
-      return;
-    } on MissingPluginException catch (e) {
-      debugPrint('LabelPrintService: MissingPluginException, system print fallback: $e');
-    } on PlatformException catch (e) {
-      debugPrint(
-        'LabelPrintService: Brother print failed (${e.code}: ${e.message}), '
-        'system print fallback',
-      );
-    } catch (e) {
-      debugPrint('LabelPrintService: Brother print error, system print fallback: $e');
-    }
-    await _sendViaSystemPrint(pngBytes, jobName: jobName);
+    // Pass Uint8List directly (becomes byte[] on Android) — not List<int>.
+    await _channel.invokeMethod<void>('printLabel', {
+      'imageBytes': pngBytes,
+    });
   }
 
   static Future<void> _sendViaSystemPrint(
