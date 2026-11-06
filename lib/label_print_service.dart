@@ -264,20 +264,20 @@ class LabelPrintService {
     );
   }
 
-  /// When true (via `--dart-define=BROTHER_SDK_PRINT=true`), Android uses the
-  /// Brother Bluetooth SDK. Default is false: the SDK was hard-crashing the
-  /// tablet APK (JNI abort inside printImage), so Android uses the system
-  /// print sheet like web unless explicitly re-enabled after a verified fix.
+  /// When false (`--dart-define=BROTHER_SDK_PRINT=false`), Android skips the
+  /// Brother Bluetooth SDK and always uses the system print sheet.
+  /// Default true = one-tap print when the SDK works; soft failures and the
+  /// native crash latch fall back to the system print sheet.
   static const bool androidUseBrotherSdk = bool.fromEnvironment(
     'BROTHER_SDK_PRINT',
-    defaultValue: false,
+    defaultValue: true,
   );
 
   /// Send a label PNG to the printer (Android Bluetooth) or system print (web).
   ///
-  /// Default Android path = system print dialog (pick PT-P910BT / 18mm).
-  /// Optional Brother SDK path when [androidUseBrotherSdk] is true; on
-  /// PlatformException falls back to system print.
+  /// Android: one-tap via Brother SDK when possible. If the SDK returns an
+  /// error — or previously JNI-crashed (BROTHER_UNSAFE) — opens the system
+  /// print sheet instead of killing the app.
   static Future<void> sendLabelPng(
     Uint8List pngBytes, {
     String jobName = 'label',

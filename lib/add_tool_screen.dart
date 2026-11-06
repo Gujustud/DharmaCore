@@ -4534,9 +4534,11 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
       await LabelPrintService.printLabel(toolName: widget.tool!.toolName, binCode: binCode);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              'Label print started — if the system print sheet opened, pick PT-P910BT / 18mm',
+              kIsWeb
+                  ? 'Opened system print — pick PT-P910BT, 18mm, short Length'
+                  : 'Label sent (or system print opened if Brother needed a fallback)',
             ),
             backgroundColor: Colors.green,
           ),
