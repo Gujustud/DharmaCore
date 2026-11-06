@@ -6,18 +6,19 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.os.IBinder
 import android.util.Log
 import com.brother.ptouch.sdk.LabelInfo
 import com.brother.ptouch.sdk.Printer
 import com.brother.ptouch.sdk.PrinterInfo
 import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.Executors
 
 /**
  * Runs Brother SDK printing in a **separate process** (`:brother_print`).
- * If the SDK JNI-aborts, only this process dies — the Flutter UI stays up and
- * can fall back to the system print sheet.
+ * If the SDK JNI-aborts, only this process dies — the Flutter UI stays up.
  */
 class BrotherPrintService : Service() {
 
@@ -91,7 +92,7 @@ class BrotherPrintService : Service() {
                 writeResult(this, jobId, "DECODE_ERROR", "Failed to decode label image")
                 return
             }
-        val bitmap = if (decoded.config == Bitmap.Config.ARGB_8888 && decoded.isMutable) {
+        val argb = if (decoded.config == Bitmap.Config.ARGB_8888 && decoded.isMutable) {
             decoded
         } else {
             decoded.copy(Bitmap.Config.ARGB_8888, true)?.also {
@@ -100,6 +101,32 @@ class BrotherPrintService : Service() {
                 writeResult(this, jobId, "DECODE_ERROR", "Failed to convert bitmap")
                 return
             }
+        }
+
+        // Flutter builds landscape PNGs (along-tape × 18mm). Brother PT printImage
+        // expects width = tape width and height = feed length, or FIT_TO_PAPER
+        // squeezes the long side into 18mm (tiny sideways text).
+        val srcW = argb.width
+        val srcH = argb.height
+        val bitmap = rotateLandscapeForPtTape(argb).also {
+            if (it !== argb) argb.recycle()
+        }
+        Log.i(TAG, "job=$jobId bitmap ${srcW}x${srcH} → ${bitmap.width}x${bitmap.height}")
+
+        val workDir = (getExternalFilesDir(null) ?: filesDir)
+            .let { File(it, "brother_print") }
+            .apply { mkdirs() }
+        val rotatedPng = File(workDir, "job_${jobId}_pt.png")
+        try {
+            FileOutputStream(rotatedPng).use { out ->
+                if (!bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)) {
+                    writeResult(this, jobId, "ENCODE_ERROR", "Failed to write rotated label")
+                    return
+                }
+            }
+        } catch (e: Exception) {
+            writeResult(this, jobId, "ENCODE_ERROR", e.message ?: "Failed to write rotated label")
+            return
         }
 
         val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
@@ -115,9 +142,6 @@ class BrotherPrintService : Service() {
         }
 
         // Prefer app-specific external dir (Brother docs / SO: unset workPath → JNI abort).
-        val workDir = (getExternalFilesDir(null) ?: filesDir)
-            .let { File(it, "brother_print") }
-            .apply { mkdirs() }
         val ports = listOf(PrinterInfo.Port.BLUETOOTH, PrinterInfo.Port.BLE)
         var lastError = "Print failed"
 
@@ -136,7 +160,8 @@ class BrotherPrintService : Service() {
             info.port = port
             info.macAddress = mac
             info.workPath = workDir.absolutePath
-            info.printMode = PrinterInfo.PrintMode.FIT_TO_PAPER
+            // ORIGINAL: bitmap already sized for W18 tape width after rotate.
+            info.printMode = PrinterInfo.PrintMode.ORIGINAL
             info.isAutoCut = true
             info.isCutAtEnd = true
             info.isHalfCut = false
@@ -166,7 +191,7 @@ class BrotherPrintService : Service() {
             }
 
             val status = try {
-                val fileStatus = printer.printFile(pngPath)
+                val fileStatus = printer.printFile(rotatedPng.absolutePath)
                 if (fileStatus.errorCode == PrinterInfo.ErrorCode.ERROR_NONE) {
                     fileStatus
                 } else {
@@ -189,6 +214,16 @@ class BrotherPrintService : Service() {
         }
 
         writeResult(this, jobId, "PRINT_FAILED", lastError)
+    }
+
+    /**
+     * Brother PT print head spans the tape width: bitmap width must be ~tape
+     * dots (127 @ 180dpi for 18mm). Flutter labels are landscape — rotate 90° CW.
+     */
+    private fun rotateLandscapeForPtTape(src: Bitmap): Bitmap {
+        if (src.width <= src.height) return src
+        val matrix = Matrix().apply { postRotate(90f) }
+        return Bitmap.createBitmap(src, 0, 0, src.width, src.height, matrix, true)
     }
 
     override fun onDestroy() {
