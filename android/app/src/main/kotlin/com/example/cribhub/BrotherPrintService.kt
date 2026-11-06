@@ -170,15 +170,15 @@ class BrotherPrintService : Service() {
             info.port = port
             info.macAddress = mac
             info.workPath = workDir.absolutePath
-            // ORIGINAL: preserve pixel layout (top-aligned text + gap). FIT_TO_PAPER
-            // can reflow/center content and undo Flutter's placement.
-            info.printMode = PrinterInfo.PrintMode.ORIGINAL
+            // FIT_TO_PAPER: ORIGINAL JNI-aborts on P910BT when bitmap dots don't
+            // exactly match the printer's expected W18 raster size.
+            info.printMode = PrinterInfo.PrintMode.FIT_TO_PAPER
             info.isAutoCut = true
             info.isCutAtEnd = true
             info.isHalfCut = false
             info.isSpecialTape = false
             info.labelNameIndex = LabelInfo.PT.W18.ordinal
-            info.printQuality = PrinterInfo.PrintQuality.HIGH_RESOLUTION_USING_HR_IMAGE
+            info.printQuality = PrinterInfo.PrintQuality.HIGH_RESOLUTION
             info.skipStatusCheck = true
             if (!printer.setPrinterInfo(info)) {
                 lastError = "setPrinterInfo failed for $port"
