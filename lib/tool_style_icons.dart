@@ -38,6 +38,30 @@ class ToolStyleIcons {
     'thread': '$typeAssetDir/threading.png',
   };
 
+  /// Preferred display order for top-level types (Endmills → Drills → Threading).
+  static const List<String> typeOrder = [
+    'endmills',
+    'endmill',
+    'drills',
+    'drill',
+    'threading',
+    'thread',
+  ];
+
+  /// Preferred display order for Endmill styles.
+  static const List<String> endmillStyleOrder = [
+    'flat',
+    'cr',
+    'ball',
+    'chamfer',
+    'tslot',
+    't-slot',
+    't_slot',
+    'special',
+  ];
+
+  static const double iconButtonSize = 40;
+
   static String normalize(String name) =>
       name.trim().toLowerCase().replaceAll(RegExp(r'[\s_-]+'), '');
 
@@ -48,6 +72,26 @@ class ToolStyleIcons {
   static String? assetForType(String type) => typeAssets[normalize(type)];
 
   static bool hasTypeIcon(String type) => assetForType(type) != null;
+
+  /// Sort [items] by [preferred] keys (normalized); unknowns keep relative alpha order at end.
+  static List<String> sortByPreferred(
+    Iterable<String> items,
+    List<String> preferred,
+  ) {
+    final preferredNorm = [
+      for (final p in preferred) normalize(p),
+    ];
+    final list = items.toList();
+    list.sort((a, b) {
+      final ai = preferredNorm.indexOf(normalize(a));
+      final bi = preferredNorm.indexOf(normalize(b));
+      if (ai >= 0 && bi >= 0) return ai.compareTo(bi);
+      if (ai >= 0) return -1;
+      if (bi >= 0) return 1;
+      return a.toLowerCase().compareTo(b.toLowerCase());
+    });
+    return list;
+  }
 }
 
 /// Square tip-profile filter button (white fill, dark stroke icons).
@@ -99,8 +143,8 @@ class ToolStyleIconButton extends StatelessWidget {
           onTap: onTap,
           borderRadius: radius,
           child: SizedBox(
-            width: 40,
-            height: 40,
+            width: ToolStyleIcons.iconButtonSize,
+            height: ToolStyleIcons.iconButtonSize,
             child: child,
           ),
         ),
@@ -125,22 +169,36 @@ class ToolStyleIconButton extends StatelessWidget {
 }
 
 /// Compact text chip for "All" and styles/types without an icon.
+///
+/// When [square] is true (e.g. the All control), uses the same 40×40 footprint
+/// as [ToolStyleIconButton].
 class ToolFilterChipButton extends StatelessWidget {
   final String label;
   final bool selected;
   final VoidCallback onTap;
+  final bool square;
 
   const ToolFilterChipButton({
     super.key,
     required this.label,
     required this.selected,
     required this.onTap,
+    this.square = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final radius = BorderRadius.circular(kToolFilterIconRadius);
+    final text = Text(
+      label,
+      style: TextStyle(
+        fontSize: square ? 12 : 13,
+        fontWeight: FontWeight.w600,
+        color: selected ? scheme.onPrimary : scheme.onSurface,
+        height: 1,
+      ),
+    );
     return Tooltip(
       message: label,
       child: Material(
@@ -154,17 +212,17 @@ class ToolFilterChipButton extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           borderRadius: radius,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: selected ? scheme.onPrimary : scheme.onSurface,
-              ),
-            ),
-          ),
+          child: square
+              ? SizedBox(
+                  width: ToolStyleIcons.iconButtonSize,
+                  height: ToolStyleIcons.iconButtonSize,
+                  child: Center(child: text),
+                )
+              : Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  child: text,
+                ),
         ),
       ),
     );

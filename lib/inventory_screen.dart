@@ -342,12 +342,13 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
         ..sort();
 
       // Use only the first segment of subcategory (e.g. "End Mills" from "End Mills > Ball")
-      final subcats = toolsWithLocs
-          .map((t) => (t.tool.subcategory ?? '').split(' > ').first.trim())
-          .where((s) => s.isNotEmpty)
-          .toSet()
-          .toList()
-        ..sort();
+      final subcats = ToolStyleIcons.sortByPreferred(
+        toolsWithLocs
+            .map((t) => (t.tool.subcategory ?? '').split(' > ').first.trim())
+            .where((s) => s.isNotEmpty)
+            .toSet(),
+        ToolStyleIcons.typeOrder,
+      );
 
       setState(() {
         _toolsWithLocations = toolsWithLocs;
@@ -370,7 +371,7 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
   List<String> _stylesForSelectedType() {
     if (_selectedSubcatFilter == null) return const [];
     final type = _selectedSubcatFilter!.toLowerCase();
-    return _toolsWithLocations
+    final styles = _toolsWithLocations
         .where((t) {
           final parts = (t.tool.subcategory ?? '').split(' > ');
           return parts.isNotEmpty &&
@@ -379,9 +380,17 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
               parts[1].trim().isNotEmpty;
         })
         .map((t) => (t.tool.subcategory ?? '').split(' > ')[1].trim())
-        .toSet()
-        .toList()
-      ..sort();
+        .toSet();
+    // Endmills: Flat, CR, Ball, Chamfer, Tslot, Special. Others: alpha.
+    final isEndmill = ToolStyleIcons.normalize(_selectedSubcatFilter!)
+        .startsWith('endmill');
+    if (isEndmill) {
+      return ToolStyleIcons.sortByPreferred(
+        styles,
+        ToolStyleIcons.endmillStyleOrder,
+      );
+    }
+    return styles.toList()..sort();
   }
 
   /// Type chips when idle; All + style icons after a type is picked.
@@ -430,6 +439,7 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
         ToolFilterChipButton(
           label: 'All',
           selected: false,
+          square: true,
           onTap: () {
             setState(() {
               _selectedSubcatFilter = null;
