@@ -2,7 +2,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
@@ -51,14 +51,14 @@ class LabelPrintService {
     return pathToBinCode(getPathNames(location, allLocations));
   }
 
-  /// Pixels for 18mm tape width at 180 dpi. Max label height across the tape.
-  static const int labelHeightPx = 127;
+  /// Pixels across 18mm tape at Brother HIGH_RESOLUTION (~360 dpi / ~256 dots).
+  static const int labelHeightPx = 256;
 
-  /// Max label length along the tape at 180 dpi (3.1 inches) so labels fit in bins.
-  static const int maxLabelWidthPx = 558; // 3.1" × 180 dpi
+  /// Max label length along the tape at 360 dpi (3.1 inches) so labels fit in bins.
+  static const int maxLabelWidthPx = 1116; // 3.1" × 360 dpi
 
   static const double _tapeHeightMm = 18;
-  static const double _dpi = 180;
+  static const double _dpi = 360;
 
   /// Trim trailing blank tape: keep ink + [rightPad] px only.
   static img.Image _cropLabelToContent(img.Image image, {int rightPad = 16}) {
@@ -102,7 +102,7 @@ class LabelPrintService {
       textDirection: TextDirection.ltr,
       maxLines: 1,
       ellipsis: '…',
-    )..layout(maxWidth: 520);
+    )..layout(maxWidth: maxLabelWidthPx.toDouble());
     return painter;
   }
 
@@ -167,13 +167,16 @@ class LabelPrintService {
     int? width,
     int? height,
   }) async {
-    const leftMargin = 12.0;
-    const rightMargin = 12;
-    const qrVerticalMargin = 6;
-    const gap = 8.0;
+    // 360dpi layout: slightly larger type + tight margins so content fills
+    // more of the 18mm printable height (closer to desktop Brother driver).
+    const leftMargin = 14.0;
+    const rightMargin = 14;
+    const qrVerticalMargin = 4;
+    const gap = 12.0;
     const toolMaxCharsPerLine = 26;
-    const binFontSize = 30.0;
-    const nameFontSize = 26.0;
+    const binFontSize = 68.0;
+    const nameFontSize = 58.0;
+    const edgePad = 6.0;
 
     final imageHeight = height ?? labelHeightPx;
     final qrMaxSide = imageHeight - 2 * qrVerticalMargin;
@@ -188,7 +191,7 @@ class LabelPrintService {
     );
     final qrImage = QrImage(qrCode);
     final qrModuleCount = qrImage.moduleCount;
-    final qrModulePixel = (qrMaxSide / qrModuleCount).floor().clamp(1, 20);
+    final qrModulePixel = (qrMaxSide / qrModuleCount).floor().clamp(1, 40);
     final qrSize = qrModuleCount * qrModulePixel;
     final qrY = (imageHeight - qrSize) / 2;
 
@@ -227,10 +230,10 @@ class LabelPrintService {
       imageHeight: imageHeight,
       rightPad: rightMargin,
       paint: (canvas) {
-        binPainter.paint(canvas, const Offset(leftMargin, 10));
-        final nameBlockH =
-            namePainters.fold<double>(0, (s, p) => s + p.height);
-        var y = imageHeight - nameBlockH - 8;
+        // Stack BIN + name from the top (no gap down to the bottom edge).
+        var y = edgePad;
+        binPainter.paint(canvas, Offset(leftMargin, y));
+        y += binPainter.height + 2;
         for (final p in namePainters) {
           p.paint(canvas, Offset(leftMargin, y));
           y += p.height;
@@ -264,26 +267,47 @@ class LabelPrintService {
     );
   }
 
+  /// When false (`--dart-define=BROTHER_SDK_PRINT=false`), Android skips the
+  /// Brother Bluetooth SDK and uses the system print sheet (useful on web /
+  /// Windows only — Android's print sheet cannot see a BT PT-P910BT).
+  static const bool androidUseBrotherSdk = bool.fromEnvironment(
+    'BROTHER_SDK_PRINT',
+    defaultValue: true,
+  );
+
   /// Send a label PNG to the printer (Android Bluetooth) or system print (web).
+  ///
+  /// Android: one-tap via Brother SDK in a separate `:brother_print` process.
+  /// PT-P910BT is Bluetooth-only — Android's system print dialog will **not**
+  /// list it (Brother Print Service Plugin is Wi‑Fi models only), so we do
+  /// **not** fall back to that dialog on Android; errors surface to the UI.
   static Future<void> sendLabelPng(
     Uint8List pngBytes, {
     String jobName = 'label',
   }) async {
-    if (kIsWeb) {
-      final decoded = img.decodePng(pngBytes);
-      final src = decoded ??
-          img.Image(width: maxLabelWidthPx, height: labelHeightPx);
-      final format = _labelPageFormat(src);
-      await Printing.layoutPdf(
-        name: jobName,
-        format: format,
-        onLayout: (_) => _pngAsLabelPdf(pngBytes),
-      );
+    if (kIsWeb || !androidUseBrotherSdk) {
+      await _sendViaSystemPrint(pngBytes, jobName: jobName);
       return;
     }
+    // Pass Uint8List directly (becomes byte[] on Android) — not List<int>.
     await _channel.invokeMethod<void>('printLabel', {
-      'imageBytes': pngBytes.toList(),
+      'imageBytes': pngBytes,
     });
+  }
+
+  static Future<void> _sendViaSystemPrint(
+    Uint8List pngBytes, {
+    required String jobName,
+  }) async {
+    final decoded = img.decodePng(pngBytes);
+    final src = decoded ??
+        img.Image(width: maxLabelWidthPx, height: labelHeightPx);
+    final format = _labelPageFormat(src);
+    await Printing.layoutPdf(
+      name: jobName,
+      format: format,
+      onLayout: (_) => _pngAsLabelPdf(pngBytes),
+    );
   }
 
   /// Wrap PNG in a PDF for the browser → Brother print dialog.
@@ -357,12 +381,12 @@ class LabelPrintService {
     int? width,
     int? height,
   }) async {
-    const leftMargin = 10.0;
-    const rightMargin = 12;
-    const qrVerticalMargin = 4;
-    const primaryFontSize = 30.0;
-    const metaFontSize = 24.0;
-    const lineGap = 1.0;
+    const leftMargin = 12.0;
+    const rightMargin = 14;
+    const qrVerticalMargin = 2;
+    const primaryFontSize = 66.0;
+    const metaFontSize = 52.0;
+    const lineGap = 2.0;
     const maxChars = 34;
 
     final imageHeight = height ?? labelHeightPx;
@@ -375,7 +399,7 @@ class LabelPrintService {
     );
     final qrImage = QrImage(qrCode);
     final qrModuleCount = qrImage.moduleCount;
-    final qrModulePixel = (qrMaxSide / qrModuleCount).floor().clamp(1, 20);
+    final qrModulePixel = (qrMaxSide / qrModuleCount).floor().clamp(1, 40);
     final qrSize = qrModuleCount * qrModulePixel;
     // Text must not crowd the QR: scanners need a blank quiet zone of a few
     // modules beside it, and the label reads better with clear separation.

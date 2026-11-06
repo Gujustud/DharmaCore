@@ -19,7 +19,7 @@ Living list so we don’t rely on chat history. Update this when something is do
 - [ ] Chrome **Not secure** on the HTTPS shop: mixed HTTP content. Optional; cert is valid.
 - [ ] Bitwarden autofill: often blocked by that warning + Flutter fields. Login form now has autofill hints; sessions persist across hard refresh. Still may need Fill from the extension until mixed content is gone.
 - [ ] Extra shop logins: create more records in PocketBase **`users`**.
-- [ ] Tablets/phones: release APK still points at **cribhub.sscadcam.com** unless rebuilt for this host.
+- [x] Tablets/phones: use `.\scripts\buildapk_shop.bat` (dharmacore URLs + About build stamp). Old `buildapk.bat` remains cribhub-only.
 - [ ] Inventory barcode scanning (`lib/inventory_home_screen.dart`) — old code TODO, not part of the merge.
 
 ## Maintenance roadmap

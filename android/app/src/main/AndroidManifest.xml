@@ -32,6 +32,11 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Brother SDK JNI aborts stay in this process; Flutter UI survives. -->
+        <service
+            android:name=".BrotherPrintService"
+            android:exported="false"
+            android:process=":brother_print" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

@@ -2,27 +2,32 @@ package com.example.cribhub
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.BitmapFactory
 import android.os.Build
+import android.util.Log
 import android.widget.Toast
-import com.brother.ptouch.sdk.LabelInfo
-import com.brother.ptouch.sdk.Printer
-import com.brother.ptouch.sdk.PrinterInfo
-import com.brother.ptouch.sdk.PrinterStatus
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.ByteBuffer
+import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : FlutterActivity() {
 
     companion object {
+        private const val TAG = "DharmaLabelPrint"
         private const val REQUEST_BLUETOOTH_CONNECT = 9001
+        // Keep short: if :brother_print JNI-dies we shouldn't wait a full minute.
+        private const val PRINT_TIMEOUT_MS = 20_000L
+        private const val POLL_MS = 200L
     }
 
     private val executor = Executors.newSingleThreadExecutor()
@@ -35,54 +40,66 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "printLabel" -> {
-                        @Suppress("UNCHECKED_CAST")
-                        val args = call.arguments as? Map<String, Any>
-                        val imageBytes = args?.get("imageBytes") as? List<*>
-                        if (imageBytes != null) {
-                            val bytes = imageBytes.map { (it as Number).toInt().toByte() }.toByteArray()
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                                val needConnect = checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
-                                val needScan = checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED
-                                if (needConnect || needScan) {
-                                    pendingPrintBytes = bytes
-                                    pendingPrintResult = result
-                                    val perms = mutableListOf<String>()
-                                    if (needConnect) perms.add(Manifest.permission.BLUETOOTH_CONNECT)
-                                    if (needScan) perms.add(Manifest.permission.BLUETOOTH_SCAN)
-                                    requestPermissions(perms.toTypedArray(), REQUEST_BLUETOOTH_CONNECT)
-                                } else {
-                                    executor.execute { runPrintLabel(bytes, result) }
-                                }
-                            } else {
-                                executor.execute { runPrintLabel(bytes, result) }
-                            }
-                        } else {
-                            result.error("INVALID_ARGS", "imageBytes required", null)
+                        val bytes = extractImageBytes(
+                            (call.arguments as? Map<*, *>)?.get("imageBytes")
+                        )
+                        if (bytes == null) {
+                            replyError(result, "INVALID_ARGS", "imageBytes required")
+                            return@setMethodCallHandler
                         }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            val needConnect = checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
+                            val needScan = checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED
+                            if (needConnect || needScan) {
+                                pendingPrintBytes = bytes
+                                pendingPrintResult = result
+                                val perms = mutableListOf<String>()
+                                if (needConnect) perms.add(Manifest.permission.BLUETOOTH_CONNECT)
+                                if (needScan) perms.add(Manifest.permission.BLUETOOTH_SCAN)
+                                requestPermissions(perms.toTypedArray(), REQUEST_BLUETOOTH_CONNECT)
+                                return@setMethodCallHandler
+                            }
+                        }
+                        executor.execute { runPrintViaService(bytes, result) }
                     }
                     "exportLabelPng" -> {
-                        @Suppress("UNCHECKED_CAST")
-                        val args = call.arguments as? Map<String, Any>
-                        val imageBytes = args?.get("imageBytes") as? List<*>
-                        if (imageBytes != null) {
+                        val args = call.arguments as? Map<*, *>
+                        val bytes = extractImageBytes(args?.get("imageBytes"))
+                        if (bytes != null) {
                             try {
-                                val bytes = imageBytes.map { (it as Number).toInt().toByte() }.toByteArray()
-                                val binCode = (args["binCode"] as? String) ?: "bin"
+                                val binCode = (args?.get("binCode") as? String) ?: "bin"
                                 val safeBin = binCode.replace(Regex("[^A-Za-z0-9_-]"), "_")
-                                val fileName = "label_${safeBin}_${System.currentTimeMillis()}.png"
-                                val file = File(cacheDir, fileName)
+                                val file = File(cacheDir, "label_${safeBin}_${System.currentTimeMillis()}.png")
                                 FileOutputStream(file).use { it.write(bytes) }
-                                result.success(file.absolutePath)
+                                replySuccess(result, file.absolutePath)
                             } catch (e: Exception) {
-                                result.error("EXPORT_ERROR", e.message ?: "Failed to export label PNG", null)
+                                replyError(result, "EXPORT_ERROR", e.message ?: "Failed to export label PNG")
                             }
                         } else {
-                            result.error("INVALID_ARGS", "imageBytes required", null)
+                            replyError(result, "INVALID_ARGS", "imageBytes required")
                         }
                     }
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    private fun extractImageBytes(raw: Any?): ByteArray? {
+        return when (raw) {
+            is ByteArray -> raw
+            is ByteBuffer -> {
+                val buf = raw.duplicate()
+                val out = ByteArray(buf.remaining())
+                buf.get(out)
+                out
+            }
+            is List<*> -> try {
+                raw.map { (it as Number).toInt().toByte() }.toByteArray()
+            } catch (_: Exception) {
+                null
+            }
+            else -> null
+        }
     }
 
     override fun onRequestPermissionsResult(
@@ -91,94 +108,146 @@ class MainActivity : FlutterActivity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == REQUEST_BLUETOOTH_CONNECT) {
-            val bytes = pendingPrintBytes
-            val res = pendingPrintResult
-            pendingPrintBytes = null
-            pendingPrintResult = null
-            val granted = grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }
-            if (granted && bytes != null && res != null) {
-                executor.execute { runPrintLabel(bytes, res) }
-            } else if (res != null) {
-                runOnUiThread {
-                    Toast.makeText(this, "Bluetooth permission needed for printing", Toast.LENGTH_LONG).show()
-                }
-                res.error("PERMISSION_DENIED", "Bluetooth permission required for label printing", null)
+        if (requestCode != REQUEST_BLUETOOTH_CONNECT) return
+        val bytes = pendingPrintBytes
+        val res = pendingPrintResult
+        pendingPrintBytes = null
+        pendingPrintResult = null
+        val granted = grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+        if (granted && bytes != null && res != null) {
+            executor.execute { runPrintViaService(bytes, res) }
+        } else if (res != null) {
+            runOnUiThread {
+                Toast.makeText(this, "Bluetooth permission needed for printing", Toast.LENGTH_LONG).show()
+            }
+            replyError(res, "PERMISSION_DENIED", "Bluetooth permission required for label printing")
+        }
+    }
+
+    private fun replySuccess(result: MethodChannel.Result, value: Any? = null) {
+        runOnUiThread {
+            try {
+                result.success(value)
+            } catch (_: Exception) {
             }
         }
     }
 
-    private fun runPrintLabel(pngBytes: ByteArray, result: MethodChannel.Result) {
-        try {
-            val bitmap = BitmapFactory.decodeByteArray(pngBytes, 0, pngBytes.size)
-                ?: run {
-                    result.error("DECODE_ERROR", "Failed to decode image", null)
-                    return
-                }
+    private fun replyError(result: MethodChannel.Result, code: String, message: String?) {
+        runOnUiThread {
+            try {
+                result.error(code, message, null)
+            } catch (_: Exception) {
+            }
+        }
+    }
 
+    /**
+     * Orchestrates print in [BrotherPrintService] (`:brother_print` process).
+     * UI process only waits for a result file — JNI aborts kill the service
+     * process only, then we surface BROTHER_CRASH for Dart system-print fallback.
+     */
+    private fun runPrintViaService(pngBytes: ByteArray, result: MethodChannel.Result) {
+        val replied = AtomicBoolean(false)
+        fun success() {
+            if (replied.compareAndSet(false, true)) replySuccess(result)
+        }
+        fun error(code: String, message: String?) {
+            Log.e(TAG, "printLabel error $code: $message")
+            if (replied.compareAndSet(false, true)) replyError(result, code, message)
+        }
+
+        try {
             val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
             val adapter: BluetoothAdapter? = bluetoothManager?.adapter
             if (adapter == null || !adapter.isEnabled) {
                 runOnUiThread { Toast.makeText(this, "Bluetooth is off", Toast.LENGTH_SHORT).show() }
-                result.error("BLUETOOTH_OFF", "Bluetooth is disabled", null)
+                error("BLUETOOTH_OFF", "Bluetooth is disabled")
                 return
             }
 
-            // Prefer P910BT when paired; fall back to any Brother/PT device (e.g. P710BT).
-            val bonded = adapter.bondedDevices.orEmpty()
-            val pairedDevice = bonded.firstOrNull { device ->
-                (device.name ?: "").contains("P910", ignoreCase = true)
-            } ?: bonded.firstOrNull { device ->
-                val name = device.name ?: ""
-                name.contains("PT-", ignoreCase = true) || name.contains("Brother", ignoreCase = true)
+            val bonded = try {
+                adapter.bondedDevices.orEmpty()
+            } catch (e: SecurityException) {
+                error("PERMISSION_DENIED", "Bluetooth permission required for label printing")
+                return
             }
+            val pairedDevice = pickBrotherDevice(bonded)
             if (pairedDevice == null) {
                 runOnUiThread { Toast.makeText(this, "No Brother/PT printer paired", Toast.LENGTH_LONG).show() }
-                result.error("NO_PRINTER", "Pair the PT-P910BT (or PT-P710BT) in Bluetooth settings first", null)
+                error("NO_PRINTER", "Pair the PT-P910BT (or PT-P710BT) in Bluetooth settings first")
                 return
             }
 
             val deviceName = pairedDevice.name ?: ""
-            val model = when {
-                deviceName.contains("P910", ignoreCase = true) -> PrinterInfo.Model.PT_P910BT
-                deviceName.contains("P715", ignoreCase = true) -> PrinterInfo.Model.PT_P715eBT
-                deviceName.contains("P710", ignoreCase = true) -> PrinterInfo.Model.PT_P710BT
-                else -> PrinterInfo.Model.PT_P910BT
+            val modelName = when {
+                deviceName.contains("P710", ignoreCase = true) -> "PT_P710BT"
+                deviceName.contains("P715", ignoreCase = true) -> "PT_P715eBT"
+                else -> "PT_P910BT"
             }
 
-            val printerInfo = PrinterInfo().apply {
-                printerModel = model
-                port = PrinterInfo.Port.BLUETOOTH
-                macAddress = pairedDevice.address
-                workPath = cacheDir.absolutePath
-                printMode = PrinterInfo.PrintMode.FIT_TO_PAPER
-                isAutoCut = true
-                // 18mm TZe for all shop labels (tools + material).
-                labelNameIndex = LabelInfo.PT.W18.ordinal
-                printQuality = PrinterInfo.PrintQuality.HIGH_RESOLUTION
+            val jobId = UUID.randomUUID().toString()
+            val jobsDir = BrotherPrintService.jobsDir(this)
+            val pngFile = File(jobsDir, "$jobId.png")
+            FileOutputStream(pngFile).use { it.write(pngBytes) }
+            val resultFile = BrotherPrintService.resultFile(this, jobId)
+            if (resultFile.exists()) resultFile.delete()
+
+            Log.i(TAG, "starting BrotherPrintService job=$jobId model=$modelName mac=${pairedDevice.address}")
+            val intent = Intent(this, BrotherPrintService::class.java).apply {
+                action = BrotherPrintService.ACTION_PRINT
+                putExtra(BrotherPrintService.EXTRA_PNG_PATH, pngFile.absolutePath)
+                putExtra(BrotherPrintService.EXTRA_MAC, pairedDevice.address)
+                putExtra(BrotherPrintService.EXTRA_MODEL, modelName)
+                putExtra(BrotherPrintService.EXTRA_JOB_ID, jobId)
+            }
+            startService(intent)
+
+            val deadline = System.currentTimeMillis() + PRINT_TIMEOUT_MS
+            while (System.currentTimeMillis() < deadline) {
+                if (resultFile.isFile) {
+                    val lines = resultFile.readText().lines()
+                    val code = lines.firstOrNull()?.trim().orEmpty()
+                    val message = lines.drop(1).joinToString("\n").ifBlank { null }
+                    try {
+                        resultFile.delete()
+                        pngFile.delete()
+                    } catch (_: Exception) {
+                    }
+                    if (code == "OK") {
+                        runOnUiThread {
+                            Toast.makeText(this, "Label sent to printer", Toast.LENGTH_SHORT).show()
+                        }
+                        success()
+                    } else {
+                        error(code.ifBlank { "PRINT_FAILED" }, message)
+                    }
+                    return
+                }
+                Thread.sleep(POLL_MS)
             }
 
-            val printer = Printer()
-            printer.setBluetooth(adapter)
-            printer.setPrinterInfo(printerInfo)
-
-            if (!printer.startCommunication()) {
-                result.error("CONNECT_FAILED", "Could not connect to printer", null)
-                return
+            // No result → service hung or JNI-killed the :brother_print process.
+            try {
+                pngFile.delete()
+            } catch (_: Exception) {
             }
+            error(
+                "BROTHER_CRASH",
+                "Brother print process crashed or timed out. PT-P910BT needs the Brother SDK (it will not appear in Android's system printer list).",
+            )
+        } catch (e: Throwable) {
+            Log.e(TAG, "printLabel exception", e)
+            error("PRINT_ERROR", e.message ?: e.javaClass.simpleName)
+        }
+    }
 
-            val status: PrinterStatus = printer.printImage(bitmap)
-            printer.endCommunication()
-
-            if (status.errorCode != PrinterInfo.ErrorCode.ERROR_NONE) {
-                result.error("PRINT_FAILED", "Print error: ${status.errorCode}", null)
-                return
-            }
-
-            runOnUiThread { Toast.makeText(this, "Label sent to printer", Toast.LENGTH_SHORT).show() }
-            result.success(null)
-        } catch (e: Exception) {
-            result.error("PRINT_ERROR", e.message ?: "Unknown error", null)
+    private fun pickBrotherDevice(bonded: Set<BluetoothDevice>): BluetoothDevice? {
+        return bonded.firstOrNull { device ->
+            (device.name ?: "").contains("P910", ignoreCase = true)
+        } ?: bonded.firstOrNull { device ->
+            val name = device.name ?: ""
+            name.contains("PT-", ignoreCase = true) || name.contains("Brother", ignoreCase = true)
         }
     }
 
