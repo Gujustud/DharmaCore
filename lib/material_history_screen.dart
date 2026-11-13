@@ -442,13 +442,34 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
       );
       final inStockChip = _onShelfIdsUnavailable
           ? null
-          : FilterChip(
-              label: const Text('In stock'),
-              selected: _inStockOnly,
-              onSelected: (_) => _toggleInStockOnly(),
-              showCheckmark: false,
-              visualDensity: VisualDensity.standard,
-              materialTapTargetSize: MaterialTapTargetSize.padded,
+          : SizedBox(
+              height: kListToolbarControlHeight,
+              child: OutlinedButton(
+                onPressed: _toggleInStockOnly,
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  minimumSize: const Size(0, kListToolbarControlHeight),
+                  maximumSize:
+                      const Size(double.infinity, kListToolbarControlHeight),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  backgroundColor:
+                      _inStockOnly ? scheme.primary : Colors.transparent,
+                  foregroundColor:
+                      _inStockOnly ? scheme.onPrimary : scheme.onSurface,
+                  side: BorderSide(
+                    color: _inStockOnly
+                        ? scheme.primary
+                        : scheme.outlineVariant,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                child: const Text(
+                  'In stock',
+                  style: TextStyle(fontSize: 14, height: 1.2),
+                ),
+              ),
             );
       final addButton = InventoryListActionButton(
         label: 'Add material',
