@@ -1,4 +1,4 @@
-package com.example.cribhub
+package com.sscadcam.dharmacore
 
 import android.app.Service
 import android.bluetooth.BluetoothManager
@@ -24,7 +24,7 @@ class BrotherPrintService : Service() {
 
     companion object {
         private const val TAG = "DharmaBrotherSvc"
-        const val ACTION_PRINT = "com.example.cribhub.action.BROTHER_PRINT"
+        const val ACTION_PRINT = "com.sscadcam.dharmacore.action.BROTHER_PRINT"
         const val EXTRA_PNG_PATH = "png_path"
         const val EXTRA_MAC = "mac"
         const val EXTRA_MODEL = "model"

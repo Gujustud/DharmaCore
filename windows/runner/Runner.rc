@@ -89,11 +89,11 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.example" "\0"
+            VALUE "CompanyName", "SS CADCAM" "\0"
             VALUE "FileDescription", "DharmaCore" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "DharmaCore" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.example. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 SS CADCAM. All rights reserved." "\0"
             VALUE "OriginalFilename", "DharmaCore.exe" "\0"
             VALUE "ProductName", "DharmaCore" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"

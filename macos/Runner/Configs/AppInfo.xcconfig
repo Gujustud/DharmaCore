@@ -8,7 +8,7 @@
 PRODUCT_NAME = DharmaCore
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.example.cribhub
+PRODUCT_BUNDLE_IDENTIFIER = com.sscadcam.dharmacore
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 com.example. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 SS CADCAM. All rights reserved.

@@ -18,7 +18,7 @@ import 'models.dart';
 /// Material labels: code / identity / length, QR = piece id.
 /// Android: Bluetooth via Brother SDK. Web/desktop Chrome: system print dialog.
 class LabelPrintService {
-  static const _channel = MethodChannel('com.cribhub/label_printer');
+  static const _channel = MethodChannel('com.sscadcam.dharmacore/label_printer');
 
   /// Build short bin code from location path (bin number only, e.g. A-A-1-4).
   /// [pathNames] = ordered list from root to leaf, e.g. ["Toolbox A", "Drawer A", "Row 1", "Bin 4"].

@@ -104,7 +104,7 @@ Output: `build\app\outputs\flutter-apk\app-release.apk`
 
 The script refreshes `lib\git_info.dart` first. After install, **About** shows Version, Built date, branch, and commit so you know which APK is on the tablet.
 
-Uninstall the old app on the tablet before sideloading if auth/cache looks stale.
+Application ID is `com.sscadcam.dharmacore`. Uninstall any old `com.example.cribhub` build before sideloading so Bitwarden / autofill see the new package.
 
 ---
 
