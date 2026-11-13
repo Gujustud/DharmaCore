@@ -3083,6 +3083,24 @@ class PocketBaseService {
     }
   }
 
+  /// Material IDs that currently have at least one on-shelf piece with length.
+  Future<Set<String>> getOnShelfMaterialIds() async {
+    try {
+      final records = await pb.collection('material_pieces').getFullList(
+        filter: 'status = "on_shelf" && length_in > 0',
+      );
+      final ids = <String>{};
+      for (final r in records) {
+        final mid = r.data['material']?.toString() ?? '';
+        if (mid.isNotEmpty) ids.add(mid);
+      }
+      return ids;
+    } catch (e) {
+      print('Error getting on-shelf material ids: $e');
+      rethrow;
+    }
+  }
+
   Future<dynamic> createMaterialPiece({
     required String materialId,
     required double lengthIn,

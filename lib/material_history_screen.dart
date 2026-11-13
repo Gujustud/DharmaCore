@@ -5,6 +5,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'add_purchase_screen.dart';
 import 'drawer_behavior.dart';
 import 'list_toolbar_widgets.dart';
+import 'material_form_icons.dart';
 import 'material_stock_dialogs.dart';
 import 'models.dart';
 import 'pocketbase_service.dart';
@@ -31,6 +32,10 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
   List<ShopMaterial> _filtered = [];
   /// materialId → distinct heat/lot values from purchase lines.
   Map<String, List<String>> _lotsByMaterialId = {};
+  /// Materials with at least one on-shelf piece (length > 0).
+  Set<String> _onShelfMaterialIds = {};
+  bool _onShelfIdsUnavailable = false;
+  bool _inStockOnly = false;
   ShopMaterial? _selected;
   List<dynamic> _historyRecords = [];
   List<MaterialPiece> _pieces = [];
@@ -59,16 +64,25 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     setState(() => _loading = true);
     try {
       final pb = PocketBaseService();
-      final results = await Future.wait([
-        pb.getMaterials(),
-        pb.getMaterialHeatLotsByMaterialId(),
-      ]);
-      final records = results[0] as List<dynamic>;
-      final lots = results[1] as Map<String, List<String>>;
+      final materialsFuture = pb.getMaterials();
+      final lotsFuture = pb.getMaterialHeatLotsByMaterialId();
+      Set<String> onShelfIds = {};
+      var onShelfUnavailable = false;
+      try {
+        onShelfIds = await pb.getOnShelfMaterialIds();
+      } catch (_) {
+        // material_pieces may not exist on this host yet.
+        onShelfUnavailable = true;
+      }
+      final records = await materialsFuture;
+      final lots = await lotsFuture;
       final list = records.map(ShopMaterial.fromRecord).toList();
       setState(() {
         _materials = list;
         _lotsByMaterialId = lots;
+        _onShelfMaterialIds = onShelfIds;
+        _onShelfIdsUnavailable = onShelfUnavailable;
+        if (onShelfUnavailable) _inStockOnly = false;
         _syncFilter(_searchController.text);
         // Refresh selected if it still exists.
         if (_selected != null) {
@@ -97,6 +111,20 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     }
   }
 
+  Future<void> _refreshOnShelfIds() async {
+    if (_onShelfIdsUnavailable) return;
+    try {
+      final ids = await PocketBaseService().getOnShelfMaterialIds();
+      if (!mounted) return;
+      setState(() {
+        _onShelfMaterialIds = ids;
+        _syncFilter(_searchController.text);
+      });
+    } catch (_) {
+      // Keep previous snapshot; detail pane still refreshes from pieces.
+    }
+  }
+
   List<String> _lotsFor(ShopMaterial m) =>
       _lotsByMaterialId[m.id] ?? const <String>[];
 
@@ -110,14 +138,19 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
 
   void _syncFilter(String query) {
     final q = query.trim().toLowerCase();
+    Iterable<ShopMaterial> source = _materials;
+    if (_inStockOnly && !_onShelfIdsUnavailable) {
+      source = source.where((m) => _onShelfMaterialIds.contains(m.id));
+    }
     if (q.isEmpty) {
-      _filtered = List.from(_materials);
+      _filtered = source.toList();
       _highlightHeatLot = null;
       return;
     }
-    _filtered = _materials.where((m) {
+    _filtered = source.where((m) {
       if (m.grade.toLowerCase().contains(q) ||
           m.form.toLowerCase().contains(q) ||
+          materialFormLabel(m.form).toLowerCase().contains(q) ||
           m.sizeLabel.toLowerCase().contains(q) ||
           m.displayLabel.toLowerCase().contains(q)) {
         return true;
@@ -134,6 +167,14 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
 
   void _applyFilter(String query) {
     setState(() => _syncFilter(query));
+  }
+
+  void _toggleInStockOnly() {
+    if (_onShelfIdsUnavailable) return;
+    setState(() {
+      _inStockOnly = !_inStockOnly;
+      _syncFilter(_searchController.text);
+    });
   }
 
   Future<void> _selectMaterial(ShopMaterial m) async {
@@ -399,6 +440,16 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
               : null,
         ),
       );
+      final inStockChip = _onShelfIdsUnavailable
+          ? null
+          : FilterChip(
+              label: const Text('In stock'),
+              selected: _inStockOnly,
+              onSelected: (_) => _toggleInStockOnly(),
+              showCheckmark: false,
+              visualDensity: VisualDensity.standard,
+              materialTapTargetSize: MaterialTapTargetSize.padded,
+            );
       final addButton = InventoryListActionButton(
         label: 'Add material',
         onPressed: _createMaterial,
@@ -409,13 +460,25 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
           children: [
             search,
             const SizedBox(height: 12),
-            addButton,
+            Row(
+              children: [
+                if (inStockChip != null) ...[
+                  inStockChip,
+                  const SizedBox(width: 12),
+                ],
+                Expanded(child: addButton),
+              ],
+            ),
           ],
         );
       }
       return Row(
         children: [
           Expanded(child: search),
+          if (inStockChip != null) ...[
+            const SizedBox(width: 12),
+            inStockChip,
+          ],
           const SizedBox(width: 12),
           addButton,
         ],
@@ -445,7 +508,10 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                         child: Text(
                           _materials.isEmpty
                               ? 'No materials yet.\nAdd one here, or from a purchase line.'
-                              : 'No materials match your search.',
+                              : _inStockOnly &&
+                                      _searchController.text.trim().isEmpty
+                                  ? 'Nothing in stock.\nTurn off In stock to see the full catalog.'
+                                  : 'No materials match your search.',
                           textAlign: TextAlign.center,
                           style: TextStyle(color: scheme.onSurfaceVariant),
                         ),
@@ -462,9 +528,10 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                             color:
                                 selected ? scheme.secondaryContainer : null,
                             child: ListTile(
-                              title: Text(
-                                _identityTitle(m),
-                                style: titleStyle,
+                              title: _buildListIdentityTitle(
+                                m,
+                                scheme,
+                                titleStyle,
                               ),
                               subtitle: matchedLot != null
                                   ? Text('Lot $matchedLot', style: muted)
@@ -621,8 +688,111 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     }
   }
 
-  /// Same wording as the sticker's first line: `1018 Flat 1 x 2.5 x 12`.
-  String _identityTitle(ShopMaterial m) => materialPieceLabelIdentityLine(m);
+  /// List row: bold grade, muted form, size on second line.
+  Widget _buildListIdentityTitle(
+    ShopMaterial m,
+    ColorScheme scheme,
+    TextStyle? base,
+  ) {
+    final grade = m.grade.trim();
+    final form = materialFormLabel(m.form);
+    final size = formatMaterialSizeForLabel(m.sizeLabel);
+    final muted = base?.copyWith(
+          color: scheme.onSurfaceVariant,
+          fontWeight: FontWeight.w400,
+        ) ??
+        TextStyle(color: scheme.onSurfaceVariant);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text.rich(
+          TextSpan(
+            style: base,
+            children: [
+              if (grade.isNotEmpty)
+                TextSpan(
+                  text: grade,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              if (grade.isNotEmpty && form.isNotEmpty)
+                TextSpan(text: '  ', style: muted),
+              if (form.isNotEmpty) TextSpan(text: form, style: muted),
+            ],
+          ),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        if (size.isNotEmpty) ...[
+          const SizedBox(height: 2),
+          Text(
+            size,
+            style: muted,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// Detail header: grade hero, form secondary, size on its own line.
+  Widget _buildDetailIdentityTitle(
+    ShopMaterial m,
+    ColorScheme scheme,
+    TextThemeData textTheme,
+  ) {
+    final grade = m.grade.trim();
+    final form = materialFormLabel(m.form);
+    final size = formatMaterialSizeForLabel(m.sizeLabel);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text.rich(
+          TextSpan(
+            children: [
+              if (grade.isNotEmpty)
+                TextSpan(
+                  text: grade,
+                  style: textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w600,
+                    height: 1.2,
+                  ),
+                ),
+              if (grade.isNotEmpty && form.isNotEmpty)
+                TextSpan(
+                  text: '  ·  ',
+                  style: textTheme.titleMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w400,
+                    height: 1.2,
+                  ),
+                ),
+              if (form.isNotEmpty)
+                TextSpan(
+                  text: form,
+                  style: textTheme.titleMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w500,
+                    height: 1.2,
+                  ),
+                ),
+            ],
+          ),
+        ),
+        if (size.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            size,
+            style: textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+              height: 1.2,
+              letterSpacing: 0.2,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
 
   /// Last / avg / $/in for the detail header price column. Null when no costs.
   _MaterialPriceSummary? _priceSummary(ShopMaterial m) {
@@ -685,13 +855,7 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      _identityTitle(selected),
-                      style: textTheme.titleLarge?.copyWith(
-                        fontWeight: FontWeight.w600,
-                        height: 1.2,
-                      ),
-                    ),
+                    _buildDetailIdentityTitle(selected, scheme, textTheme),
                     const SizedBox(height: 6),
                     _buildHeaderFacts(scheme, selected, mcmasterUrl),
                     if (notes.isNotEmpty && mcmasterUrl == null) ...[
@@ -943,6 +1107,7 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     );
     if (piece == null || _selected == null) return;
     await _selectMaterial(_selected!);
+    await _refreshOnShelfIds();
   }
 
   Future<void> _cutPiece(ShopMaterial material, MaterialPiece piece) async {
@@ -953,6 +1118,7 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     );
     if (updated == null || _selected == null) return;
     await _selectMaterial(_selected!);
+    await _refreshOnShelfIds();
   }
 
   Future<void> _editPiece(ShopMaterial material, MaterialPiece piece) async {
@@ -963,6 +1129,7 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     );
     if (updated == null || _selected == null) return;
     await _selectMaterial(_selected!);
+    await _refreshOnShelfIds();
   }
 
   Future<void> _scrapPiece(ShopMaterial material, MaterialPiece piece) async {
@@ -973,6 +1140,7 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     );
     if (!ok || _selected == null) return;
     await _selectMaterial(_selected!);
+    await _refreshOnShelfIds();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
