@@ -92,7 +92,7 @@ Future<void> printOrPreviewMaterialLabel(
         SnackBar(
           content: Text(
             kIsWeb
-                ? 'Opened system print — PT-P910BT, 18mm paper, short Length (not 100mm)'
+                ? 'Opened system print — PT-P910BT, 18mm, Length ${LabelPrintService.targetLabelLengthMm.round()} mm'
                 : 'Label sent to Brother printer',
           ),
           backgroundColor: Colors.green,

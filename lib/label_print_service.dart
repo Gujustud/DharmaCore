@@ -54,11 +54,18 @@ class LabelPrintService {
   /// Pixels across 18mm tape at Brother HIGH_RESOLUTION (~360 dpi / ~256 dots).
   static const int labelHeightPx = 256;
 
-  /// Max label length along the tape at 360 dpi (3.1 inches) so labels fit in bins.
-  static const int maxLabelWidthPx = 1116; // 3.1" × 360 dpi
+  /// Soft cap while laying out bitmaps (before PDF scales to [targetLabelLengthMm]).
+  static const int maxLabelWidthPx = 1600;
 
   static const double _tapeHeightMm = 18;
   static const double _dpi = 360;
+
+  /// Fixed along-tape length for the Windows / Chrome → Brother print path.
+  ///
+  /// Set the P910BT Printing Preferences **Length** once to this value (and
+  /// paper **18 mm**). The PDF page is always this long; long stickers scale
+  /// down to fit so the QR is never cropped by the driver Length setting.
+  static const double targetLabelLengthMm = 70;
 
   /// Trim trailing blank tape: keep ink + [rightPad] px only.
   static img.Image _cropLabelToContent(img.Image image, {int rightPad = 16}) {
@@ -245,10 +252,16 @@ class LabelPrintService {
       maxLines: 1 + nameLines.length,
     )..layout(maxWidth: maxLabelWidthPx.toDouble());
 
+    // Keep the QR fully on-canvas: text may ellipsis, never push QR off the right.
+    final reserved = leftMargin + gap + qrSize + rightMargin;
+    final textMax = math.max(40.0, maxLabelWidthPx - reserved);
+    if (textPainter.width > textMax) {
+      textPainter.layout(maxWidth: textMax);
+    }
     final textCol = textPainter.width;
     final computedWidth =
         (leftMargin + textCol + gap + qrSize + rightMargin).ceil();
-    final imageWidth = (width ?? computedWidth).clamp(0, maxLabelWidthPx);
+    final imageWidth = width ?? computedWidth;
 
     return _canvasLabelToPng(
       imageWidth: imageWidth,
@@ -269,18 +282,10 @@ class LabelPrintService {
     );
   }
 
-  /// Along-tape length in mm for a label bitmap (x = length, y = 18mm).
-  static double _labelLengthMm(img.Image src) {
-    // Hug content; keep a small floor so drivers accept the page.
-    return (src.width / _dpi * 25.4).clamp(28.0, 90.0);
-  }
-
-  static PdfPageFormat _labelPageFormat(img.Image src) {
-    final lengthMm = _labelLengthMm(src);
-    // Landscape: width = length along tape, height = 18mm tape width.
-    // Windows Brother prefs must also be 18mm (not 36mm); set Length short there too.
+  /// PDF / driver page: always [targetLabelLengthMm] × 18mm (landscape).
+  static PdfPageFormat _labelPageFormat() {
     return PdfPageFormat(
-      lengthMm * PdfPageFormat.mm,
+      targetLabelLengthMm * PdfPageFormat.mm,
       _tapeHeightMm * PdfPageFormat.mm,
       marginAll: 0,
     );
@@ -318,10 +323,7 @@ class LabelPrintService {
     Uint8List pngBytes, {
     required String jobName,
   }) async {
-    final decoded = img.decodePng(pngBytes);
-    final src = decoded ??
-        img.Image(width: maxLabelWidthPx, height: labelHeightPx);
-    final format = _labelPageFormat(src);
+    final format = _labelPageFormat();
     await Printing.layoutPdf(
       name: jobName,
       format: format,
@@ -331,18 +333,20 @@ class LabelPrintService {
 
   /// Wrap PNG in a PDF for the browser → Brother print dialog.
   ///
-  /// Page is landscape: along-tape length × 18mm (no rotate). That matches how
-  /// the bitmap is drawn and keeps Chrome from stretching a tall strip onto a
-  /// long fixed-length roll. Pick **18 mm** paper and a short **Length** in
-  /// Brother printing preferences (driver default 100mm wastes tape).
+  /// Page is always [targetLabelLengthMm] × 18mm. The sticker is
+  /// left-aligned and scaled to fit (never cropped) — set Brother
+  /// **Length** once to [targetLabelLengthMm] mm and leave it
+  /// (paper **18 mm**).
   static Future<Uint8List> _pngAsLabelPdf(Uint8List pngBytes) async {
-    final decoded = img.decodePng(pngBytes);
-    final src = decoded ??
-        img.Image(width: maxLabelWidthPx, height: labelHeightPx);
-    // Always size to the label; ignore letter/A4 if the dialog resets format.
-    final page = _labelPageFormat(src);
+    final page = _labelPageFormat();
     final pageW = page.width;
     final pageH = page.height;
+    final decoded = img.decodePng(pngBytes);
+    final srcW = (decoded?.width ?? maxLabelWidthPx).toDouble();
+    final srcH = (decoded?.height ?? labelHeightPx).toDouble();
+    final scale = math.min(pageW / srcW, pageH / srcH);
+    final drawW = srcW * scale;
+    final drawH = srcH * scale;
 
     final doc = pw.Document();
     final image = pw.MemoryImage(pngBytes);
@@ -350,10 +354,15 @@ class LabelPrintService {
       pw.Page(
         pageFormat: page,
         margin: pw.EdgeInsets.zero,
-        build: (_) => pw.SizedBox(
+        build: (_) => pw.Container(
           width: pageW,
           height: pageH,
-          child: pw.Image(image, fit: pw.BoxFit.fill),
+          alignment: pw.Alignment.centerLeft,
+          child: pw.SizedBox(
+            width: drawW,
+            height: drawH,
+            child: pw.Image(image, fit: pw.BoxFit.fill),
+          ),
         ),
       ),
     );
@@ -441,19 +450,24 @@ class LabelPrintService {
         trimLine(heatLotLine),
     ];
 
+    // Reserve space for gap + QR so long identity lines never shove the QR
+    // off the right edge of the bitmap (that showed up as a cut-off code).
+    final reserved = leftMargin + gap + qrSize + rightMargin;
+    final textMax = math.max(40.0, maxLabelWidthPx - reserved);
+
     final painters = <TextPainter>[
       for (final l in primary)
         _labelTextPainter(
           l,
           fontSize: primaryFontSize,
           weight: FontWeight.w700,
-        ),
+        )..layout(maxWidth: textMax),
       for (final l in meta)
         _labelTextPainter(
           l,
           fontSize: metaFontSize,
           weight: FontWeight.w400,
-        ),
+        )..layout(maxWidth: textMax),
     ];
 
     var textCol = 40.0;
@@ -467,7 +481,7 @@ class LabelPrintService {
 
     final computedWidth =
         (leftMargin + textCol + gap + qrSize + rightMargin).ceil();
-    final imageWidth = (width ?? computedWidth).clamp(0, maxLabelWidthPx);
+    final imageWidth = width ?? computedWidth;
     // Vertically center the text block on the tape.
     final textTop =
         ((imageHeight - textBlockH) / 2).clamp(0.0, imageHeight.toDouble());

@@ -4558,7 +4558,7 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
           SnackBar(
             content: Text(
               kIsWeb
-                  ? 'Opened system print — pick PT-P910BT, 18mm, short Length'
+                  ? 'Opened system print — PT-P910BT, 18mm, Length ${LabelPrintService.targetLabelLengthMm.round()} mm'
                   : 'Label sent to Brother printer',
             ),
             backgroundColor: Colors.green,
