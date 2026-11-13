@@ -6,6 +6,8 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Matrix
 import android.os.IBinder
 import android.util.Log
@@ -34,6 +36,13 @@ class BrotherPrintService : Service() {
 
         /** 18mm printable width @ Brother HIGH_RESOLUTION (~360 dpi). */
         private const val W18_HIGH_RES_DOTS = 256
+
+        /** Keep ink inside the printable band — PT heads clip the outer pins. */
+        private const val MARGIN_ACROSS_DOTS = 10
+
+        /** Leading / trailing pad along the tape (feed direction). */
+        private const val LEAD_PAD_DOTS = 14
+        private const val TRAIL_PAD_DOTS = 10
 
         fun jobsDir(context: Context): File =
             File(context.applicationContext.filesDir, "brother_jobs").apply { mkdirs() }
@@ -118,21 +127,21 @@ class BrotherPrintService : Service() {
             else -> PrinterInfo.Model.PT_P910BT
         }
 
-        // Flutter PNGs are landscape @ ~180dpi. Brother PT wants tape-width ×
-        // feed-length, and HIGH_RESOLUTION is 360dpi (~2× dots across 18mm).
-        // Without rotate+scale, text is sideways and/or only ~half tape height.
+        // Flutter PNGs are landscape. Brother PT wants tape-width × feed-length
+        // at HIGH_RESOLUTION (~360dpi). Rotate, then fit inside the printable
+        // band with margins so P710/P910 don't clip top/left text.
         val srcW = argb.width
         val srcH = argb.height
         val rotated = rotateLandscapeForPtTape(argb).also {
             if (it !== argb) argb.recycle()
         }
         val targetTapeDots = w18ImageAreaWidthDots(model)
-        val bitmap = scaleToTapeWidth(rotated, targetTapeDots).also {
+        val bitmap = fitToPrintableArea(rotated, targetTapeDots).also {
             if (it !== rotated) rotated.recycle()
         }
         Log.i(
             TAG,
-            "job=$jobId bitmap ${srcW}x${srcH} → ${bitmap.width}x${bitmap.height} (W18 dots=$targetTapeDots)",
+            "job=$jobId model=$modelName bitmap ${srcW}x${srcH} → ${bitmap.width}x${bitmap.height} (W18 dots=$targetTapeDots)",
         )
 
         val workDir = (getExternalFilesDir(null) ?: filesDir)
@@ -229,7 +238,7 @@ class BrotherPrintService : Service() {
 
     /**
      * Brother PT print head spans the tape width: bitmap width must be tape
-     * dots. Flutter labels are landscape — rotate 90° CW.
+     * dots. Flutter labels are landscape — rotate 90° CW so left→leading edge.
      */
     private fun rotateLandscapeForPtTape(src: Bitmap): Bitmap {
         if (src.width <= src.height) return src
@@ -256,12 +265,28 @@ class BrotherPrintService : Service() {
         return W18_HIGH_RES_DOTS
     }
 
-    private fun scaleToTapeWidth(src: Bitmap, targetWidth: Int): Bitmap {
-        // Only upscale — never shrink HR art; FIT_TO_PAPER fills remaining room.
-        if (targetWidth <= 0 || src.width >= targetWidth - 2) return src
-        val scale = targetWidth.toFloat() / src.width.toFloat()
-        val targetHeight = (src.height * scale).toInt().coerceAtLeast(1)
-        return Bitmap.createScaledBitmap(src, targetWidth, targetHeight, true)
+    /**
+     * Scale content into the printable band and pad with white so ink isn't
+     * clipped on the outer pins (top/bottom of the sticker) or at feed start
+     * (left of the sticker). Critical for P710BT which clips harder than P910.
+     */
+    private fun fitToPrintableArea(src: Bitmap, printableWidth: Int): Bitmap {
+        val width = printableWidth.coerceAtLeast(64)
+        val margin = MARGIN_ACROSS_DOTS.coerceAtMost((width / 2) - 1).coerceAtLeast(0)
+        val innerW = (width - margin * 2).coerceAtLeast(1)
+        val scale = innerW.toFloat() / src.width.toFloat()
+        val innerH = (src.height * scale).toInt().coerceAtLeast(1)
+        val scaled = if (src.width == innerW && src.height == innerH) {
+            src
+        } else {
+            Bitmap.createScaledBitmap(src, innerW, innerH, true)
+        }
+        val outH = innerH + LEAD_PAD_DOTS + TRAIL_PAD_DOTS
+        val out = Bitmap.createBitmap(width, outH, Bitmap.Config.ARGB_8888)
+        out.eraseColor(Color.WHITE)
+        Canvas(out).drawBitmap(scaled, margin.toFloat(), LEAD_PAD_DOTS.toFloat(), null)
+        if (scaled !== src) scaled.recycle()
+        return out
     }
 
     override fun onDestroy() {

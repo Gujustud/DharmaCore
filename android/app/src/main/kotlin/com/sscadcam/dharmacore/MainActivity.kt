@@ -25,9 +25,11 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val TAG = "DharmaLabelPrint"
         private const val REQUEST_BLUETOOTH_CONNECT = 9001
-        // Keep short: if :brother_print JNI-dies we shouldn't wait a full minute.
-        private const val PRINT_TIMEOUT_MS = 20_000L
+        /** Per-printer wait; keep short so we can try the other PT if this one is off. */
+        private const val PRINT_TIMEOUT_MS = 12_000L
         private const val POLL_MS = 200L
+        private const val PREFS = "brother_print"
+        private const val PREF_LAST_MAC = "last_mac"
     }
 
     private val executor = Executors.newSingleThreadExecutor()
@@ -144,8 +146,8 @@ class MainActivity : FlutterActivity() {
 
     /**
      * Orchestrates print in [BrotherPrintService] (`:brother_print` process).
-     * UI process only waits for a result file — JNI aborts kill the service
-     * process only, then we surface BROTHER_CRASH for Dart system-print fallback.
+     * Tries each paired Brother PT in priority order (connected first, then last-used)
+     * so whichever printer is powered on can take the job.
      */
     private fun runPrintViaService(pngBytes: ByteArray, result: MethodChannel.Result) {
         val replied = AtomicBoolean(false)
@@ -172,69 +174,92 @@ class MainActivity : FlutterActivity() {
                 error("PERMISSION_DENIED", "Bluetooth permission required for label printing")
                 return
             }
-            val pairedDevice = pickBrotherDevice(bonded)
-            if (pairedDevice == null) {
+            val devices = orderedBrotherDevices(bonded)
+            if (devices.isEmpty()) {
                 runOnUiThread { Toast.makeText(this, "No Brother/PT printer paired", Toast.LENGTH_LONG).show() }
-                error("NO_PRINTER", "Pair the PT-P910BT (or PT-P710BT) in Bluetooth settings first")
+                error("NO_PRINTER", "Pair a PT-P710BT or PT-P910BT in Bluetooth settings first")
                 return
             }
 
-            val deviceName = pairedDevice.name ?: ""
-            val modelName = when {
-                deviceName.contains("P710", ignoreCase = true) -> "PT_P710BT"
-                deviceName.contains("P715", ignoreCase = true) -> "PT_P715eBT"
-                else -> "PT_P910BT"
-            }
-
-            val jobId = UUID.randomUUID().toString()
             val jobsDir = BrotherPrintService.jobsDir(this)
-            val pngFile = File(jobsDir, "$jobId.png")
-            FileOutputStream(pngFile).use { it.write(pngBytes) }
-            val resultFile = BrotherPrintService.resultFile(this, jobId)
-            if (resultFile.exists()) resultFile.delete()
+            var lastCode = "NO_PRINTER"
+            var lastMessage: String? = "No Brother printer responded"
+            val tried = mutableListOf<String>()
 
-            Log.i(TAG, "starting BrotherPrintService job=$jobId model=$modelName mac=${pairedDevice.address}")
-            val intent = Intent(this, BrotherPrintService::class.java).apply {
-                action = BrotherPrintService.ACTION_PRINT
-                putExtra(BrotherPrintService.EXTRA_PNG_PATH, pngFile.absolutePath)
-                putExtra(BrotherPrintService.EXTRA_MAC, pairedDevice.address)
-                putExtra(BrotherPrintService.EXTRA_MODEL, modelName)
-                putExtra(BrotherPrintService.EXTRA_JOB_ID, jobId)
-            }
-            startService(intent)
+            for (device in devices) {
+                val deviceName = device.name ?: device.address
+                val modelName = modelNameFor(device)
+                tried.add("$deviceName ($modelName)")
 
-            val deadline = System.currentTimeMillis() + PRINT_TIMEOUT_MS
-            while (System.currentTimeMillis() < deadline) {
-                if (resultFile.isFile) {
-                    val lines = resultFile.readText().lines()
-                    val code = lines.firstOrNull()?.trim().orEmpty()
-                    val message = lines.drop(1).joinToString("\n").ifBlank { null }
+                val jobId = UUID.randomUUID().toString()
+                val pngFile = File(jobsDir, "$jobId.png")
+                FileOutputStream(pngFile).use { it.write(pngBytes) }
+                val resultFile = BrotherPrintService.resultFile(this, jobId)
+                if (resultFile.exists()) resultFile.delete()
+
+                Log.i(
+                    TAG,
+                    "starting BrotherPrintService job=$jobId model=$modelName mac=${device.address} connected=${isBluetoothConnected(device)}",
+                )
+                val intent = Intent(this, BrotherPrintService::class.java).apply {
+                    action = BrotherPrintService.ACTION_PRINT
+                    putExtra(BrotherPrintService.EXTRA_PNG_PATH, pngFile.absolutePath)
+                    putExtra(BrotherPrintService.EXTRA_MAC, device.address)
+                    putExtra(BrotherPrintService.EXTRA_MODEL, modelName)
+                    putExtra(BrotherPrintService.EXTRA_JOB_ID, jobId)
+                }
+                startService(intent)
+
+                val deadline = System.currentTimeMillis() + PRINT_TIMEOUT_MS
+                var finished = false
+                while (System.currentTimeMillis() < deadline) {
+                    if (resultFile.isFile) {
+                        val lines = resultFile.readText().lines()
+                        val code = lines.firstOrNull()?.trim().orEmpty()
+                        val message = lines.drop(1).joinToString("\n").ifBlank { null }
+                        try {
+                            resultFile.delete()
+                            pngFile.delete()
+                        } catch (_: Exception) {
+                        }
+                        finished = true
+                        if (code == "OK") {
+                            rememberLastMac(device.address)
+                            runOnUiThread {
+                                Toast.makeText(
+                                    this,
+                                    "Label sent to $deviceName",
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                            success()
+                            return
+                        }
+                        lastCode = code.ifBlank { "PRINT_FAILED" }
+                        lastMessage = message ?: "Print failed on $deviceName"
+                        // Try next paired Brother (this one may be off / out of range).
+                        Log.w(TAG, "printer $deviceName failed ($lastCode): $lastMessage — trying next if any")
+                        break
+                    }
+                    Thread.sleep(POLL_MS)
+                }
+
+                if (!finished) {
                     try {
-                        resultFile.delete()
                         pngFile.delete()
                     } catch (_: Exception) {
                     }
-                    if (code == "OK") {
-                        runOnUiThread {
-                            Toast.makeText(this, "Label sent to printer", Toast.LENGTH_SHORT).show()
-                        }
-                        success()
-                    } else {
-                        error(code.ifBlank { "PRINT_FAILED" }, message)
-                    }
-                    return
+                    lastCode = "BROTHER_CRASH"
+                    lastMessage =
+                        "$deviceName ($modelName) crashed or timed out. Make sure it is on and in range, then retry."
+                    Log.w(TAG, lastMessage!!)
                 }
-                Thread.sleep(POLL_MS)
             }
 
-            // No result → service hung or JNI-killed the :brother_print process.
-            try {
-                pngFile.delete()
-            } catch (_: Exception) {
-            }
+            val triedList = tried.joinToString(", ")
             error(
-                "BROTHER_CRASH",
-                "Brother print process crashed or timed out. PT-P910BT needs the Brother SDK (it will not appear in Android's system printer list).",
+                lastCode,
+                "${lastMessage ?: "Print failed"}. Tried: $triedList",
             )
         } catch (e: Throwable) {
             Log.e(TAG, "printLabel exception", e)
@@ -242,12 +267,55 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun pickBrotherDevice(bonded: Set<BluetoothDevice>): BluetoothDevice? {
-        return bonded.firstOrNull { device ->
-            (device.name ?: "").contains("P910", ignoreCase = true)
-        } ?: bonded.firstOrNull { device ->
-            val name = device.name ?: ""
-            name.contains("PT-", ignoreCase = true) || name.contains("Brother", ignoreCase = true)
+    /** Connected first, then last successful MAC, then name — no fixed P910 preference. */
+    private fun orderedBrotherDevices(bonded: Set<BluetoothDevice>): List<BluetoothDevice> {
+        val lastMac = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getString(PREF_LAST_MAC, null)
+            ?.uppercase()
+        val candidates = bonded.filter { isBrotherName(it.name) }
+        return candidates.sortedWith(
+            compareByDescending<BluetoothDevice> { isBluetoothConnected(it) }
+                .thenByDescending { it.address.equals(lastMac, ignoreCase = true) }
+                .thenBy { it.name ?: it.address },
+        )
+    }
+
+    private fun isBrotherName(name: String?): Boolean {
+        val n = name ?: return false
+        return n.contains("PT-", ignoreCase = true) ||
+            n.contains("Brother", ignoreCase = true) ||
+            n.contains("P910", ignoreCase = true) ||
+            n.contains("P710", ignoreCase = true) ||
+            n.contains("P715", ignoreCase = true)
+    }
+
+    private fun modelNameFor(device: BluetoothDevice): String {
+        val name = device.name ?: ""
+        return when {
+            name.contains("P710", ignoreCase = true) -> "PT_P710BT"
+            name.contains("P715", ignoreCase = true) -> "PT_P715eBT"
+            name.contains("P910", ignoreCase = true) -> "PT_P910BT"
+            else -> "PT_P910BT"
+        }
+    }
+
+    /** Best-effort "is this paired device currently connected?" (hidden API on many OEMs). */
+    private fun isBluetoothConnected(device: BluetoothDevice): Boolean {
+        return try {
+            val method = device.javaClass.getMethod("isConnected")
+            method.invoke(device) as? Boolean == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun rememberLastMac(mac: String) {
+        try {
+            getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .putString(PREF_LAST_MAC, mac)
+                .apply()
+        } catch (_: Exception) {
         }
     }
 
