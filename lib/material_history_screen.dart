@@ -739,7 +739,7 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
   Widget _buildDetailIdentityTitle(
     ShopMaterial m,
     ColorScheme scheme,
-    TextThemeData textTheme,
+    TextTheme textTheme,
   ) {
     final grade = m.grade.trim();
     final form = materialFormLabel(m.form);
