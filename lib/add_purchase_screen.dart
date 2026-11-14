@@ -144,7 +144,7 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
     final picked = await showDatePicker(
       context: context,
       initialDate: _purchaseDate,
-      firstDate: DateTime(2020),
+      firstDate: DateTime(2017),
       lastDate: DateTime.now().add(const Duration(days: 365)),
     );
     if (picked != null) {
