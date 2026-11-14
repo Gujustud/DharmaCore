@@ -33,11 +33,11 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
     ('planning', 'Planning'),
     ('in_progress', 'In progress'),
     ('done', 'Done'),
-    ('cancelled', 'Cancelled'),
+    ('cancelled', 'Cancel'),
   ];
 
   static const _trackingStatusOptions = [
-    ('not_shipped', 'Not shipped'),
+    ('not_shipped', 'Not yet'),
     ('in_transit', 'In transit'),
     ('delivered', 'Delivered'),
   ];
@@ -69,7 +69,6 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
   String? _quoteId;
   String? _shipToId;
   String? _materialSourceVendorId;
-  String? _packingSlipNumber;
   /// Linked purchase line for mill cert PDFs (`jobs.material_purchase_item`).
   String? _materialPurchaseItemId;
   MaterialLotPick? _materialLotPick;
@@ -148,8 +147,6 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
     _projectNotesController.text = '${d['project_notes'] ?? ''}';
     _shipToId = _relationId(d['ship_to']);
     _shipToOverrideController.text = '${d['ship_to_override'] ?? ''}';
-    _packingSlipNumber = '${d['packing_slip_number'] ?? ''}'.trim();
-    if (_packingSlipNumber!.isEmpty) _packingSlipNumber = null;
     _partImages = PartImagesPanel.normalizeFilenames(d['part_images']);
     _showTracking2 = _trackingNumber2Controller.text.trim().isNotEmpty;
     _showShipOverride = _shipToOverrideController.text.trim().isNotEmpty;
@@ -243,7 +240,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
     final hasLink = _materialPurchaseItemId != null;
     final label = lotText.isNotEmpty
         ? lotText
-        : (hasLink ? 'Linked lot' : 'Select heat/lot…');
+        : (hasLink ? 'Linked lot' : '');
     final subtitle = _materialLotPick == null
         ? null
         : [
@@ -287,17 +284,20 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: compact ? 14 : 15,
-                  color: lotText.isEmpty && !hasLink
-                      ? scheme.onSurfaceVariant
-                      : null,
-                  fontWeight:
-                      lotText.isNotEmpty ? FontWeight.w600 : FontWeight.w400,
-                ),
-              ),
+              if (label.isNotEmpty)
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: compact ? 14 : 15,
+                    color: lotText.isEmpty && !hasLink
+                        ? scheme.onSurfaceVariant
+                        : null,
+                    fontWeight:
+                        lotText.isNotEmpty ? FontWeight.w600 : FontWeight.w400,
+                  ),
+                )
+              else
+                SizedBox(height: compact ? 20 : 22),
               if (subtitle != null && subtitle.isNotEmpty) ...[
                 const SizedBox(height: 2),
                 Text(
@@ -945,7 +945,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
         borderRadius: BorderRadius.circular(6),
         onTap: () => setState(() => _status = value),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
             color: c.bg,
             borderRadius: BorderRadius.circular(6),
@@ -956,14 +956,19 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
           ),
           child: Text(
             label,
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: c.fg),
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: c.fg),
           ),
         ),
       ),
     );
   }
 
-  Widget _jobTrackingPill(BuildContext context, String value, String label) {
+  Widget _jobTrackingPill(
+    BuildContext context,
+    String value,
+    String label, {
+    bool expand = false,
+  }) {
     final selected = _trackingStatus == value;
     final dark = Theme.of(context).brightness == Brightness.dark;
     final c = _trackingPillPalette(value, dark);
@@ -973,7 +978,9 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
         borderRadius: BorderRadius.circular(6),
         onTap: () => setState(() => _trackingStatus = value),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          width: expand ? double.infinity : null,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          alignment: expand ? Alignment.center : null,
           decoration: BoxDecoration(
             color: c.bg,
             borderRadius: BorderRadius.circular(6),
@@ -984,7 +991,10 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
           ),
           child: Text(
             label,
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: c.fg),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: expand ? TextAlign.center : TextAlign.start,
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: c.fg),
           ),
         ),
       ),
@@ -1235,9 +1245,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
       if (!_isNew)
         _headerActionButton(
           context,
-          label: _packingSlipNumber == null
-              ? 'Packing slip'
-              : 'Packing slip ($_packingSlipNumber)',
+          label: 'Packing slip',
           onPressed: _isSaving ? null : _openPackingSlip,
         ),
       if (!AuthService.instance.isJobsOnly &&
@@ -1404,15 +1412,21 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
               ],
             ),
             const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
+            Text('Shipping', style: _notionLabelStyle(context)),
+            const SizedBox(height: 6),
+            Row(
               children: [
-                Text('Shipping', style: _notionLabelStyle(context)),
-                ..._trackingStatusOptions.map(
-                  (o) => _jobTrackingPill(context, o.$1, o.$2),
-                ),
+                for (var i = 0; i < _trackingStatusOptions.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 8),
+                  Expanded(
+                    child: _jobTrackingPill(
+                      context,
+                      _trackingStatusOptions[i].$1,
+                      _trackingStatusOptions[i].$2,
+                      expand: true,
+                    ),
+                  ),
+                ],
               ],
             ),
             const Divider(height: 28),
@@ -2119,12 +2133,6 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
               label: const Text('Add'),
             ),
           ],
-        ),
-        Text(
-          _quoteId != null && _quoteId!.isNotEmpty
-              ? 'Copied from the quote — delete any lines that were not ordered.'
-              : 'Parts for scheduling and packing slips.',
-          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
         ),
         const SizedBox(height: 8),
         if (_jobLines.isEmpty)

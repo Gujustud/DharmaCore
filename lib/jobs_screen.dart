@@ -351,19 +351,35 @@ class _JobsScreenState extends State<JobsScreen> with AutoOpenDrawerMixin {
     if (changed == true) _loadData();
   }
 
-  Widget _statCard(String label, String value) {
+  Widget _statCard(String label, String value, {bool compact = false}) {
     final muted = Theme.of(context).brightness == Brightness.dark
         ? const Color(0xFFD1D5DB)
         : const Color(0xFF4B5563);
     return QuoteSidebarCard(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 8 : 16,
+        vertical: compact ? 10 : 12,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(label, style: TextStyle(fontSize: 13, color: muted)),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: compact ? 11 : 13, color: muted),
+          ),
           const SizedBox(height: 2),
-          Text(value, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: compact ? 18 : 22,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
         ],
       ),
     );
@@ -372,40 +388,41 @@ class _JobsScreenState extends State<JobsScreen> with AutoOpenDrawerMixin {
   Widget _statsRow(int planning, int inProgress, int doneThisMonth, int doneThisYear) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        if (constraints.maxWidth >= 700) {
-          return IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(child: _statCard('Planning', '$planning')),
-                const SizedBox(width: 12),
-                Expanded(child: _statCard('In progress', '$inProgress')),
-                const SizedBox(width: 12),
-                Expanded(child: _statCard('Done this month', '$doneThisMonth')),
-                const SizedBox(width: 12),
-                Expanded(child: _statCard('Done this year', '$doneThisYear')),
-              ],
-            ),
-          );
-        }
-        return Column(
-          children: [
-            Row(
-              children: [
-                Expanded(child: _statCard('Planning', '$planning')),
-                const SizedBox(width: 12),
-                Expanded(child: _statCard('In progress', '$inProgress')),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(child: _statCard('Done this month', '$doneThisMonth')),
-                const SizedBox(width: 12),
-                Expanded(child: _statCard('Done this year', '$doneThisYear')),
-              ],
-            ),
-          ],
+        final compact = constraints.maxWidth < 700;
+        final gap = compact ? 8.0 : 12.0;
+        return IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: _statCard('Planning', '$planning', compact: compact),
+              ),
+              SizedBox(width: gap),
+              Expanded(
+                child: _statCard(
+                  compact ? 'Progress' : 'In progress',
+                  '$inProgress',
+                  compact: compact,
+                ),
+              ),
+              SizedBox(width: gap),
+              Expanded(
+                child: _statCard(
+                  compact ? 'Month' : 'Done this month',
+                  '$doneThisMonth',
+                  compact: compact,
+                ),
+              ),
+              SizedBox(width: gap),
+              Expanded(
+                child: _statCard(
+                  compact ? 'Year' : 'Done this year',
+                  '$doneThisYear',
+                  compact: compact,
+                ),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -582,6 +599,9 @@ class _JobsScreenState extends State<JobsScreen> with AutoOpenDrawerMixin {
                   onTap: () => _openJob(job),
                   child: Text(
                     jobNum.isEmpty ? '—' : jobNum,
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontWeight: FontWeight.w600,
                       color: QuoteSidebarTheme.primary(context),
@@ -606,7 +626,7 @@ class _JobsScreenState extends State<JobsScreen> with AutoOpenDrawerMixin {
               ),
               Expanded(
                 flex: 2,
-                child: Text(dueStr),
+                child: Text(dueStr, maxLines: 1, softWrap: false),
               ),
               Expanded(
                 flex: 2,
@@ -665,13 +685,112 @@ class _JobsScreenState extends State<JobsScreen> with AutoOpenDrawerMixin {
     );
   }
 
+  Widget _mobileJobCard(BuildContext context, dynamic job) {
+    final data = job.data as Map<String, dynamic>? ?? {};
+    final status = _str(data['status']);
+    final jobNum = _str(data['job_number']);
+    final due = _parseDue(data['due_date']);
+    final dueStr = due != null ? _dateDisplay.format(due) : '—';
+    final hasQuote = _expandedQuote(job) != null;
+    final border = _tableBorderColor(context);
+    final muted = Theme.of(context).brightness == Brightness.dark
+        ? const Color(0xFF9CA3AF)
+        : const Color(0xFF6B7280);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _openJob(job),
+        hoverColor: _tableHoverColor(context),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: border.withValues(alpha: 0.6))),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Text(
+                      jobNum.isEmpty ? '—' : jobNum,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: QuoteSidebarTheme.primary(context),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  _jobStatusBadge(status),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _customerDisplay(job),
+                style: const TextStyle(fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                [
+                  'Due $dueStr',
+                  if (hasQuote) _linkedQuoteLabel(job),
+                ].join(' · '),
+                style: TextStyle(fontSize: 13, color: muted),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  QuoteTableActionButton(
+                    label: 'View',
+                    onPressed: () => _openJob(job),
+                  ),
+                  QuoteTableActionButton(
+                    label: 'Pack',
+                    onPressed: () => _openPackingSlip(job),
+                  ),
+                  if (hasQuote)
+                    QuoteTableActionButton(
+                      label: 'Quote',
+                      onPressed: () => _openLinkedQuote(job),
+                    ),
+                  QuoteTableActionButton(
+                    label: 'Delete',
+                    danger: true,
+                    onPressed: () => _deleteJob(job),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _jobsTable(BuildContext context, List<dynamic> filtered) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _tableHeaderRow(context),
-        ...filtered.map((j) => _tableDataRow(context, j)),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final mobile = constraints.maxWidth < 700;
+        if (mobile) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: filtered.map((j) => _mobileJobCard(context, j)).toList(),
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _tableHeaderRow(context),
+            ...filtered.map((j) => _tableDataRow(context, j)),
+          ],
+        );
+      },
     );
   }
 

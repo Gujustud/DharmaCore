@@ -274,19 +274,35 @@ class _CombinedHomeScreenState extends State<CombinedHomeScreen> with AutoOpenDr
     });
   }
 
-  Widget _statCard(String label, String value) {
+  Widget _statCard(String label, String value, {bool compact = false}) {
     final muted = Theme.of(context).brightness == Brightness.dark
         ? const Color(0xFFD1D5DB)
         : const Color(0xFF4B5563);
     return Card(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 8 : 16,
+          vertical: compact ? 10 : 12,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(label, style: TextStyle(fontSize: 13, color: muted)),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: compact ? 11 : 13, color: muted),
+            ),
             const SizedBox(height: 2),
-            Text(value, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: compact ? 18 : 22,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ],
         ),
       ),
@@ -660,44 +676,35 @@ class _CombinedHomeScreenState extends State<CombinedHomeScreen> with AutoOpenDr
   }) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final wide = constraints.maxWidth >= 360;
-        if (wide) {
-          return Column(
+        final compact = constraints.maxWidth < 700;
+        final gap = compact ? 8.0 : 12.0;
+        return IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              IntrinsicHeight(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(child: _statCard('Active', '$active')),
-                    const SizedBox(width: 12),
-                    Expanded(child: _statCard('In progress', '$inProgress')),
-                  ],
+              Expanded(
+                child: _statCard('Active', '$active', compact: compact),
+              ),
+              SizedBox(width: gap),
+              Expanded(
+                child: _statCard(
+                  compact ? 'Progress' : 'In progress',
+                  '$inProgress',
+                  compact: compact,
                 ),
               ),
-              const SizedBox(height: 12),
-              IntrinsicHeight(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(child: _statCard('Done', '$done')),
-                    const SizedBox(width: 12),
-                    Expanded(child: _statCard('This Month', '$doneThisMonth')),
-                  ],
+              SizedBox(width: gap),
+              Expanded(child: _statCard('Done', '$done', compact: compact)),
+              SizedBox(width: gap),
+              Expanded(
+                child: _statCard(
+                  compact ? 'Month' : 'This Month',
+                  '$doneThisMonth',
+                  compact: compact,
                 ),
               ),
             ],
-          );
-        }
-        return Column(
-          children: [
-            _statCard('Active', '$active'),
-            const SizedBox(height: 12),
-            _statCard('In progress', '$inProgress'),
-            const SizedBox(height: 12),
-            _statCard('Done', '$done'),
-            const SizedBox(height: 12),
-            _statCard('This Month', '$doneThisMonth'),
-          ],
+          ),
         );
       },
     );

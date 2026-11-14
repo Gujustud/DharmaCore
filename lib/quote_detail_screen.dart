@@ -728,40 +728,34 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
               ],
             ),
             const SizedBox(height: 12),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                Expanded(
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      ..._statusOptions.map((o) {
-                        final selected = (q['status'] ?? 'draft') == o.$1;
-                        return ChoiceChip(
-                          label: Text(o.$2),
-                          selected: selected,
-                          onSelected: (_) => _patchQuote({'status': o.$1}),
-                        );
-                      }),
-                      if ((q['status'] ?? 'draft') == 'won' && _jobId != null)
-                        OutlinedButton(
-                          onPressed: _openLinkedJob,
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                            visualDensity: VisualDensity.compact,
-                          ),
-                          child: const Text('View Job'),
-                        ),
-                    ],
+                ..._statusOptions.map((o) {
+                  final selected = (q['status'] ?? 'draft') == o.$1;
+                  return ChoiceChip(
+                    label: Text(o.$2),
+                    selected: selected,
+                    onSelected: (_) => _patchQuote({'status': o.$1}),
+                  );
+                }),
+                if ((q['status'] ?? 'draft') == 'won' && _jobId != null)
+                  OutlinedButton(
+                    onPressed: _openLinkedJob,
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    child: const Text('View Job'),
                   ),
-                ),
-                Text(
-                  'Quote created date: ${_quoteCreatedLabel() ?? '—'}',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-                ),
               ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Quote created date: ${_quoteCreatedLabel() ?? '—'}',
+              style: TextStyle(fontSize: 12, color: Colors.grey[700]),
             ),
           ],
         ),

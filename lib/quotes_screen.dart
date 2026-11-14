@@ -574,6 +574,42 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
     );
   }
 
+  Widget _quoteOverflowMenu(dynamic q, String status, bool copying) {
+    return PopupMenuButton<String>(
+      tooltip: 'More',
+      padding: EdgeInsets.zero,
+      onSelected: (v) {
+        if (v == 'copy' && !copying) {
+          _copyQuote(q);
+        } else if (v == 'job') {
+          _viewJob(q.id as String);
+        } else if (v == 'delete') {
+          _deleteQuote(q);
+        }
+      },
+      itemBuilder: (_) => [
+        PopupMenuItem(
+          value: 'copy',
+          enabled: !copying,
+          child: Text(copying ? 'Copying…' : 'Copy quote'),
+        ),
+        if (status == 'won')
+          const PopupMenuItem(
+            value: 'job',
+            child: Text('View job'),
+          ),
+        const PopupMenuItem(
+          value: 'delete',
+          child: Text(
+            'Delete quote',
+            style: TextStyle(color: Colors.red),
+          ),
+        ),
+      ],
+      icon: const Icon(Icons.more_vert, size: 20),
+    );
+  }
+
   Widget _tableDataRow(BuildContext context, dynamic q) {
     final data = q.data as Map<String, dynamic>? ?? {};
     final status = _str(data['status']);
@@ -598,6 +634,9 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
                 flex: 2,
                 child: Text(
                   job.isEmpty ? '—' : job,
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontWeight: FontWeight.w600,
                     color: QuoteSidebarTheme.primary(context),
@@ -623,6 +662,9 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
                 flex: 2,
                 child: Text(
                   _showTotals ? _formatCurrency(data['final_total_cad']) : '—',
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     fontFeatures: [FontFeature.tabularFigures()],
                   ),
@@ -630,39 +672,7 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
               ),
               SizedBox(
                 width: 40,
-                child: PopupMenuButton<String>(
-                  tooltip: 'More',
-                  padding: EdgeInsets.zero,
-                  onSelected: (v) {
-                    if (v == 'copy' && !copying) {
-                      _copyQuote(q);
-                    } else if (v == 'job') {
-                      _viewJob(q.id as String);
-                    } else if (v == 'delete') {
-                      _deleteQuote(q);
-                    }
-                  },
-                  itemBuilder: (_) => [
-                    PopupMenuItem(
-                      value: 'copy',
-                      enabled: !copying,
-                      child: Text(copying ? 'Copying…' : 'Copy quote'),
-                    ),
-                    if (status == 'won')
-                      const PopupMenuItem(
-                        value: 'job',
-                        child: Text('View job'),
-                      ),
-                    const PopupMenuItem(
-                      value: 'delete',
-                      child: Text(
-                        'Delete quote',
-                        style: TextStyle(color: Colors.red),
-                      ),
-                    ),
-                  ],
-                  icon: const Icon(Icons.more_vert, size: 20),
-                ),
+                child: _quoteOverflowMenu(q, status, copying),
               ),
             ],
           ),
@@ -671,13 +681,106 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
     );
   }
 
+  Widget _mobileQuoteCard(BuildContext context, dynamic q) {
+    final data = q.data as Map<String, dynamic>? ?? {};
+    final status = _str(data['status']);
+    final job = _str(data['job_number']);
+    final copying = _copyingId == q.id;
+    final border = _tableBorderColor(context);
+    final total = _showTotals ? _formatCurrency(data['final_total_cad']) : '—';
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        hoverColor: _tableHoverColor(context),
+        onTap: () => _openQuote(q),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: border.withValues(alpha: 0.6))),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            job.isEmpty ? '—' : job,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: QuoteSidebarTheme.primary(context),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        _statusBadge(status),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _customerDisplay(q),
+                      style: const TextStyle(fontWeight: FontWeight.w500),
+                    ),
+                    if (_showTotals) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        total,
+                        style: const TextStyle(
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              _quoteOverflowMenu(q, status, copying),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _quotesTable(BuildContext context, List<dynamic> filtered) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _tableHeaderRow(context),
-        ...filtered.map((q) => _tableDataRow(context, q)),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final mobile = constraints.maxWidth < 700;
+        if (mobile) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Align(
+                alignment: Alignment.centerRight,
+                child: IconButton(
+                  icon: Icon(
+                    _showTotals
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
+                    size: 18,
+                  ),
+                  onPressed: () => setState(() => _showTotals = !_showTotals),
+                  tooltip: _showTotals ? 'Hide totals' : 'Show totals',
+                ),
+              ),
+              ...filtered.map((q) => _mobileQuoteCard(context, q)),
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _tableHeaderRow(context),
+            ...filtered.map((q) => _tableDataRow(context, q)),
+          ],
+        );
+      },
     );
   }
 

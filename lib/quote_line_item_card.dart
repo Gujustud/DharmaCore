@@ -679,11 +679,10 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (widget.dragHandle != null) widget.dragHandle!,
-                Padding(
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final narrow = constraints.maxWidth < 640;
+                final partLabel = Padding(
                   padding: const EdgeInsets.only(top: 12),
                   child: Text(
                     'Part ${widget.lineIndex + 1}',
@@ -692,60 +691,90 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                       color: Colors.grey[700],
                     ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 2,
-                  child: TextField(
-                    controller: _partNumber,
-                    decoration: _dec('Part number'),
-                    onChanged: (v) => _patch({'part_number': v}),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 72,
-                  child: TextField(
-                    controller: _partQty,
-                    decoration: _dec('Qty'),
-                    keyboardType: TextInputType.number,
-                    onChanged: (v) {
-                      if (v.isEmpty) {
-                        _patch({'part_quantity': null});
-                        return;
-                      }
-                      final n = int.tryParse(v) ?? double.tryParse(v);
-                      if (n != null && n >= 0) _patch({'part_quantity': n});
-                    },
-                  ),
-                ),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 100,
-                  child: TextField(
-                    controller: _qpp,
-                    decoration: _dec('QPP'),
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    onChanged: (v) {
-                      if (v.trim().isEmpty) {
-                        _patch({'quote_part_price_cad': null});
-                        return;
-                      }
-                      final n = double.tryParse(v);
-                      if (n != null && n >= 0) {
-                        _patch({'quote_part_price_cad': quoteRound2(n)});
-                      }
-                    },
-                  ),
-                ),
-                IconButton(
+                );
+                final partNumberField = TextField(
+                  controller: _partNumber,
+                  decoration: _dec('Part number'),
+                  onChanged: (v) => _patch({'part_number': v}),
+                );
+                final qtyField = TextField(
+                  controller: _partQty,
+                  decoration: _dec('Qty'),
+                  keyboardType: TextInputType.number,
+                  onChanged: (v) {
+                    if (v.isEmpty) {
+                      _patch({'part_quantity': null});
+                      return;
+                    }
+                    final n = int.tryParse(v) ?? double.tryParse(v);
+                    if (n != null && n >= 0) _patch({'part_quantity': n});
+                  },
+                );
+                final qppField = TextField(
+                  controller: _qpp,
+                  decoration: _dec('QPP'),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  onChanged: (v) {
+                    if (v.trim().isEmpty) {
+                      _patch({'quote_part_price_cad': null});
+                      return;
+                    }
+                    final n = double.tryParse(v);
+                    if (n != null && n >= 0) {
+                      _patch({'quote_part_price_cad': quoteRound2(n)});
+                    }
+                  },
+                );
+                final expandBtn = IconButton(
                   icon: Icon(
                       _detailsOpen ? Icons.expand_less : Icons.expand_more),
-                  onPressed: () => setState(() => _detailsOpen = !_detailsOpen),
+                  onPressed: () =>
+                      setState(() => _detailsOpen = !_detailsOpen),
                   tooltip: _detailsOpen ? 'Hide details' : 'Show details',
-                ),
-              ],
+                );
+
+                if (narrow) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (widget.dragHandle != null) widget.dragHandle!,
+                          partLabel,
+                          const SizedBox(width: 12),
+                          Expanded(child: partNumberField),
+                          expandBtn,
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          SizedBox(width: 72, child: qtyField),
+                          const SizedBox(width: 8),
+                          Expanded(child: qppField),
+                        ],
+                      ),
+                    ],
+                  );
+                }
+
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (widget.dragHandle != null) widget.dragHandle!,
+                    partLabel,
+                    const SizedBox(width: 12),
+                    Expanded(flex: 2, child: partNumberField),
+                    const SizedBox(width: 8),
+                    SizedBox(width: 72, child: qtyField),
+                    const SizedBox(width: 8),
+                    SizedBox(width: 100, child: qppField),
+                    expandBtn,
+                  ],
+                );
+              },
             ),
             if (_detailsOpen) ...[
               const SizedBox(height: 8),
