@@ -1,0 +1,24 @@
+---
+description: DharmaCore live shop web deploy — always paste full PowerShell commands
+alwaysApply: true
+---
+
+# Shop web deploy (CT 105 / dharmacore)
+
+When telling the user how to deploy the live shop web app, ALWAYS paste the full PowerShell block below in the reply. Never say "the usual scp/ssh", "deploy as usual", or any shorthand that omits the commands. The user should not have to ask for the full deploy steps.
+
+## Full deploy block (Windows laptop PowerShell)
+
+```
+cd c:\cribhub
+git pull
+.\scripts\build_web_shop.ps1
+scp C:\cribhub\deploy\shop-web.zip root@192.168.20.101:/root/
+ssh root@192.168.20.101 "rm -rf /opt/pocketbase-erp-dev/pb_public/* && unzip -o /root/shop-web.zip -d /opt/pocketbase-erp-dev/pb_public/ && ls /opt/pocketbase-erp-dev/pb_public/index.html /opt/pocketbase-erp-dev/pb_public/main.dart.js"
+```
+
+Then hard-refresh (or clear site data for) https://dharmacore.sscadcam.com/.
+
+Also name the expected Build Info commit when a specific commit was just pushed.
+
+Canonical long-form notes: DEPLOY_SHOP.md
