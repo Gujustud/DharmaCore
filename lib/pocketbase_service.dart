@@ -3115,13 +3115,11 @@ class PocketBaseService {
         final piece = MaterialPiece.fromRecord(r);
         ShopMaterial? material;
         try {
-          final expanded = r.expand?['material'];
-          dynamic matRec;
-          if (expanded is List && expanded.isNotEmpty) {
-            matRec = expanded.first;
-          } else if (expanded != null) {
-            matRec = expanded;
-          }
+          // Cast through dynamic: PB expand values are List<RecordModel>?.
+          final dynamic expanded = r.expand?['material'];
+          final dynamic matRec = (expanded is List && expanded.isNotEmpty)
+              ? expanded.first
+              : expanded;
           if (matRec != null) {
             material = ShopMaterial.fromRecord(matRec);
           }
