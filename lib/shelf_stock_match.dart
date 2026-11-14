@@ -29,13 +29,19 @@ class ShelfStockCandidate {
   String get identityLine {
     final grade = material.grade.trim();
     final form = materialFormLabel(material.form);
-    final size = formatMaterialSizeForLabel(material.sizeLabel);
+    // Cross-section only — catalog bar length is noise next to REM.
+    final cross = crossSectionDims(parseSizeNumbers(material.sizeLabel));
+    final size = cross.isEmpty
+        ? formatMaterialSizeForLabel(material.sizeLabel)
+        : cross.map(formatInchesValue).join(' x ');
     return [
       if (grade.isNotEmpty) grade,
       form,
       if (size.isNotEmpty) size,
     ].join(' ');
   }
+
+  bool get isExactSize => matchLabel == 'Exact size';
 
   String get shelfRefLine {
     final lot = (piece.heatLot ?? '').trim();
@@ -72,6 +78,25 @@ double? neededLengthFromSize(List<double> dims) {
 bool remCoversLength(double remIn, double? needLengthIn) {
   if (needLengthIn == null || needLengthIn <= 0) return true;
   return remIn + 0.001 >= needLengthIn;
+}
+
+/// Total REM inches needed for [pieces] blanks of [cutLengthIn], with saw kerf.
+/// Uses the same cut plan as the stock cut dialog.
+double? remNeededForCuts({
+  required double? cutLengthIn,
+  int pieces = 1,
+  double kerfIn = kDefaultSawKerfIn,
+}) {
+  if (cutLengthIn == null || cutLengthIn <= 0) return null;
+  final qty = pieces < 1 ? 1 : pieces;
+  // Large shelf so [fits] is about consumption, not fit against a real bar.
+  final plan = MaterialCutPlan.compute(
+    onShelfIn: cutLengthIn * qty + kerfIn * qty + 1,
+    cutLengthIn: cutLengthIn,
+    quantity: qty,
+    kerfIn: kerfIn,
+  );
+  return plan.usedIn;
 }
 
 /// True when [have] can yield [need]: every needed cross-section dim fits in
@@ -121,14 +146,16 @@ Future<List<ShelfStockCandidate>> loadShelfStockCandidates({
   required String stockSizeQuery,
   String? alloyHint,
   double? minLengthIn,
+  int pieces = 1,
 }) async {
   final pb = PocketBaseService();
   final pieceRecords = await pb.getOnShelfPiecesExpanded();
   final need = parseSizeNumbers(stockSizeQuery);
   final alloyQ = (alloyHint ?? '').trim().toLowerCase();
-  // Prefer length from stock size (…×20); else ordered-length / explicit min.
-  final needLen = neededLengthFromSize(need) ??
+  // Prefer length from stock size (…×5); else ordered-length / explicit min.
+  final cutLen = neededLengthFromSize(need) ??
       (minLengthIn != null && minLengthIn > 0 ? minLengthIn : null);
+  final needLen = remNeededForCuts(cutLengthIn: cutLen, pieces: pieces);
 
   // Last unit cost by material (newest first from purchase history).
   final costCache = <String, ({double? unit, double? perInch})>{};
@@ -205,6 +232,7 @@ Future<ShelfStockCandidate?> showFindShelfStockDialog(
   required String stockSizeQuery,
   String? alloyHint,
   double? minLengthIn,
+  int pieces = 1,
 }) async {
   return showDialog<ShelfStockCandidate>(
     context: context,
@@ -212,6 +240,7 @@ Future<ShelfStockCandidate?> showFindShelfStockDialog(
       stockSizeQuery: stockSizeQuery,
       alloyHint: alloyHint,
       minLengthIn: minLengthIn,
+      pieces: pieces,
     ),
   );
 }
@@ -220,11 +249,13 @@ class _FindShelfStockDialog extends StatefulWidget {
   final String stockSizeQuery;
   final String? alloyHint;
   final double? minLengthIn;
+  final int pieces;
 
   const _FindShelfStockDialog({
     required this.stockSizeQuery,
     this.alloyHint,
     this.minLengthIn,
+    this.pieces = 1,
   });
 
   @override
@@ -252,6 +283,7 @@ class _FindShelfStockDialogState extends State<_FindShelfStockDialog> {
         stockSizeQuery: widget.stockSizeQuery,
         alloyHint: widget.alloyHint,
         minLengthIn: widget.minLengthIn,
+        pieces: widget.pieces,
       );
       if (!mounted) return;
       setState(() {
@@ -265,6 +297,32 @@ class _FindShelfStockDialogState extends State<_FindShelfStockDialog> {
         _loading = false;
       });
     }
+  }
+
+  double? get _needRem {
+    final need = parseSizeNumbers(widget.stockSizeQuery);
+    final cut = neededLengthFromSize(need) ?? widget.minLengthIn;
+    return remNeededForCuts(cutLengthIn: cut, pieces: widget.pieces);
+  }
+
+  String get _needSummary {
+    final sizeQ = widget.stockSizeQuery.trim();
+    final rem = _needRem;
+    final pcs = widget.pieces < 1 ? 1 : widget.pieces;
+    if (rem == null || rem <= 0) {
+      return 'Matches for $sizeQ (stock size unchanged)';
+    }
+    final pcsBit = pcs > 1 ? ' · $pcs pcs' : '';
+    return 'Matches for $sizeQ$pcsBit with REM ≥ ${formatInchesValue(rem)} (stock size unchanged)';
+  }
+
+  String get _emptySummary {
+    final sizeQ = widget.stockSizeQuery.trim();
+    final rem = _needRem;
+    if (rem != null && rem > 0) {
+      return 'No on-shelf pieces cover "$sizeQ" with REM ≥ ${formatInchesValue(rem)}.';
+    }
+    return 'No on-shelf pieces match "$sizeQ".';
   }
 
   @override
@@ -288,16 +346,7 @@ class _FindShelfStockDialogState extends State<_FindShelfStockDialog> {
                     ? Text(
                         sizeQ.isEmpty
                             ? 'Enter a stock size per part first, then search the shelf.'
-                            : () {
-                                final need =
-                                    parseSizeNumbers(widget.stockSizeQuery);
-                                final len = neededLengthFromSize(need) ??
-                                    widget.minLengthIn;
-                                if (len != null && len > 0) {
-                                  return 'No on-shelf pieces cover "$sizeQ" with REM ≥ ${formatInchesValue(len)}.';
-                                }
-                                return 'No on-shelf pieces match "$sizeQ".';
-                              }(),
+                            : _emptySummary,
                         style: TextStyle(color: scheme.onSurfaceVariant),
                       )
                     : Column(
@@ -305,18 +354,7 @@ class _FindShelfStockDialogState extends State<_FindShelfStockDialog> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Text(
-                            sizeQ.isEmpty
-                                ? 'On-shelf pieces'
-                                : () {
-                                    final need = parseSizeNumbers(
-                                        widget.stockSizeQuery);
-                                    final len = neededLengthFromSize(need) ??
-                                        widget.minLengthIn;
-                                    if (len != null && len > 0) {
-                                      return 'Matches for $sizeQ with REM ≥ ${formatInchesValue(len)} (stock size unchanged)';
-                                    }
-                                    return 'Matches for $sizeQ (stock size is unchanged)';
-                                  }(),
+                            sizeQ.isEmpty ? 'On-shelf pieces' : _needSummary,
                             style: TextStyle(
                               fontSize: 12,
                               color: scheme.onSurfaceVariant,
@@ -337,15 +375,30 @@ class _FindShelfStockDialogState extends State<_FindShelfStockDialog> {
                                     : c.lastUnitCost != null
                                         ? 'Last ${money.format(c.lastUnitCost)}'
                                         : null;
+                                final rest = [
+                                  c.shelfRefLine,
+                                  if (costHint != null) costHint,
+                                ].join(' · ');
                                 return ListTile(
                                   contentPadding: EdgeInsets.zero,
                                   title: Text(c.identityLine),
-                                  subtitle: Text(
-                                    [
-                                      c.matchLabel,
-                                      c.shelfRefLine,
-                                      if (costHint != null) costHint,
-                                    ].join(' · '),
+                                  subtitle: Text.rich(
+                                    TextSpan(
+                                      style: TextStyle(
+                                        color: scheme.onSurfaceVariant,
+                                      ),
+                                      children: [
+                                        TextSpan(
+                                          text: c.matchLabel,
+                                          style: c.isExactSize
+                                              ? const TextStyle(
+                                                  fontWeight: FontWeight.w700,
+                                                )
+                                              : null,
+                                        ),
+                                        TextSpan(text: ' · $rest'),
+                                      ],
+                                    ),
                                   ),
                                   trailing: const Icon(Icons.chevron_right),
                                   onTap: () => Navigator.pop(context, c),

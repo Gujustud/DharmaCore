@@ -38,4 +38,16 @@ void main() {
       expect(remCoversLength(17.75, null), isTrue);
     });
   });
+
+  group('remNeededForCuts', () {
+    test('scales with pieces and includes kerf', () {
+      final one = remNeededForCuts(cutLengthIn: 5, pieces: 1)!;
+      final five = remNeededForCuts(cutLengthIn: 5, pieces: 5)!;
+      expect(one, greaterThanOrEqualTo(5));
+      expect(five, greaterThan(one));
+      expect(five, closeTo(5 * 5 + 5 * 0.125, 0.01));
+      expect(remCoversLength(17.75, five), isFalse);
+      expect(remCoversLength(101, five), isTrue);
+    });
+  });
 }

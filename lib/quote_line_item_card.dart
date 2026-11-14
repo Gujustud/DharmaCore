@@ -315,6 +315,10 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
     if (source != 'shop_stock') {
       updates.addAll(_clearedShelfFields());
       _materialNote.text = updates['material_note'] as String? ?? '';
+    } else {
+      // Shop stock cuts from REM — ordered length is buy-only.
+      updates['ordered_length'] = '';
+      _orderedLength.text = '';
     }
     _patch(updates);
   }
@@ -411,12 +415,14 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
     final orderedLen = double.tryParse(
       _orderedLength.text.trim().replaceAll(RegExp(r'[^0-9.]'), ''),
     );
+    final pcs = int.tryParse(_pieces.text.trim()) ?? 1;
     final picked = await showFindShelfStockDialog(
       context,
       stockSizeQuery: sizeQ,
       alloyHint: _alloy.text.trim().isEmpty ? null : _alloy.text.trim(),
-      // Used when stock size is only cross-section (e.g. 1×4); ×L in size wins.
+      // Fallback cut length when stock size is only cross-section (e.g. 1×4).
       minLengthIn: orderedLen,
+      pieces: pcs < 1 ? 1 : pcs,
     );
     if (picked == null || !mounted) return;
     _applyShelfCandidate(picked);
@@ -431,12 +437,14 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
     );
     _materialNote.text = note;
 
+    _orderedLength.text = '';
     final updates = <String, dynamic>{
       'alloy': c.material.grade,
       'material': c.material.id,
       'material_source': 'shop_stock',
       'vendor_supplied': 'no',
       'material_vendor': null,
+      'ordered_length': '',
       'shelf_piece_id': c.piece.id,
       'shelf_piece_code': materialLabelCodeForSticker(c.piece.labelCode),
       'shelf_piece_rem': c.piece.lengthIn,
@@ -827,11 +835,25 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
+                          flex: 3,
                           child: TextField(
                             controller: _stockSize,
                             decoration: _dec('Stock size per part'),
                             onChanged: (v) =>
                                 _patch({'stock_size_per_part': v}),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 88,
+                          child: TextField(
+                            controller: _pieces,
+                            decoration: _dec('Pieces'),
+                            keyboardType: TextInputType.number,
+                            onChanged: (v) {
+                              final n = int.tryParse(v);
+                              _patch({'pieces': n});
+                            },
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -884,31 +906,14 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                         ],
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _orderedLength,
-                            decoration: _dec('Ordered length'),
-                            onChanged: (v) =>
-                                _patch({'ordered_length': v}),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: TextField(
-                            controller: _pieces,
-                            decoration: _dec('Pieces'),
-                            keyboardType: TextInputType.number,
-                            onChanged: (v) {
-                              final n = int.tryParse(v);
-                              _patch({'pieces': n});
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
+                    if (quoteMaterialSourceOf(item) != 'shop_stock') ...[
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: _orderedLength,
+                        decoration: _dec('Ordered length'),
+                        onChanged: (v) => _patch({'ordered_length': v}),
+                      ),
+                    ],
                     const SizedBox(height: 8),
                     Text('Material source',
                         style: TextStyle(
