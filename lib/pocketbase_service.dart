@@ -3101,6 +3101,47 @@ class PocketBaseService {
     }
   }
 
+  /// On-shelf pieces with catalog material expand (for quote Find on shelf).
+  Future<List<({MaterialPiece piece, ShopMaterial material})>>
+      getOnShelfPiecesExpanded() async {
+    try {
+      final records = await pb.collection('material_pieces').getFullList(
+        filter: 'status = "on_shelf" && length_in > 0',
+        expand: 'material',
+        sort: '-length_in',
+      );
+      final out = <({MaterialPiece piece, ShopMaterial material})>[];
+      for (final r in records) {
+        final piece = MaterialPiece.fromRecord(r);
+        ShopMaterial? material;
+        try {
+          final expanded = r.expand?['material'];
+          dynamic matRec;
+          if (expanded is List && expanded.isNotEmpty) {
+            matRec = expanded.first;
+          } else if (expanded != null) {
+            matRec = expanded;
+          }
+          if (matRec != null) {
+            material = ShopMaterial.fromRecord(matRec);
+          }
+        } catch (_) {}
+        if (material == null && piece.materialId.isNotEmpty) {
+          try {
+            final matRec = await pb.collection('materials').getOne(piece.materialId);
+            material = ShopMaterial.fromRecord(matRec);
+          } catch (_) {}
+        }
+        if (material == null) continue;
+        out.add((piece: piece, material: material));
+      }
+      return out;
+    } catch (e) {
+      print('Error getting on-shelf pieces expanded: $e');
+      rethrow;
+    }
+  }
+
   Future<dynamic> createMaterialPiece({
     required String materialId,
     required double lengthIn,
