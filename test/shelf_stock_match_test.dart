@@ -25,4 +25,17 @@ void main() {
       expect(scoreSizeMatch([2, 4], [1.75, 4, 144]), 0);
     });
   });
+
+  group('remCoversLength', () {
+    test('reads cut length from 1×4×20 style sizes', () {
+      expect(neededLengthFromSize([1, 4, 20]), 20);
+      expect(neededLengthFromSize([1, 4]), isNull);
+    });
+
+    test('rejects REM shorter than needed cut', () {
+      expect(remCoversLength(17.75, 20), isFalse);
+      expect(remCoversLength(101, 20), isTrue);
+      expect(remCoversLength(17.75, null), isTrue);
+    });
+  });
 }

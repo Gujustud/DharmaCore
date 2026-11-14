@@ -62,6 +62,18 @@ List<double> crossSectionDims(List<double> dims) {
   return List<double>.from(dims);
 }
 
+/// Cut length from a stock-size query when 3+ numbers (e.g. `1×4×20` → 20).
+double? neededLengthFromSize(List<double> dims) {
+  if (dims.length < 3) return null;
+  return dims.last;
+}
+
+/// True when on-shelf REM is long enough for the needed cut (if any).
+bool remCoversLength(double remIn, double? needLengthIn) {
+  if (needLengthIn == null || needLengthIn <= 0) return true;
+  return remIn + 0.001 >= needLengthIn;
+}
+
 /// True when [have] can yield [need]: every needed cross-section dim fits in
 /// some orientation (sorted pairwise, each stock dim >= needed dim).
 bool stockCoversNeed(List<double> need, List<double> have) {
@@ -108,11 +120,15 @@ String matchLabelForScore(int score) {
 Future<List<ShelfStockCandidate>> loadShelfStockCandidates({
   required String stockSizeQuery,
   String? alloyHint,
+  double? minLengthIn,
 }) async {
   final pb = PocketBaseService();
   final pieceRecords = await pb.getOnShelfPiecesExpanded();
   final need = parseSizeNumbers(stockSizeQuery);
   final alloyQ = (alloyHint ?? '').trim().toLowerCase();
+  // Prefer length from stock size (…×20); else ordered-length / explicit min.
+  final needLen = neededLengthFromSize(need) ??
+      (minLengthIn != null && minLengthIn > 0 ? minLengthIn : null);
 
   // Last unit cost by material (newest first from purchase history).
   final costCache = <String, ({double? unit, double? perInch})>{};
@@ -122,6 +138,7 @@ Future<List<ShelfStockCandidate>> loadShelfStockCandidates({
     final piece = row.piece;
     final material = row.material;
     if (!piece.isOnShelf || piece.lengthIn <= 0) continue;
+    if (!remCoversLength(piece.lengthIn, needLen)) continue;
 
     final have = parseSizeNumbers(material.sizeLabel);
     var score = scoreSizeMatch(need, have);
@@ -187,12 +204,14 @@ Future<ShelfStockCandidate?> showFindShelfStockDialog(
   BuildContext context, {
   required String stockSizeQuery,
   String? alloyHint,
+  double? minLengthIn,
 }) async {
   return showDialog<ShelfStockCandidate>(
     context: context,
     builder: (ctx) => _FindShelfStockDialog(
       stockSizeQuery: stockSizeQuery,
       alloyHint: alloyHint,
+      minLengthIn: minLengthIn,
     ),
   );
 }
@@ -200,10 +219,12 @@ Future<ShelfStockCandidate?> showFindShelfStockDialog(
 class _FindShelfStockDialog extends StatefulWidget {
   final String stockSizeQuery;
   final String? alloyHint;
+  final double? minLengthIn;
 
   const _FindShelfStockDialog({
     required this.stockSizeQuery,
     this.alloyHint,
+    this.minLengthIn,
   });
 
   @override
@@ -230,6 +251,7 @@ class _FindShelfStockDialogState extends State<_FindShelfStockDialog> {
       final rows = await loadShelfStockCandidates(
         stockSizeQuery: widget.stockSizeQuery,
         alloyHint: widget.alloyHint,
+        minLengthIn: widget.minLengthIn,
       );
       if (!mounted) return;
       setState(() {
@@ -266,7 +288,16 @@ class _FindShelfStockDialogState extends State<_FindShelfStockDialog> {
                     ? Text(
                         sizeQ.isEmpty
                             ? 'Enter a stock size per part first, then search the shelf.'
-                            : 'No on-shelf pieces match "$sizeQ".',
+                            : () {
+                                final need =
+                                    parseSizeNumbers(widget.stockSizeQuery);
+                                final len = neededLengthFromSize(need) ??
+                                    widget.minLengthIn;
+                                if (len != null && len > 0) {
+                                  return 'No on-shelf pieces cover "$sizeQ" with REM ≥ ${formatInchesValue(len)}.';
+                                }
+                                return 'No on-shelf pieces match "$sizeQ".';
+                              }(),
                         style: TextStyle(color: scheme.onSurfaceVariant),
                       )
                     : Column(
@@ -276,7 +307,16 @@ class _FindShelfStockDialogState extends State<_FindShelfStockDialog> {
                           Text(
                             sizeQ.isEmpty
                                 ? 'On-shelf pieces'
-                                : 'Matches for $sizeQ (stock size is unchanged)',
+                                : () {
+                                    final need = parseSizeNumbers(
+                                        widget.stockSizeQuery);
+                                    final len = neededLengthFromSize(need) ??
+                                        widget.minLengthIn;
+                                    if (len != null && len > 0) {
+                                      return 'Matches for $sizeQ with REM ≥ ${formatInchesValue(len)} (stock size unchanged)';
+                                    }
+                                    return 'Matches for $sizeQ (stock size is unchanged)';
+                                  }(),
                             style: TextStyle(
                               fontSize: 12,
                               color: scheme.onSurfaceVariant,

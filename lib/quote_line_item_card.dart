@@ -408,10 +408,15 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
       );
       return;
     }
+    final orderedLen = double.tryParse(
+      _orderedLength.text.trim().replaceAll(RegExp(r'[^0-9.]'), ''),
+    );
     final picked = await showFindShelfStockDialog(
       context,
       stockSizeQuery: sizeQ,
       alloyHint: _alloy.text.trim().isEmpty ? null : _alloy.text.trim(),
+      // Used when stock size is only cross-section (e.g. 1×4); ×L in size wins.
+      minLengthIn: orderedLen,
     );
     if (picked == null || !mounted) return;
     _applyShelfCandidate(picked);
