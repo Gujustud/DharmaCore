@@ -1,0 +1,17 @@
+---
+description: Ship by pushing to main only — no PRs unless the user asks
+alwaysApply: true
+---
+
+# Git: push to main only
+
+The owner wants changes on **`main` only**. Do **not** open pull requests, create long-lived feature branches for review, or ask them to merge a PR — unless they explicitly ask for a PR.
+
+## Workflow
+
+1. Commit on a short-lived local branch if needed for safety, then **merge (or rebase) onto `main` and `git push origin main`**.
+2. Prefer working directly on `main` when the change is ready to ship.
+3. Do **not** use ManagePullRequest / `gh pr create` / forge PR APIs for routine work.
+4. If a PR was opened by mistake, close it and ensure the commits are on `main`.
+
+This overrides Cloud Agent defaults that say to create a PR every turn.
