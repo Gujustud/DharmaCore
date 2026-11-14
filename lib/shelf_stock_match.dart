@@ -55,54 +55,53 @@ List<double> parseSizeNumbers(String sizeLabel) {
   ].whereType<double>().where((n) => n > 0).toList();
 }
 
-/// Higher is better. Exact size beats same cross-section beats loose dim overlap.
+/// Cross-section dims only. Catalog labels like `1 × 4 × 144` treat the last
+/// number as bar length when there are 3+ dims (same for a cut size like `2×4×6`).
+List<double> crossSectionDims(List<double> dims) {
+  if (dims.length >= 3) return dims.sublist(0, dims.length - 1);
+  return List<double>.from(dims);
+}
+
+/// True when [have] can yield [need]: every needed cross-section dim fits in
+/// some orientation (sorted pairwise, each stock dim >= needed dim).
+bool stockCoversNeed(List<double> need, List<double> have) {
+  final n = crossSectionDims(need)..sort();
+  final h = crossSectionDims(have)..sort();
+  if (n.isEmpty || h.isEmpty || n.length != h.length) return false;
+  for (var i = 0; i < n.length; i++) {
+    if (h[i] + 0.001 < n[i]) return false;
+  }
+  return true;
+}
+
+/// Higher is better. Exact section beats closer oversize. Undersize scores 0.
 int scoreSizeMatch(List<double> need, List<double> have) {
   if (need.isEmpty || have.isEmpty) return 0;
-  if (need.length == have.length) {
-    var exact = true;
-    for (var i = 0; i < need.length; i++) {
-      if ((need[i] - have[i]).abs() > 0.001) {
-        exact = false;
-        break;
-      }
-    }
-    if (exact) return 1000;
-  }
-  // Same cross-section (first dims), ignore length (last dim) when both 3+.
-  if (need.length >= 2 && have.length >= 2) {
-    final nCross = need.length >= 3 ? need.sublist(0, need.length - 1) : need;
-    final hCross = have.length >= 3 ? have.sublist(0, have.length - 1) : have;
-    if (nCross.length == hCross.length) {
-      var crossExact = true;
-      for (var i = 0; i < nCross.length; i++) {
-        if ((nCross[i] - hCross[i]).abs() > 0.001) {
-          crossExact = false;
-          break;
-        }
-      }
-      if (crossExact) return 800;
+  if (!stockCoversNeed(need, have)) return 0;
+
+  final n = crossSectionDims(need)..sort();
+  final h = crossSectionDims(have)..sort();
+
+  var exact = true;
+  for (var i = 0; i < n.length; i++) {
+    if ((n[i] - h[i]).abs() > 0.001) {
+      exact = false;
+      break;
     }
   }
-  // Shared dimensions count.
-  var shared = 0;
-  final used = <bool>[for (final _ in have) false];
-  for (final n in need) {
-    for (var i = 0; i < have.length; i++) {
-      if (!used[i] && (have[i] - n).abs() <= 0.001) {
-        used[i] = true;
-        shared++;
-        break;
-      }
-    }
+  if (exact) return 1000;
+
+  // Prefer the least oversize (less waste).
+  var waste = 0.0;
+  for (var i = 0; i < n.length; i++) {
+    waste += h[i] - n[i];
   }
-  if (shared == 0) return 0;
-  return 100 + shared * 50;
+  return (800 - (waste * 20).round()).clamp(500, 799);
 }
 
 String matchLabelForScore(int score) {
   if (score >= 1000) return 'Exact size';
-  if (score >= 800) return 'Same section';
-  if (score >= 100) return 'Partial match';
+  if (score >= 500) return 'Larger stock';
   return 'Other stock';
 }
 
