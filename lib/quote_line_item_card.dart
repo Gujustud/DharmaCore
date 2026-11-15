@@ -18,6 +18,59 @@ String quoteMaterialSourceOf(Map<String, dynamic> item) {
   return 'buy';
 }
 
+/// Strip persisted `Shelf: …` lines from a material note (shown via REM chip).
+String quoteNoteWithoutShelfRef(String note) {
+  final lines = note
+      .split('\n')
+      .map((l) => l.trimRight())
+      .where((l) => l.trim().isNotEmpty && !l.trim().startsWith('Shelf:'))
+      .toList();
+  return lines.join('\n');
+}
+
+String? quoteShelfRefFromNote(String note) {
+  for (final line in note.split('\n')) {
+    final t = line.trim();
+    if (t.startsWith('Shelf:')) {
+      final ref = t.substring(6).trim();
+      if (ref.isNotEmpty) return ref;
+    }
+  }
+  return null;
+}
+
+/// Chip / save label from client shelf_* keys (or a full ref in code).
+String? quoteShelfRefFromItem(Map<String, dynamic> item) {
+  final code = '${item['shelf_piece_code'] ?? ''}'.trim();
+  if (code.isEmpty) return null;
+  final rem = item['shelf_piece_rem'];
+  final lot = '${item['shelf_piece_lot'] ?? ''}'.trim();
+  // Loaded-from-note refs are stored as the full display string in code alone.
+  if (rem == null || rem == '') {
+    return code;
+  }
+  double remN;
+  if (rem is num) {
+    remN = rem.toDouble();
+  } else {
+    remN = double.tryParse('$rem') ?? 0;
+  }
+  return [
+    code,
+    if (remN > 0) 'REM ${formatInchesValue(remN)}',
+    if (lot.isNotEmpty) 'Lot $lot',
+  ].join(' · ');
+}
+
+/// Persist shelf pick in material_note without showing it in the note field.
+String quoteMaterialNoteForSave(Map<String, dynamic> item) {
+  final note = quoteNoteWithoutShelfRef('${item['material_note'] ?? ''}');
+  final ref = quoteShelfRefFromItem(item);
+  if (ref == null || ref.isEmpty) return note;
+  if (note.isEmpty) return 'Shelf: $ref';
+  return 'Shelf: $ref\n$note';
+}
+
 class _QuoteSection extends StatefulWidget {
   final String title;
   final bool initiallyOpen;
@@ -163,7 +216,9 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
     _stockSize = TextEditingController(text: _str(item['stock_size_per_part']));
     _pieces = TextEditingController(text: _numText(item['pieces']));
     _orderedLength = TextEditingController(text: _str(item['ordered_length']));
-    _materialNote = TextEditingController(text: _str(item['material_note']));
+    _materialNote = TextEditingController(
+      text: quoteNoteWithoutShelfRef(_str(item['material_note'])),
+    );
     _toolingCost =
         TextEditingController(text: _numText(item['tooling_total_cost']));
     _toolingDesc =
@@ -226,7 +281,10 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
     _syncIfIdle(_stockSize, _str(item['stock_size_per_part']));
     _syncIfIdle(_pieces, _numText(item['pieces']));
     _syncIfIdle(_orderedLength, _str(item['ordered_length']));
-    _syncIfIdle(_materialNote, _str(item['material_note']));
+    _syncIfIdle(
+      _materialNote,
+      quoteNoteWithoutShelfRef(_str(item['material_note'])),
+    );
     _syncIfIdle(_toolingCost, _numText(item['tooling_total_cost']));
     _syncIfIdle(_toolingDesc, _str(item['tooling_description']));
     _syncIfIdle(_programmingHrs, _numText(item['programming_hours']));
@@ -329,44 +387,12 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
         'shelf_piece_rem': null,
         'shelf_piece_lot': null,
         'material_note':
-            _noteWithoutShelfRef(_str(widget.lineItem['material_note'])),
+            quoteNoteWithoutShelfRef(_str(widget.lineItem['material_note'])),
       };
 
-  String _noteWithoutShelfRef(String note) {
-    final lines = note
-        .split('\n')
-        .map((l) => l.trimRight())
-        .where((l) => l.trim().isNotEmpty && !l.trim().startsWith('Shelf:'))
-        .toList();
-    return lines.join('\n');
-  }
-
-  String _noteWithShelfRef(String note, String ref) {
-    final rest = _noteWithoutShelfRef(note);
-    if (rest.isEmpty) return 'Shelf: $ref';
-    return 'Shelf: $ref\n$rest';
-  }
-
-  String? _shelfRefFromItem(Map<String, dynamic> item) {
-    final code = _str(item['shelf_piece_code']);
-    if (code.isNotEmpty) {
-      final rem = item['shelf_piece_rem'];
-      final lot = _str(item['shelf_piece_lot']);
-      return [
-        code,
-        if (rem != null && rem != '') 'REM ${formatInchesValue(_num(rem))}',
-        if (lot.isNotEmpty) 'Lot $lot',
-      ].join(' · ');
-    }
-    final note = _str(item['material_note']);
-    for (final line in note.split('\n')) {
-      final t = line.trim();
-      if (t.startsWith('Shelf:')) {
-        return t.substring(6).trim();
-      }
-    }
-    return null;
-  }
+  String? _shelfRefFromItem(Map<String, dynamic> item) =>
+      quoteShelfRefFromItem(item) ??
+      quoteShelfRefFromNote(_str(item['material_note']));
 
   void _onAlloyTyped(String value) {
     final linked = _linkedMaterial(widget.lineItem);
@@ -430,11 +456,9 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
 
   void _applyShelfCandidate(ShelfStockCandidate c) {
     // Never overwrite stock_size_per_part — that is the blank the part needs.
+    // Chip shows the REM; do not also stuff it into Material note.
     _alloy.text = c.material.grade;
-    final note = _noteWithShelfRef(
-      _str(widget.lineItem['material_note']),
-      c.shelfRefLine,
-    );
+    final note = quoteNoteWithoutShelfRef(_str(widget.lineItem['material_note']));
     _materialNote.text = note;
 
     _orderedLength.text = '';
@@ -457,12 +481,16 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
         widget.lineItem['material_cost_cad'] == '' ||
         widget.lineItem['material_cost_cad'] == 0;
     if (cadEmpty) {
-      final ordered = double.tryParse(
-        _orderedLength.text.trim().replaceAll(RegExp(r'[^0-9.]'), ''),
+      final need = parseSizeNumbers(_stockSize.text);
+      final cut = neededLengthFromSize(need);
+      final pcs = int.tryParse(_pieces.text.trim()) ?? 1;
+      final inches = remNeededForCuts(
+        cutLengthIn: cut,
+        pieces: pcs < 1 ? 1 : pcs,
       );
       double? suggested;
-      if (c.costPerInch != null && ordered != null && ordered > 0) {
-        suggested = quoteRound2(c.costPerInch! * ordered);
+      if (c.costPerInch != null && inches != null && inches > 0) {
+        suggested = quoteRound2(c.costPerInch! * inches);
       } else if (c.lastUnitCost != null) {
         suggested = quoteRound2(c.lastUnitCost!);
       }
@@ -864,7 +892,6 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
-                          flex: 3,
                           child: TextField(
                             controller: _stockSize,
                             decoration: _dec('Stock size per part'),
@@ -874,10 +901,10 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                         ),
                         const SizedBox(width: 8),
                         SizedBox(
-                          width: 88,
+                          width: 72,
                           child: TextField(
                             controller: _pieces,
-                            decoration: _dec('Pieces'),
+                            decoration: _dec('Pcs'),
                             keyboardType: TextInputType.number,
                             onChanged: (v) {
                               final n = int.tryParse(v);
@@ -885,6 +912,25 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                             },
                           ),
                         ),
+                        if (_shelfRefFromItem(item) != null) ...[
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: InputChip(
+                                avatar: const Icon(
+                                  Icons.inventory_2_outlined,
+                                  size: 16,
+                                ),
+                                label: Text(
+                                  _shelfRefFromItem(item)!,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                onDeleted: _clearShelfPick,
+                              ),
+                            ),
+                          ),
+                        ],
                         const SizedBox(width: 8),
                         Padding(
                           padding: const EdgeInsets.only(top: 4),
@@ -896,17 +942,6 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                         ),
                       ],
                     ),
-                    if (_shelfRefFromItem(item) != null) ...[
-                      const SizedBox(height: 8),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: InputChip(
-                          avatar: const Icon(Icons.inventory_2_outlined, size: 16),
-                          label: Text(_shelfRefFromItem(item)!),
-                          onDeleted: _clearShelfPick,
-                        ),
-                      ),
-                    ],
                     const SizedBox(height: 8),
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -969,25 +1004,14 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                       supplierDropdown(
                           'material_vendor', 'Material supplier'),
                     ],
-                    if (quoteMaterialSourceOf(item) == 'shop_stock') ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        _shelfRefFromItem(item) != null
-                            ? 'Using the shelf piece above when the job cuts.'
-                            : _linkedMaterial(item) == null
-                                ? 'Pick a catalog material or Find on shelf.'
-                                : 'Will use shop stock of this catalog material.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                    ],
                     const SizedBox(height: 8),
                     TextField(
                       controller: _materialNote,
                       decoration: _dec('Material note'),
-                      onChanged: (v) => _patch({'material_note': v}),
+                      onChanged: (v) => _patch({
+                        // Keep any saved Shelf: line out of the editable note.
+                        'material_note': quoteNoteWithoutShelfRef(v),
+                      }),
                     ),
                   ],
                 ),

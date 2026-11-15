@@ -94,6 +94,13 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
         m['material'] = matRec.id.toString();
       }
     } catch (_) {}
+    // Hydrate REM chip from persisted Shelf: note; keep note field clean.
+    final rawNote = '${m['material_note'] ?? ''}';
+    final shelfRef = quoteShelfRefFromNote(rawNote);
+    if (shelfRef != null && '${m['shelf_piece_code'] ?? ''}'.trim().isEmpty) {
+      m['shelf_piece_code'] = shelfRef;
+    }
+    m['material_note'] = quoteNoteWithoutShelfRef(rawNote);
     return m;
   }
 
@@ -512,7 +519,7 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
       'stock_size_per_part': item['stock_size_per_part'],
       'ordered_length': item['ordered_length'],
       'pieces': item['pieces'],
-      'material_note': item['material_note'],
+      'material_note': quoteMaterialNoteForSave(item),
       // Empty string clears optional relations on update.
       'material': _relationId(item['material']) ?? '',
       'material_vendor': _relationId(item['material_vendor']) ?? '',
