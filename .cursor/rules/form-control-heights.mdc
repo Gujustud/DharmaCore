@@ -1,0 +1,22 @@
+---
+description: Keep chips/buttons the same height as adjacent text fields
+alwaysApply: true
+---
+
+# Form control heights (quote / materials UI)
+
+When a row mixes **text fields** with **chips** or **buttons** (REM chip, Find on shelf, catalog material chip, similar), those controls must be the **same height** as the fields — not short pills floating with top padding.
+
+## Do
+
+- Match outlined dense field height (about **48px** in quote line materials; use a shared constant / helper like `_fieldControlHeight` / `_fieldHeightChip` / `_fieldHeightOutlinedStyle`).
+- Align the row with `CrossAxisAlignment.center` (not `start` + `Padding(top: 4)` hacks).
+- Size `OutlinedButton` with `minimumSize` / `fixedSize` height matching the fields.
+- Size `InputChip` (or equivalent) to fill that height via padding / `SizedBox(height: …)`.
+
+## Don’t
+
+- Leave default short chips/buttons next to taller outlined inputs.
+- Use ad-hoc top padding to “kinda” center short controls beside fields.
+
+Canonical example: materials row on `lib/quote_line_item_card.dart` (stock size / Pcs / REM / Find on shelf / alloy catalog chip).

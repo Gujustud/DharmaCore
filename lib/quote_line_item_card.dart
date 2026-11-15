@@ -657,12 +657,76 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
     });
   }
 
+  /// Match outlined dense fields (`_dec`) so chips/buttons align in a row.
+  static const double _fieldControlHeight = 48;
+
   InputDecoration _dec(String label) => InputDecoration(
         labelText: label,
         border: const OutlineInputBorder(),
         isDense: true,
         contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       );
+
+  ButtonStyle get _fieldHeightOutlinedStyle => OutlinedButton.styleFrom(
+        minimumSize: const Size(0, _fieldControlHeight),
+        fixedSize: const Size.fromHeight(_fieldControlHeight),
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        visualDensity: VisualDensity.standard,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      );
+
+  /// Chip sized to [_fieldControlHeight] so it lines up with `_dec` fields.
+  Widget _fieldHeightChip({
+    required Widget avatar,
+    required String label,
+    required VoidCallback onDeleted,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      height: _fieldControlHeight,
+      child: Material(
+        color: scheme.surfaceContainerHighest,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: BorderSide(color: scheme.outlineVariant),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.only(left: 10, right: 2),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconTheme(
+                data: IconThemeData(size: 16, color: scheme.onSurfaceVariant),
+                child: avatar,
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: scheme.onSurface,
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: onDeleted,
+                icon: const Icon(Icons.close, size: 18),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(
+                  minWidth: 32,
+                  minHeight: 32,
+                ),
+                tooltip: 'Remove',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -889,7 +953,7 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                     ),
                     const SizedBox(height: 8),
                     Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         Expanded(
                           child: TextField(
@@ -915,47 +979,37 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                         if (_shelfRefFromItem(item) != null) ...[
                           const SizedBox(width: 8),
                           Flexible(
-                            child: Padding(
-                              padding: const EdgeInsets.only(top: 4),
-                              child: InputChip(
-                                avatar: const Icon(
-                                  Icons.inventory_2_outlined,
-                                  size: 16,
-                                ),
-                                label: Text(
-                                  _shelfRefFromItem(item)!,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                onDeleted: _clearShelfPick,
+                            child: _fieldHeightChip(
+                              avatar: const Icon(
+                                Icons.inventory_2_outlined,
+                                size: 16,
                               ),
+                              label: _shelfRefFromItem(item)!,
+                              onDeleted: _clearShelfPick,
                             ),
                           ),
                         ],
                         const SizedBox(width: 8),
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: OutlinedButton.icon(
-                            onPressed: _findOnShelf,
-                            icon: const Icon(Icons.inventory_2_outlined, size: 18),
-                            label: const Text('Find on shelf'),
-                          ),
+                        OutlinedButton.icon(
+                          onPressed: _findOnShelf,
+                          style: _fieldHeightOutlinedStyle,
+                          icon: const Icon(Icons.inventory_2_outlined, size: 18),
+                          label: const Text('Find on shelf'),
                         ),
                       ],
                     ),
                     const SizedBox(height: 8),
                     Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         Expanded(child: _alloyCatalogField(item)),
                         if (_linkedMaterial(item) != null) ...[
                           const SizedBox(width: 8),
-                          Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: InputChip(
+                          Flexible(
+                            child: _fieldHeightChip(
                               avatar: const Icon(Icons.link, size: 16),
-                              label: Text(
-                                '${materialFormLabel(_linkedMaterial(item)!.form)} · ${_linkedMaterial(item)!.sizeLabel}',
-                              ),
+                              label:
+                                  '${materialFormLabel(_linkedMaterial(item)!.form)} · ${_linkedMaterial(item)!.sizeLabel}',
                               onDeleted: () {
                                 final cleared = _clearedShelfFields();
                                 _materialNote.text =
