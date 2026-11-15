@@ -676,35 +676,58 @@ class _CombinedHomeScreenState extends State<CombinedHomeScreen> with AutoOpenDr
   }) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final compact = constraints.maxWidth < 700;
-        final gap = compact ? 8.0 : 12.0;
-        return IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                child: _statCard('Active', '$active', compact: compact),
-              ),
-              SizedBox(width: gap),
-              Expanded(
-                child: _statCard(
-                  compact ? 'Progress' : 'In progress',
-                  '$inProgress',
-                  compact: compact,
+        // One row on phone; 2×2 on desktop so the adjacent quick-notes
+        // panel (TableCell fill) keeps a usable height.
+        final singleRow = constraints.maxWidth < 520;
+        if (singleRow) {
+          const gap = 8.0;
+          return IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: _statCard('Active', '$active', compact: true),
                 ),
-              ),
-              SizedBox(width: gap),
-              Expanded(child: _statCard('Done', '$done', compact: compact)),
-              SizedBox(width: gap),
-              Expanded(
-                child: _statCard(
-                  compact ? 'Month' : 'This Month',
-                  '$doneThisMonth',
-                  compact: compact,
+                const SizedBox(width: gap),
+                Expanded(
+                  child: _statCard('Progress', '$inProgress', compact: true),
                 ),
+                const SizedBox(width: gap),
+                Expanded(
+                  child: _statCard('Done', '$done', compact: true),
+                ),
+                const SizedBox(width: gap),
+                Expanded(
+                  child: _statCard('Month', '$doneThisMonth', compact: true),
+                ),
+              ],
+            ),
+          );
+        }
+        return Column(
+          children: [
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: _statCard('Active', '$active')),
+                  const SizedBox(width: 12),
+                  Expanded(child: _statCard('In progress', '$inProgress')),
+                ],
               ),
-            ],
-          ),
+            ),
+            const SizedBox(height: 12),
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: _statCard('Done', '$done')),
+                  const SizedBox(width: 12),
+                  Expanded(child: _statCard('This Month', '$doneThisMonth')),
+                ],
+              ),
+            ),
+          ],
         );
       },
     );
@@ -980,9 +1003,14 @@ class _CombinedHomeScreenState extends State<CombinedHomeScreen> with AutoOpenDr
                                         TableCellVerticalAlignment.fill,
                                     child: Padding(
                                       padding: const EdgeInsets.only(right: 8),
-                                      child: _quickNotesCard(
-                                        context,
-                                        expand: true,
+                                      child: ConstrainedBox(
+                                        constraints: const BoxConstraints(
+                                          minHeight: 160,
+                                        ),
+                                        child: _quickNotesCard(
+                                          context,
+                                          expand: true,
+                                        ),
                                       ),
                                     ),
                                   ),
