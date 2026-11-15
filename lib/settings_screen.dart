@@ -27,7 +27,7 @@ class _SettingsScreenState extends State<SettingsScreen> with AutoOpenDrawerMixi
   bool _useCategoryButtons = false;
   bool _enableToolImport = false; // NEW
   bool _darkMode = false;
-  AppSkin _skin = AppSkin.graphite;
+  AppSkin _skin = AppSkin.precision;
   bool _keepDrawerOpen = DrawerDataCache.keepDrawerOpen;
   String? _settingsId;
   String? _shopSettingsId;

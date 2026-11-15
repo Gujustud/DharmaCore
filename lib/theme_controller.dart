@@ -10,7 +10,7 @@ class ThemeController {
   final ValueNotifier<ThemeMode> themeMode =
       ValueNotifier<ThemeMode>(ThemeMode.light);
   final ValueNotifier<AppSkin> skin =
-      ValueNotifier<AppSkin>(AppSkin.graphite);
+      ValueNotifier<AppSkin>(AppSkin.precision);
   static const _darkPrefKey = 'dark_mode';
   static const _skinPrefKey = 'app_skin';
   /// Load saved theme from SharedPreferences.
@@ -21,7 +21,7 @@ class ThemeController {
     final skinName = prefs.getString(_skinPrefKey);
     skin.value = AppSkin.values.firstWhere(
       (s) => s.name == skinName,
-      orElse: () => AppSkin.graphite,
+      orElse: () => AppSkin.precision,
     );
   }
   /// Set dark mode on/off and persist the choice.

@@ -38,7 +38,7 @@ class _MisconfiguredReleaseApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'DharmaCore',
-      theme: AppTheme.of(AppSkin.graphite, Brightness.light),
+      theme: AppTheme.of(AppSkin.precision, Brightness.light),
       home: Scaffold(
         appBar: AppBar(title: const Text('DharmaCore configuration error')),
         body: Padding(
