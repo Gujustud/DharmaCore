@@ -643,11 +643,32 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
     }
   }
 
+  static const double _fieldControlHeight = 48;
+
   InputDecoration _dec(String label) => InputDecoration(
         labelText: label,
         border: const OutlineInputBorder(),
         isDense: true,
       );
+
+  Widget _statusChip({
+    required String label,
+    required bool selected,
+    required VoidCallback onSelected,
+  }) {
+    return SizedBox(
+      height: _fieldControlHeight,
+      child: ChoiceChip(
+        label: Text(label),
+        selected: selected,
+        onSelected: (_) => onSelected(),
+        visualDensity: const VisualDensity(horizontal: 0, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+    );
+  }
 
   Widget _headerCard() {
     final q = _quote!;
@@ -696,68 +717,106 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
               ],
             ),
             const SizedBox(height: 12),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: _relationId(q['customer']) != null &&
-                            customers.any((c) => c.id == _relationId(q['customer']))
-                        ? _relationId(q['customer'])
-                        : null,
-                    decoration: _dec('Customer'),
-                    items: [
-                      const DropdownMenuItem(value: null, child: Text('— Select —')),
-                      ...customers.map(
-                        (c) => DropdownMenuItem(
-                          value: c.id as String,
-                          child: Text(customerLabel(c)),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final customerField = DropdownButtonFormField<String>(
+                  // ignore: deprecated_member_use
+                  value: _relationId(q['customer']) != null &&
+                          customers
+                              .any((c) => c.id == _relationId(q['customer']))
+                      ? _relationId(q['customer'])
+                      : null,
+                  decoration: _dec('Customer'),
+                  isExpanded: true,
+                  items: [
+                    const DropdownMenuItem(
+                        value: null, child: Text('— Select —')),
+                    ...customers.map(
+                      (c) => DropdownMenuItem(
+                        value: c.id as String,
+                        child: Text(
+                          customerLabel(c),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
+                  ],
+                  onChanged: (id) {
+                    final c = customers.where((x) => x.id == id).firstOrNull;
+                    _patchQuote({
+                      'customer': id,
+                      'customer_name': c != null ? customerLabel(c) : '',
+                    });
+                  },
+                );
+                final engineerField = TextFormField(
+                  initialValue: '${q['engineer'] ?? ''}',
+                  decoration: _dec('Engineer'),
+                  onChanged: (v) => _patchQuote({'engineer': v}),
+                );
+                final statusControls = Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (var i = 0; i < _statusOptions.length; i++) ...[
+                      if (i > 0) const SizedBox(width: 6),
+                      _statusChip(
+                        label: _statusOptions[i].$2,
+                        selected:
+                            (q['status'] ?? 'draft') == _statusOptions[i].$1,
+                        onSelected: () =>
+                            _patchQuote({'status': _statusOptions[i].$1}),
+                      ),
+                    ],
+                    if ((q['status'] ?? 'draft') == 'won' && _jobId != null) ...[
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        height: _fieldControlHeight,
+                        child: OutlinedButton(
+                          onPressed: _openLinkedJob,
+                          style: OutlinedButton.styleFrom(
+                            minimumSize:
+                                const Size(0, _fieldControlHeight),
+                            fixedSize:
+                                const Size.fromHeight(_fieldControlHeight),
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: const Text('View Job'),
                         ),
                       ),
                     ],
-                    onChanged: (id) {
-                      final c = customers.where((x) => x.id == id).firstOrNull;
-                      _patchQuote({
-                        'customer': id,
-                        'customer_name': c != null ? customerLabel(c) : '',
-                      });
-                    },
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextFormField(
-                    initialValue: '${q['engineer'] ?? ''}',
-                    decoration: _dec('Engineer'),
-                    onChanged: (v) => _patchQuote({'engineer': v}),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                ..._statusOptions.map((o) {
-                  final selected = (q['status'] ?? 'draft') == o.$1;
-                  return ChoiceChip(
-                    label: Text(o.$2),
-                    selected: selected,
-                    onSelected: (_) => _patchQuote({'status': o.$1}),
+                  ],
+                );
+
+                // Narrow: stack status under fields. Wide: one row.
+                if (constraints.maxWidth < 720) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(flex: 3, child: customerField),
+                          const SizedBox(width: 8),
+                          Expanded(flex: 2, child: engineerField),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      statusControls,
+                    ],
                   );
-                }),
-                if ((q['status'] ?? 'draft') == 'won' && _jobId != null)
-                  OutlinedButton(
-                    onPressed: _openLinkedJob,
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                      visualDensity: VisualDensity.compact,
-                    ),
-                    child: const Text('View Job'),
-                  ),
-              ],
+                }
+
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(flex: 3, child: customerField),
+                    const SizedBox(width: 8),
+                    Expanded(flex: 2, child: engineerField),
+                    const SizedBox(width: 12),
+                    statusControls,
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 8),
             Text(
