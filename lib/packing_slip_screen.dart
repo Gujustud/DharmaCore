@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:printing/printing.dart';
 
+import 'app_date_field.dart';
 import 'auth_service.dart';
 import 'drawer_behavior.dart';
 import 'packing_slip_pdf.dart';
@@ -35,6 +35,7 @@ class _PackingSlipScreenState extends State<PackingSlipScreen>
   String _purchaseOrder = '';
   final _trackingController = TextEditingController();
   final _packedByController = TextEditingController();
+  final _packedDateController = TextEditingController();
   DateTime _date = DateTime.now();
   DateTime _packedDate = DateTime.now();
   List<String> _shipToLines = [];
@@ -49,6 +50,7 @@ class _PackingSlipScreenState extends State<PackingSlipScreen>
     final fromEmail = email.contains('@') ? email.split('@').first : email;
     final name = display.trim().isNotEmpty ? display.trim() : fromEmail;
     _packedByController.text = name.isEmpty ? 'Amish' : _titleCase(name);
+    _packedDateController.text = formatAppDate(_packedDate);
     _load();
   }
 
@@ -61,6 +63,7 @@ class _PackingSlipScreenState extends State<PackingSlipScreen>
   void dispose() {
     _trackingController.dispose();
     _packedByController.dispose();
+    _packedDateController.dispose();
     for (final l in _lines) {
       l.dispose();
     }
@@ -126,11 +129,13 @@ class _PackingSlipScreenState extends State<PackingSlipScreen>
         _lines = editable;
         final shipDate = d['ship_date'];
         if (shipDate != null && '$shipDate'.isNotEmpty) {
-          try {
-            _date = DateTime.parse('$shipDate');
-            _packedDate = _date;
-          } catch (_) {}
+          final parsed = parseAppDate('$shipDate');
+          if (parsed != null) {
+            _date = parsed;
+            _packedDate = parsed;
+          }
         }
+        _packedDateController.text = formatAppDate(_packedDate);
         _loading = false;
       });
     } catch (e) {
@@ -220,6 +225,8 @@ class _PackingSlipScreenState extends State<PackingSlipScreen>
   }
 
   PackingSlipData _buildData() {
+    final packed = parseAppDate(_packedDateController.text) ?? _packedDate;
+    _packedDate = packed;
     return PackingSlipData(
       packingSlipNumber: _psNumber,
       shipToLines: _shipToLines.isEmpty
@@ -238,7 +245,7 @@ class _PackingSlipScreenState extends State<PackingSlipScreen>
           ),
       ],
       packedBy: _packedByController.text.trim(),
-      packedDate: _packedDate,
+      packedDate: packed,
     );
   }
 
@@ -342,7 +349,7 @@ class _PackingSlipScreenState extends State<PackingSlipScreen>
                               border: OutlineInputBorder(),
                               isDense: true,
                             ),
-                            child: Text(DateFormat.yMMMd().format(_date)),
+                            child: Text(formatAppDate(_date)),
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -391,26 +398,17 @@ class _PackingSlipScreenState extends State<PackingSlipScreen>
                         ),
                         const SizedBox(width: 12),
                         Expanded(
-                          child: InputDecorator(
-                            decoration: const InputDecoration(
-                              labelText: 'Packed date',
-                              border: OutlineInputBorder(),
-                              isDense: true,
-                            ),
-                            child: InkWell(
-                              onTap: () async {
-                                final picked = await showDatePicker(
-                                  context: context,
-                                  initialDate: _packedDate,
-                                  firstDate: DateTime(2000),
-                                  lastDate: DateTime(2100),
-                                );
-                                if (picked != null) {
-                                  setState(() => _packedDate = picked);
-                                }
-                              },
-                              child: Text(DateFormat.yMMMd().format(_packedDate)),
-                            ),
+                          child: AppDateField(
+                            controller: _packedDateController,
+                            initialDate: _packedDate,
+                            labelText: 'Packed date',
+                            isDense: true,
+                            allowEmpty: false,
+                            firstDate: DateTime(2000),
+                            lastDate: DateTime(2100),
+                            onDateChanged: (d) {
+                              if (d != null) setState(() => _packedDate = d);
+                            },
                           ),
                         ),
                       ],

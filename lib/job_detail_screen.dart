@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'app_date_field.dart';
 import 'workspace_layout.dart';
 import 'workspace_scaffold.dart';
 import 'auth_service.dart';
@@ -109,12 +110,11 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
   }
 
   void _setDate(TextEditingController c, dynamic v) {
-    if (v == null || v.toString().isEmpty) return;
-    try {
-      c.text = DateFormat('yyyy-MM-dd').format(DateTime.parse(v.toString()));
-    } catch (_) {
-      c.text = v.toString();
+    if (v == null || v.toString().isEmpty) {
+      c.text = '';
+      return;
     }
+    c.text = formatAppDateText(v.toString());
   }
 
   void _populateFromRecord(Map<String, dynamic> d) {
@@ -581,43 +581,16 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
     return t.isEmpty ? null : t;
   }
 
-  /// Parse flexible user input into a date, or null if empty/invalid.
-  /// Accepts `yyyy-MM-dd`, `yyyy-M-d`, `M/d/yyyy`, `MM/dd/yyyy`.
-  DateTime? _parseFlexibleDate(String raw) {
-    final t = raw.trim();
-    if (t.isEmpty) return null;
-
-    DateTime? tryFmt(String pattern) {
-      try {
-        return DateFormat(pattern).parseStrict(t);
-      } catch (_) {
-        return null;
-      }
-    }
-
-    return tryFmt('yyyy-MM-dd') ??
-        tryFmt('yyyy-M-d') ??
-        tryFmt('M/d/yyyy') ??
-        tryFmt('MM/dd/yyyy') ??
-        (() {
-          try {
-            return DateTime.parse(t);
-          } catch (_) {
-            return null;
-          }
-        })();
-  }
-
-  /// Normalize controller text to `yyyy-MM-dd`. Returns false if non-empty but invalid.
+  /// Normalize controller text to month/day/year display. Returns false if invalid.
   bool _normalizeDateField(TextEditingController c) {
     final t = c.text.trim();
     if (t.isEmpty) {
       if (c.text.isNotEmpty) c.text = '';
       return true;
     }
-    final d = _parseFlexibleDate(t);
+    final d = parseAppDate(t);
     if (d == null) return false;
-    final normalized = DateFormat('yyyy-MM-dd').format(d);
+    final normalized = formatAppDate(d);
     if (c.text != normalized) c.text = normalized;
     return true;
   }
@@ -625,9 +598,9 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
   String? _optDate(TextEditingController c) {
     final t = c.text.trim();
     if (t.isEmpty) return null;
-    final d = _parseFlexibleDate(t);
+    final d = parseAppDate(t);
     if (d == null) return t; // leave as-is; save validates first
-    return DateFormat('yyyy-MM-dd').format(d);
+    return formatAppDateIso(d);
   }
 
   Map<String, dynamic> _buildBody() {
@@ -682,7 +655,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              '$label must be a valid date (yyyy-mm-dd or m/d/yyyy)',
+              '$label must be a valid date (Nov 14, 2026 or 11/14/2026)',
             ),
           ),
         );
@@ -1045,93 +1018,34 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
     );
   }
 
-  Future<void> _pickJobDate(BuildContext context, TextEditingController c) async {
-    var initial = DateTime.now();
-    final parsed = _parseFlexibleDate(c.text);
-    if (parsed != null) initial = parsed;
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: initial,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2100),
-    );
-    if (picked != null && mounted) {
-      setState(() {
-        c.text = DateFormat('yyyy-MM-dd').format(picked);
-        _syncTrackingFromDates();
-      });
-    }
-  }
-
   /// A delivered date means delivered; a ship date moves "not shipped" to
   /// "in transit". Never moves the status backwards.
   void _syncTrackingFromDates() {
-    if (_parseFlexibleDate(_deliveredDateController.text.trim()) != null) {
+    if (parseAppDate(_deliveredDateController.text) != null) {
       _trackingStatus = 'delivered';
     } else if (_trackingStatus == 'not_shipped' &&
-        _parseFlexibleDate(_shipDateController.text.trim()) != null) {
+        parseAppDate(_shipDateController.text) != null) {
       _trackingStatus = 'in_transit';
     }
   }
 
-  /// Editable date + calendar button. Type `yyyy-mm-dd` / `m/d/yyyy`, or pick.
+  /// Editable date + calendar. Type `11/14/2026` or `Nov 14, 2026`, or pick.
   Widget _jobDateField(BuildContext context, TextEditingController c) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final borderColor = isDark ? const Color(0xFF4B5563) : const Color(0xFFD1D5DB);
-    final fieldDeco = QuoteSidebarTheme.fieldDecoration(context).copyWith(
-      hintText: 'yyyy-mm-dd',
-      isDense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-    );
-
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 220),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: c,
-              enabled: !_isSaving,
-              style: const TextStyle(fontSize: 14),
-              keyboardType: TextInputType.datetime,
-              decoration: fieldDeco,
-              onEditingComplete: () {
-                setState(() {
-                  _normalizeDateField(c);
-                  _syncTrackingFromDates();
-                });
-                FocusScope.of(context).unfocus();
-              },
-              onTapOutside: (_) => setState(() {
-                _normalizeDateField(c);
-                _syncTrackingFromDates();
-              }),
-            ),
-          ),
-          const SizedBox(width: 6),
-          Material(
-            color: isDark ? const Color(0xFF374151) : const Color(0xFFE5E7EB),
-            borderRadius: BorderRadius.circular(8),
-            child: InkWell(
-              onTap: _isSaving ? null : () => _pickJobDate(context, c),
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                width: 36,
-                height: 36,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: borderColor, width: 1.5),
-                ),
-                child: Icon(
-                  Icons.calendar_today_outlined,
-                  size: 18,
-                  color: isDark ? Colors.white70 : const Color(0xFF4B5563),
-                ),
-              ),
-            ),
-          ),
-        ],
+      child: AppDateField(
+        controller: c,
+        enabled: !_isSaving,
+        isDense: true,
+        firstDate: DateTime(2020),
+        lastDate: DateTime(2100),
+        decoration: QuoteSidebarTheme.fieldDecoration(context).copyWith(
+          hintText: 'Nov 14, 2026 or 11/14/2026',
+          isDense: true,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        ),
+        onDateChanged: (_) => setState(_syncTrackingFromDates),
       ),
     );
   }

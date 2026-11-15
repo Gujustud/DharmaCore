@@ -1,0 +1,16 @@
+---
+description: Shop dates use month/day/year and typeable AppDateField
+alwaysApply: true
+---
+
+# App dates
+
+All user-facing editable dates use **`AppDateField`** (`lib/app_date_field.dart`):
+
+- Display: month/day/year (`Nov 14, 2026` via `formatAppDate` / `DateFormat.yMMMd()`)
+- Typing: accepts `11/14/2026`, `Nov 14, 2026`, ISO, etc. (`parseAppDate`)
+- Commits on **blur** (leave field) and Enter — do not require Enter alone
+- Calendar button always available
+- Persist to PocketBase as ISO `yyyy-MM-dd` (`formatAppDateIso`)
+
+Do not show editable dates as `yyyy-MM-dd` in the UI. Do not use pick-only (`readOnly` + calendar) for shop dates unless the user asks.

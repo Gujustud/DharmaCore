@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:pocketbase/pocketbase.dart';
 
+import 'app_date_field.dart';
 import 'auth_service.dart';
 import 'pocketbase_service.dart';
 import 'wiki_table_models.dart';
@@ -502,101 +503,54 @@ class _InlineDateCell extends StatefulWidget {
 
 class _InlineDateCellState extends State<_InlineDateCell> {
   late final TextEditingController _ctrl;
-  late final FocusNode _focus;
-  var _dirty = false;
 
   @override
   void initState() {
     super.initState();
     _ctrl = TextEditingController(text: _display(widget.value));
-    _focus = FocusNode();
-    _focus.addListener(() {
-      if (!_focus.hasFocus && _dirty) _commitText();
-    });
   }
 
   @override
   void didUpdateWidget(covariant _InlineDateCell oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!_focus.hasFocus && oldWidget.value != widget.value && !_dirty) {
+    if (oldWidget.value != widget.value) {
       _ctrl.text = _display(widget.value);
     }
   }
 
   @override
   void dispose() {
-    _focus.dispose();
     _ctrl.dispose();
     super.dispose();
   }
 
   String _display(String? raw) {
     if (raw == null || raw.isEmpty) return '';
-    final d = DateTime.tryParse(raw);
-    if (d == null) return raw;
-    return DateFormat('yyyy-MM-dd').format(d);
-  }
-
-  Future<void> _commitText() async {
-    _dirty = false;
-    final t = _ctrl.text.trim();
-    if (t.isEmpty) {
-      await widget.onCommit(null);
-      return;
-    }
-    final d = DateTime.tryParse(t);
-    if (d == null) {
-      _ctrl.text = _display(widget.value);
-      return;
-    }
-    await widget.onCommit(DateFormat('yyyy-MM-dd').format(d));
-  }
-
-  Future<void> _pick() async {
-    final current = DateTime.tryParse(widget.value ?? '') ?? DateTime.now();
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: current,
-      firstDate: DateTime(2000),
-      lastDate: DateTime(2100),
-    );
-    if (picked == null) return;
-    final iso = DateFormat('yyyy-MM-dd').format(picked);
-    _ctrl.text = iso;
-    _dirty = false;
-    await widget.onCommit(iso);
+    return formatAppDateText(raw);
   }
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 108,
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _ctrl,
-              focusNode: _focus,
-              style: Theme.of(context).textTheme.bodySmall,
-              decoration: const InputDecoration(
-                isDense: true,
-                hintText: 'yyyy-MM-dd',
-                contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (_) => _dirty = true,
-              onSubmitted: (_) => _commitText(),
-            ),
-          ),
-          IconButton(
-            tooltip: 'Pick date',
-            icon: const Icon(Icons.calendar_today, size: 14),
-            visualDensity: VisualDensity.compact,
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(minWidth: 24, minHeight: 28),
-            onPressed: _pick,
-          ),
-        ],
+      width: 168,
+      child: AppDateField(
+        controller: _ctrl,
+        isDense: true,
+        firstDate: DateTime(2000),
+        lastDate: DateTime(2100),
+        decoration: const InputDecoration(
+          isDense: true,
+          hintText: '11/14/2026',
+          contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          border: OutlineInputBorder(),
+        ),
+        onDateChanged: (d) async {
+          if (d == null) {
+            await widget.onCommit(null);
+          } else {
+            await widget.onCommit(formatAppDateIso(d));
+          }
+        },
       ),
     );
   }

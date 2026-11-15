@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:pocketbase/pocketbase.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'app_date_field.dart';
 import 'pocketbase_service.dart';
 import 'models.dart';
 import 'shop_material_editor.dart';
@@ -105,7 +106,8 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
       _notesController.text = p.notes ?? '';
       _currency = p.currency == 'USD' ? 'USD' : 'CAD';
     }
-    _dateController = TextEditingController(text: DateFormat.yMMMd().format(_purchaseDate));
+    _dateController =
+        TextEditingController(text: formatAppDate(_purchaseDate));
     _loadData();
     if (p == null) {
       _lineItems.add(_newLineMap());
@@ -138,46 +140,6 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
       }
     }
     super.dispose();
-  }
-
-  void _openDatePicker() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _purchaseDate,
-      firstDate: DateTime(2017),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
-    );
-    if (picked != null) {
-      setState(() {
-        _purchaseDate = picked;
-        _dateController.text = DateFormat.yMMMd().format(_purchaseDate);
-      });
-    }
-  }
-
-  void _parseDateFromField() {
-    final text = _dateController.text.trim();
-    if (text.isEmpty) return;
-    DateTime? parsed;
-    try {
-      parsed = DateFormat.yMMMd().parse(text);
-    } catch (_) {}
-    if (parsed == null) {
-      try {
-        parsed = DateFormat('M/d/yyyy').parse(text);
-      } catch (_) {}
-    }
-    if (parsed == null) {
-      parsed = DateTime.tryParse(text);
-    }
-    if (parsed != null) {
-      setState(() {
-        _purchaseDate = parsed!;
-        _dateController.text = DateFormat.yMMMd().format(_purchaseDate);
-      });
-    } else {
-      _dateController.text = DateFormat.yMMMd().format(_purchaseDate);
-    }
   }
 
   num _qtyOf(Map<String, dynamic> item) {
@@ -598,6 +560,10 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
   }
 
   Future<void> _save() async {
+    // Commit typed date even if the field still has focus.
+    final typed = parseAppDate(_dateController.text);
+    if (typed != null) _purchaseDate = typed;
+
     final validLines = _lineItems.where((e) {
       final type = e['type'] as String? ?? 'item';
       if (type == 'item') {
@@ -868,21 +834,17 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-                  // Date: type or tap calendar
-                  TextField(
+                  // Date: type or tap calendar (commits when you leave the field).
+                  AppDateField(
                     controller: _dateController,
-                    decoration: InputDecoration(
-                      floatingLabelBehavior: FloatingLabelBehavior.always,
-                      labelText: 'Date',
-                      border: const OutlineInputBorder(),
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.calendar_today),
-                        onPressed: _openDatePicker,
-                        tooltip: 'Pick date',
-                      ),
-                    ),
-                    onSubmitted: (_) => _parseDateFromField(),
-                    onEditingComplete: _parseDateFromField,
+                    initialDate: _purchaseDate,
+                    labelText: 'Date',
+                    allowEmpty: false,
+                    firstDate: DateTime(2017),
+                    lastDate: DateTime.now().add(const Duration(days: 365)),
+                    onDateChanged: (d) {
+                      if (d != null) setState(() => _purchaseDate = d);
+                    },
                   ),
                   const SizedBox(height: 16),
                   // Supplier + Order reference on same row

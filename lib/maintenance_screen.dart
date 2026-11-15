@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import 'app_date_field.dart';
 import 'auth_service.dart';
 import 'drawer_behavior.dart';
 import 'list_toolbar_widgets.dart';
@@ -12,6 +13,11 @@ import 'part_images_panel.dart';
 import 'pocketbase_service.dart';
 import 'workspace_layout.dart';
 import 'workspace_scaffold.dart';
+
+String _maintenanceIsoFromField(String text, {DateTime? fallback}) {
+  final d = parseAppDate(text) ?? fallback ?? todayDate();
+  return formatAppDateIso(d);
+}
 
 class _PendingPhoto {
   final String name;
@@ -395,7 +401,8 @@ class _MaintenanceScreenState extends State<MaintenanceScreen>
 
   Future<void> _markScheduleDone(dynamic schedule) async {
     final data = _data(schedule);
-    final dateCtrl = TextEditingController(text: formatMaintenanceDate(todayDate()));
+    final dateCtrl =
+        TextEditingController(text: formatAppDate(todayDate()));
     final noteCtrl = TextEditingController();
     var pendingPhotos = <_PendingPhoto>[];
     final ok = await showDialog<bool>(
@@ -409,30 +416,13 @@ class _MaintenanceScreenState extends State<MaintenanceScreen>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextField(
+                  AppDateField(
                     controller: dateCtrl,
-                    readOnly: true,
-                    decoration: InputDecoration(
-                      labelText: 'Completed date',
-                      suffixIcon: IconButton(
-                        icon: const Icon(Icons.calendar_today_outlined),
-                        onPressed: () async {
-                          var initial = todayDate();
-                          try {
-                            initial = DateTime.parse(dateCtrl.text);
-                          } catch (_) {}
-                          final picked = await showDatePicker(
-                            context: context,
-                            initialDate: initial,
-                            firstDate: DateTime(2020),
-                            lastDate: DateTime(2100),
-                          );
-                          if (picked != null) {
-                            dateCtrl.text = formatMaintenanceDate(picked);
-                          }
-                        },
-                      ),
-                    ),
+                    initialDate: todayDate(),
+                    labelText: 'Completed date',
+                    allowEmpty: false,
+                    firstDate: DateTime(2020),
+                    lastDate: DateTime(2100),
                   ),
                   const SizedBox(height: 12),
                   TextField(
@@ -476,7 +466,7 @@ class _MaintenanceScreenState extends State<MaintenanceScreen>
         machineId: _machineIdOf(schedule),
         frequencyValue: freqValue,
         frequencyUnit: unit,
-        completedDate: dateCtrl.text.trim(),
+        completedDate: _maintenanceIsoFromField(dateCtrl.text),
         note: noteCtrl.text,
         leadDays: leadDaysOf(data),
         active: scheduleIsActive(data),
@@ -1211,11 +1201,8 @@ class _MaintenanceRecordDialogState extends State<_MaintenanceRecordDialog> {
     _name = TextEditingController(text: '${data['name'] ?? ''}');
     _note = TextEditingController(text: '${data['note'] ?? ''}');
     final rawDate = '${data['completed_date'] ?? ''}'.trim();
-    _date = TextEditingController(
-      text: rawDate.length >= 10
-          ? rawDate.substring(0, 10)
-          : (rawDate.isEmpty ? formatMaintenanceDate(todayDate()) : rawDate),
-    );
+    final parsedDone = parseAppDate(rawDate) ?? todayDate();
+    _date = TextEditingController(text: formatAppDate(parsedDone));
     final mid = data['machine']?.toString();
     _machineId = (mid != null && mid.isNotEmpty)
         ? mid
@@ -1229,24 +1216,6 @@ class _MaintenanceRecordDialogState extends State<_MaintenanceRecordDialog> {
     _note.dispose();
     _date.dispose();
     super.dispose();
-  }
-
-  Future<void> _pickDate() async {
-    var initial = DateTime.now();
-    final t = _date.text.trim();
-    if (t.isNotEmpty) {
-      try {
-        initial = DateTime.parse(t);
-      } catch (_) {}
-    }
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: initial,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2100),
-    );
-    if (picked == null) return;
-    setState(() => _date.text = formatMaintenanceDate(picked));
   }
 
   Future<void> _addMachineInline() async {
@@ -1273,6 +1242,7 @@ class _MaintenanceRecordDialogState extends State<_MaintenanceRecordDialog> {
     }
     setState(() => _saving = true);
     final email = AuthService.instance.email;
+    final completedIso = _maintenanceIsoFromField(_date.text);
     try {
       final pb = PocketBaseService();
       if (_isEdit) {
@@ -1280,7 +1250,7 @@ class _MaintenanceRecordDialogState extends State<_MaintenanceRecordDialog> {
           id: widget.record.id,
           name: name,
           machineId: _machineId!,
-          completedDate: _date.text.trim(),
+          completedDate: completedIso,
           note: _note.text,
           updatedByEmail: email,
         );
@@ -1288,7 +1258,7 @@ class _MaintenanceRecordDialogState extends State<_MaintenanceRecordDialog> {
         await pb.createMaintenanceRecord(
           name: name,
           machineId: _machineId!,
-          completedDate: _date.text.trim(),
+          completedDate: completedIso,
           note: _note.text,
           updatedByEmail: email,
           photoFiles: _pendingPhotos.isEmpty
@@ -1367,17 +1337,12 @@ class _MaintenanceRecordDialogState extends State<_MaintenanceRecordDialog> {
                 textCapitalization: TextCapitalization.sentences,
               ),
               const SizedBox(height: 12),
-              TextField(
+              AppDateField(
                 controller: _date,
-                readOnly: true,
-                decoration: InputDecoration(
-                  labelText: 'Completed date',
-                  suffixIcon: IconButton(
-                    icon: const Icon(Icons.calendar_today_outlined),
-                    onPressed: _pickDate,
-                  ),
-                ),
-                onTap: _pickDate,
+                labelText: 'Completed date',
+                allowEmpty: false,
+                firstDate: DateTime(2020),
+                lastDate: DateTime(2100),
               ),
               const SizedBox(height: 12),
               Row(
@@ -1490,11 +1455,8 @@ class _MaintenanceScheduleDialogState extends State<_MaintenanceScheduleDialog> 
     );
     _lead = TextEditingController(text: '${leadDaysOf(data)}');
     final rawDue = '${data['next_due_date'] ?? ''}'.trim();
-    _nextDue = TextEditingController(
-      text: rawDue.length >= 10
-          ? rawDue.substring(0, 10)
-          : formatMaintenanceDate(todayDate()),
-    );
+    final parsedDue = parseAppDate(rawDue) ?? todayDate();
+    _nextDue = TextEditingController(text: formatAppDate(parsedDue));
     final u = '${data['frequency_unit'] ?? 'days'}';
     _unit = (u == 'weeks' || u == 'months') ? u : 'days';
     _active = scheduleIsActive(data);
@@ -1513,21 +1475,6 @@ class _MaintenanceScheduleDialogState extends State<_MaintenanceScheduleDialog> 
     _lead.dispose();
     _nextDue.dispose();
     super.dispose();
-  }
-
-  Future<void> _pickDue() async {
-    var initial = todayDate();
-    try {
-      initial = DateTime.parse(_nextDue.text);
-    } catch (_) {}
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: initial,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2100),
-    );
-    if (picked == null) return;
-    setState(() => _nextDue.text = formatMaintenanceDate(picked));
   }
 
   Future<void> _addMachineInline() async {
@@ -1560,9 +1507,13 @@ class _MaintenanceScheduleDialogState extends State<_MaintenanceScheduleDialog> 
     }
     setState(() => _saving = true);
     final email = AuthService.instance.email;
+    final nextDueIso = _maintenanceIsoFromField(_nextDue.text);
     final lastRaw = _isEdit
         ? '${widget.schedule.data['last_completed_date'] ?? ''}'.trim()
         : '';
+    final lastIso = parseAppDate(lastRaw) != null
+        ? formatAppDateIso(parseAppDate(lastRaw)!)
+        : null;
     try {
       final pb = PocketBaseService();
       if (_isEdit) {
@@ -1572,8 +1523,8 @@ class _MaintenanceScheduleDialogState extends State<_MaintenanceScheduleDialog> 
           machineId: _machineId!,
           frequencyValue: freq,
           frequencyUnit: _unit,
-          nextDueDate: _nextDue.text.trim(),
-          lastCompletedDate: lastRaw.length >= 10 ? lastRaw.substring(0, 10) : null,
+          nextDueDate: nextDueIso,
+          lastCompletedDate: lastIso,
           note: _note.text,
           leadDays: lead.clamp(0, 3650),
           active: _active,
@@ -1585,7 +1536,7 @@ class _MaintenanceScheduleDialogState extends State<_MaintenanceScheduleDialog> 
           machineId: _machineId!,
           frequencyValue: freq,
           frequencyUnit: _unit,
-          nextDueDate: _nextDue.text.trim(),
+          nextDueDate: nextDueIso,
           note: _note.text,
           leadDays: lead.clamp(0, 3650),
           active: _active,
@@ -1731,17 +1682,12 @@ class _MaintenanceScheduleDialogState extends State<_MaintenanceScheduleDialog> 
                 ],
               ),
               const SizedBox(height: 12),
-              TextField(
+              AppDateField(
                 controller: _nextDue,
-                readOnly: true,
-                decoration: InputDecoration(
-                  labelText: 'Next due',
-                  suffixIcon: IconButton(
-                    icon: const Icon(Icons.calendar_today_outlined),
-                    onPressed: _pickDue,
-                  ),
-                ),
-                onTap: _pickDue,
+                labelText: 'Next due',
+                allowEmpty: false,
+                firstDate: DateTime(2020),
+                lastDate: DateTime(2100),
               ),
               const SizedBox(height: 12),
               TextField(

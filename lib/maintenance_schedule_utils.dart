@@ -1,26 +1,21 @@
-import 'package:intl/intl.dart';
+import 'app_date_field.dart';
 
 /// Due status for a maintenance schedule (in-app alerts).
 enum MaintenanceDueStatus { overdue, dueSoon, ok, inactive }
 
 DateTime? parseMaintenanceDate(dynamic raw) {
   if (raw == null) return null;
-  final s = raw.toString().trim();
-  if (s.isEmpty) return null;
-  try {
-    final dt = DateTime.parse(s);
-    return DateTime(dt.year, dt.month, dt.day);
-  } catch (_) {
-    return null;
-  }
+  return parseAppDate(raw.toString());
 }
 
-String formatMaintenanceDate(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
+/// ISO for PocketBase writes (`yyyy-MM-dd`).
+String formatMaintenanceDate(DateTime d) => formatAppDateIso(d);
 
+/// UI / list label (`Nov 14, 2026`).
 String formatMaintenanceDateLabel(dynamic raw) {
   final d = parseMaintenanceDate(raw);
   if (d == null) return '—';
-  return DateFormat.yMMMd().format(d);
+  return formatAppDate(d);
 }
 
 DateTime todayDate() {
