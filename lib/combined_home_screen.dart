@@ -467,9 +467,24 @@ class _CombinedHomeScreenState extends State<CombinedHomeScreen> with AutoOpenDr
   Widget _dashboardSection({
     required String title,
     required Widget child,
-    Widget? trailing,
+    VoidCallback? onTitleTap,
     EdgeInsetsGeometry? margin,
   }) {
+    final titleStyle = TextStyle(
+      fontSize: 16,
+      fontWeight: FontWeight.w600,
+      color: onTitleTap != null ? QuoteSidebarTheme.primary(context) : null,
+      decoration: onTitleTap != null ? TextDecoration.underline : null,
+      decorationColor:
+          onTitleTap != null ? QuoteSidebarTheme.primary(context) : null,
+    );
+    final titleWidget = onTitleTap == null
+        ? Text(title, style: titleStyle)
+        : InkWell(
+            onTap: onTitleTap,
+            borderRadius: BorderRadius.circular(4),
+            child: Text(title, style: titleStyle),
+          );
     return Card(
       margin: margin ?? const EdgeInsets.only(top: 16),
       child: Padding(
@@ -477,18 +492,7 @@ class _CombinedHomeScreenState extends State<CombinedHomeScreen> with AutoOpenDr
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(
-                  child: Text(
-                    title,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                  ),
-                ),
-                if (trailing != null) trailing,
-              ],
-            ),
+            Align(alignment: Alignment.centerLeft, child: titleWidget),
             const SizedBox(height: 8),
             child,
           ],
@@ -1059,33 +1063,27 @@ class _CombinedHomeScreenState extends State<CombinedHomeScreen> with AutoOpenDr
                 _dashboardSection(
                   title: 'Active Jobs',
                   margin: const EdgeInsets.only(top: 24),
-                  trailing: TextButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const JobsScreen(),
-                        ),
-                      );
-                    },
-                    child: const Text('All jobs'),
-                  ),
+                  onTitleTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const JobsScreen(),
+                      ),
+                    );
+                  },
                   child: _activeJobsTable(activeJobs),
                 ),
                 if (!_isJobsOnly)
                   _dashboardSection(
                     title: 'Recent Quotes',
-                    trailing: TextButton(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const QuotesScreen(),
-                          ),
-                        );
-                      },
-                      child: const Text('All quotes'),
-                    ),
+                    onTitleTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const QuotesScreen(),
+                        ),
+                      );
+                    },
                     child: _recentQuotesTable(recentQuotes),
                   ),
               ],
