@@ -4,15 +4,16 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
-import 'pocketbase_service.dart';
-import 'models.dart';
 import 'add_inventory_dialog.dart';
+import 'calibration_panel.dart';
+import 'drawer_behavior.dart';
+import 'inventory_screen.dart';
+import 'label_print_service.dart';
+import 'models.dart';
+import 'pocketbase_service.dart';
+import 'transfer_dialog.dart';
 import 'workspace_layout.dart';
 import 'workspace_scaffold.dart';
-import 'inventory_screen.dart';
-import 'transfer_dialog.dart';
-import 'drawer_behavior.dart';
-import 'label_print_service.dart';
 import 'package:intl/intl.dart'; // For date formatting in history
 import 'package:url_launcher/url_launcher.dart';
 
@@ -273,6 +274,10 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
   List<dynamic> _purchaseHistoryRecords = [];
   bool _loadingPurchaseHistory = false;
 
+  // Inspection calibration schedule (edit mode only)
+  dynamic _calibrationSchedule;
+  bool _loadingCalibration = false;
+
   // Tool usage (performance stats)
   List<dynamic> _toolUsageRecords = [];
   bool _loadingToolUsage = false;
@@ -294,6 +299,9 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
   bool _isInitialized = false;
   
   bool get _isEditMode => widget.tool != null && !widget.isDuplicate;
+
+  bool get _isInspectionCategory =>
+      _category.trim().toLowerCase() == 'inspection';
   
   @override
   void initState() {
@@ -356,6 +364,7 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
       _loadRecentHistory();
       _loadPurchaseHistory();
       _loadToolUsage();
+      _loadCalibrationSchedule();
     }
     
     // Mark initialization as complete and trigger UI update
@@ -1193,6 +1202,7 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
           });
           // Reload brands and suppliers filtered by new category - pass categoryId directly
           _loadBrandsAndSuppliers(categoryId: value);
+          _loadCalibrationSchedule();
         }
       },
       validator: (value) {
@@ -1232,6 +1242,7 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
                 });
                 // Reload brands and suppliers filtered by new category - pass categoryId directly
                 _loadBrandsAndSuppliers(categoryId: category.id);
+                _loadCalibrationSchedule();
               },
               style: ElevatedButton.styleFrom(
                 backgroundColor: isSelected ? Colors.blue : Colors.grey[300],
@@ -1391,6 +1402,37 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
       print('Error loading history: $e');
       setState(() {
         _loadingHistory = false;
+      });
+    }
+  }
+
+  Future<void> _loadCalibrationSchedule() async {
+    if (!_isEditMode || !_isInspectionCategory) {
+      if (_calibrationSchedule != null || _loadingCalibration) {
+        setState(() {
+          _calibrationSchedule = null;
+          _loadingCalibration = false;
+        });
+      }
+      return;
+    }
+
+    setState(() => _loadingCalibration = true);
+    try {
+      final pbService = PocketBaseService();
+      final schedule =
+          await pbService.getCalibrationScheduleForTool(widget.tool!.id);
+      if (!mounted) return;
+      setState(() {
+        _calibrationSchedule = schedule;
+        _loadingCalibration = false;
+      });
+    } catch (e) {
+      print('Error loading calibration schedule: $e');
+      if (!mounted) return;
+      setState(() {
+        _calibrationSchedule = null;
+        _loadingCalibration = false;
       });
     }
   }
@@ -4100,6 +4142,7 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
                     ),
                     const SizedBox(height: 24),
                     ..._buildInventoryAndHistorySection(context),
+                    ..._buildCalibrationSection(context),
                   ],
                 ),
               ),
@@ -4114,8 +4157,32 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
   Widget _buildMobileSidePanel(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: _buildInventoryAndHistorySection(context),
+      children: [
+        ..._buildInventoryAndHistorySection(context),
+        ..._buildCalibrationSection(context),
+      ],
     );
+  }
+
+  /// Inspection edit: calibration block under Inventory on the right (or mobile panel).
+  List<Widget> _buildCalibrationSection(BuildContext context) {
+    if (!_isEditMode || !_isInspectionCategory) return const [];
+    return [
+      const SizedBox(height: 24),
+      const Divider(),
+      const SizedBox(height: 16),
+      if (_loadingCalibration)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 16),
+          child: Center(child: CircularProgressIndicator()),
+        )
+      else
+        CalibrationPanel(
+          tool: widget.tool!,
+          schedule: _calibrationSchedule,
+          onChanged: _loadCalibrationSchedule,
+        ),
+    ];
   }
 
   /// Shared inventory, performance stats, price history, then movement history.

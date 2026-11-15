@@ -7,19 +7,18 @@ import 'maintenance_schedule_utils.dart';
 import 'models.dart';
 import 'pocketbase_service.dart';
 
-/// Right-side calibration panel for an Inspection tool (Inventory master/detail).
+/// Calibration schedule + history for an Inspection tool.
+/// Designed to embed in Edit Tool (right column under Inventory), not as a page panel.
 class CalibrationPanel extends StatefulWidget {
   final Tool tool;
   final dynamic schedule; // PocketBase record or null
   final VoidCallback onChanged;
-  final VoidCallback onClose;
 
   const CalibrationPanel({
     super.key,
     required this.tool,
     required this.schedule,
     required this.onChanged,
-    required this.onClose,
   });
 
   @override
@@ -101,8 +100,7 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
   Future<void> _loadHistory() async {
     setState(() => _loadingHistory = true);
     try {
-      final rows =
-          await _pb.getCalibrationRecordsForTool(widget.tool.id);
+      final rows = await _pb.getCalibrationRecordsForTool(widget.tool.id);
       if (!mounted) return;
       setState(() {
         _history = rows;
@@ -275,221 +273,182 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
-    final status = widget.schedule == null
-        ? null
-        : dueStatusOf(_data);
+    final status = widget.schedule == null ? null : dueStatusOf(_data);
     final serial = (widget.tool.serialNumber ?? '').trim();
 
-    return Material(
-      color: scheme.surface,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-            decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(color: scheme.outlineVariant),
+    // Shrink-wrap Column so this can sit inside Edit Tool's right ListView.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Calibration',
+                style: textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Calibration',
-                        style: textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        widget.tool.toolName,
-                        style: textTheme.bodyMedium?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      if (serial.isNotEmpty)
-                        Text(
-                          'S/N $serial',
-                          style: textTheme.bodySmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                if (status != null) ...[
-                  _DueChip(status: status),
-                  const SizedBox(width: 4),
-                ],
-                IconButton(
-                  tooltip: 'Close',
-                  onPressed: widget.onClose,
-                  icon: const Icon(Icons.close),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                TextField(
-                  controller: _nameCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Schedule name',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _freqCtrl,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'Every',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      flex: 2,
-                      child: DropdownButtonFormField<String>(
-                        value: _freqUnit,
-                        decoration: const InputDecoration(
-                          labelText: 'Unit',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: const [
-                          DropdownMenuItem(value: 'days', child: Text('days')),
-                          DropdownMenuItem(
-                              value: 'weeks', child: Text('weeks')),
-                          DropdownMenuItem(
-                              value: 'months', child: Text('months')),
-                        ],
-                        onChanged: (v) {
-                          if (v == null) return;
-                          setState(() => _freqUnit = v);
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                AppDateField(
-                  controller: _nextDueCtrl,
-                  labelText: 'Next due',
-                  allowEmpty: false,
-                  firstDate: DateTime(2020),
-                  lastDate: DateTime(2100),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _leadCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Lead days (due soon)',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Active'),
-                  value: _active,
-                  onChanged: (v) => setState(() => _active = v),
-                ),
-                TextField(
-                  controller: _noteCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Note',
-                    border: OutlineInputBorder(),
-                    hintText: 'Vendor, tolerance, etc.',
-                  ),
-                  minLines: 2,
-                  maxLines: 4,
-                ),
-                if (widget.schedule != null) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    'Last calibrated: ${formatMaintenanceDateLabel(_data['last_completed_date'])}',
-                    style: textTheme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 16),
-                InventoryListActionButton(
-                  label: _saving
-                      ? 'Saving…'
-                      : (widget.schedule == null
-                          ? 'Create schedule'
-                          : 'Save schedule'),
-                  icon: Icons.save_outlined,
-                  onPressed: _saving ? null : _saveSchedule,
-                ),
-                if (widget.schedule != null) ...[
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    height: kListToolbarControlHeight,
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: _saving ? null : _markCalibrated,
-                      icon: const Icon(Icons.verified_outlined, size: 20),
-                      label: const Text('Mark calibrated'),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 24),
-                Text(
-                  'History',
-                  style: textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                if (_loadingHistory)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 16),
-                    child: Center(child: CircularProgressIndicator()),
-                  )
-                else if (_history.isEmpty)
-                  Text(
-                    'No calibration records yet.',
-                    style: textTheme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  )
-                else
-                  ..._history.take(12).map((r) {
-                    final d = Map<String, dynamic>.from(r.data as Map);
-                    return ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(
-                        formatMaintenanceDateLabel(d['completed_date']),
-                        style: textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      subtitle: (d['note']?.toString().trim().isNotEmpty == true)
-                          ? Text(d['note'].toString())
-                          : null,
-                    );
-                  }),
-              ],
+            if (status != null) _DueChip(status: status),
+          ],
+        ),
+        if (serial.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            'S/N $serial',
+            style: textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
             ),
           ),
         ],
-      ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _nameCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Schedule name',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _freqCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Every',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              flex: 2,
+              child: DropdownButtonFormField<String>(
+                value: _freqUnit,
+                decoration: const InputDecoration(
+                  labelText: 'Unit',
+                  border: OutlineInputBorder(),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'days', child: Text('days')),
+                  DropdownMenuItem(value: 'weeks', child: Text('weeks')),
+                  DropdownMenuItem(value: 'months', child: Text('months')),
+                ],
+                onChanged: (v) {
+                  if (v == null) return;
+                  setState(() => _freqUnit = v);
+                },
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        AppDateField(
+          controller: _nextDueCtrl,
+          labelText: 'Next due',
+          allowEmpty: false,
+          firstDate: DateTime(2020),
+          lastDate: DateTime(2100),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _leadCtrl,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'Lead days (due soon)',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 8),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Active'),
+          value: _active,
+          onChanged: (v) => setState(() => _active = v),
+        ),
+        TextField(
+          controller: _noteCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Note',
+            border: OutlineInputBorder(),
+            hintText: 'Vendor, tolerance, etc.',
+          ),
+          minLines: 2,
+          maxLines: 4,
+        ),
+        if (widget.schedule != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Last calibrated: ${formatMaintenanceDateLabel(_data['last_completed_date'])}',
+            style: textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+        const SizedBox(height: 16),
+        InventoryListActionButton(
+          label: _saving
+              ? 'Saving…'
+              : (widget.schedule == null
+                  ? 'Create schedule'
+                  : 'Save schedule'),
+          icon: Icons.save_outlined,
+          onPressed: _saving ? null : _saveSchedule,
+        ),
+        if (widget.schedule != null) ...[
+          const SizedBox(height: 8),
+          SizedBox(
+            height: kListToolbarControlHeight,
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _saving ? null : _markCalibrated,
+              icon: const Icon(Icons.verified_outlined, size: 20),
+              label: const Text('Mark calibrated'),
+            ),
+          ),
+        ],
+        const SizedBox(height: 24),
+        Text(
+          'History',
+          style: textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 8),
+        if (_loadingHistory)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (_history.isEmpty)
+          Text(
+            'No calibration records yet.',
+            style: textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          )
+        else
+          ..._history.take(12).map((r) {
+            final d = Map<String, dynamic>.from(r.data as Map);
+            return ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                formatMaintenanceDateLabel(d['completed_date']),
+                style: textTheme.bodyMedium?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              subtitle: (d['note']?.toString().trim().isNotEmpty == true)
+                  ? Text(d['note'].toString())
+                  : null,
+            );
+          }),
+      ],
     );
   }
 }

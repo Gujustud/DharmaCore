@@ -10,7 +10,6 @@ import 'pocketbase_service.dart';
 import 'return_dialog.dart';
 import 'tool_style_icons.dart';
 import 'transfer_dialog.dart';
-import 'ui_breakpoints.dart';
 import 'workspace_layout.dart';
 import 'workspace_scaffold.dart';
 
@@ -48,9 +47,7 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
   List<String> _availableBrands = [];
   List<String> _availableSubcats = [];
 
-  /// Inspection: selected tool for the right-hand calibration panel.
-  Tool? _selectedTool;
-  /// toolId → calibration_schedules record
+  /// toolId → calibration_schedules record (Inspection due badges).
   final Map<String, dynamic> _calibrationByToolId = {};
 
   bool get _isInspectionCategory {
@@ -388,16 +385,6 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
         _calibrationByToolId
           ..clear()
           ..addAll(calByTool);
-        if (_selectedTool != null) {
-          Tool? still;
-          for (final t in toolsWithLocs) {
-            if (t.tool.id == _selectedTool!.id) {
-              still = t.tool;
-              break;
-            }
-          }
-          _selectedTool = still;
-        }
         _isLoading = false;
       });
       // Re-apply search/filter when opening with initialSearchQuery (e.g. from main page)
@@ -519,32 +506,6 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
             ),
         ],
       ],
-    );
-  }
-
-  void _openCalibrationFor(Tool tool) {
-    final width = MediaQuery.sizeOf(context).width;
-    if (width >= kWorkspaceWideBreakpointPx) {
-      setState(() => _selectedTool = tool);
-      return;
-    }
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (ctx) {
-        return SizedBox(
-          height: MediaQuery.sizeOf(ctx).height * 0.92,
-          child: CalibrationPanel(
-            tool: tool,
-            schedule: _calibrationByToolId[tool.id],
-            onChanged: () {
-              _loadData();
-            },
-            onClose: () => Navigator.of(ctx).pop(),
-          ),
-        );
-      },
     );
   }
 
@@ -799,23 +760,14 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
                                     due = null;
                                   }
                                 }
-                                final selected =
-                                    _selectedTool?.id == tool.id;
                                 return ToolCard(
                                   toolWithLocations: item,
                                   allLocations: _allLocations,
                                   showToolDetails: _showToolDetails,
-                                  selected: selected,
                                   calibrationDue: _isInspectionCategory
                                       ? due
                                       : null,
-                                  onTap: () {
-                                    if (_isInspectionCategory) {
-                                      _openCalibrationFor(tool);
-                                    } else {
-                                      _navigateToEditTool(tool);
-                                    }
-                                  },
+                                  onTap: () => _navigateToEditTool(tool),
                                   onEdit: () => _navigateToEditTool(tool),
                                   onDuplicate: () =>
                                       _navigateToDuplicateTool(tool),
@@ -833,32 +785,6 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
       ],
     );
 
-    final width = MediaQuery.sizeOf(context).width;
-    final useCalPanel =
-        width >= kWorkspaceWideBreakpointPx && _isInspectionCategory;
-    final showCalPanel = useCalPanel &&
-        _selectedTool != null &&
-        !_isLoading &&
-        _errorMessage == null;
-
-    final scaffoldBody = showCalPanel
-        ? Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(child: bodyContent),
-              SizedBox(
-                width: (width * 0.38).clamp(320.0, 480.0),
-                child: CalibrationPanel(
-                  tool: _selectedTool!,
-                  schedule: _calibrationByToolId[_selectedTool!.id],
-                  onChanged: _loadData,
-                  onClose: () => setState(() => _selectedTool = null),
-                ),
-              ),
-            ],
-          )
-        : bodyContent;
-
     return WorkspaceScaffold(
       scaffoldKey: _scaffoldKey,
       appBar: AppBar(
@@ -873,7 +799,7 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
           ),
         ],
       ),
-      body: scaffoldBody,
+      body: bodyContent,
     );
   }
 }
@@ -887,7 +813,6 @@ class ToolCard extends StatelessWidget {
   final VoidCallback onDelete;
   final Function(ToolLocation) onTransfer;
   final bool showToolDetails;
-  final bool selected;
   final MaintenanceDueStatus? calibrationDue;
 
   const ToolCard({
@@ -900,7 +825,6 @@ class ToolCard extends StatelessWidget {
     required this.onDelete,
     required this.onTransfer,
     required this.showToolDetails,
-    this.selected = false,
     this.calibrationDue,
   }) : super(key: key);
 
@@ -923,13 +847,7 @@ class ToolCard extends StatelessWidget {
       onTap: onTap,
       child: Card(
         margin: const EdgeInsets.only(bottom: 16),
-        elevation: selected ? 4 : 2,
-        shape: selected
-            ? RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: BorderSide(color: scheme.primary, width: 2),
-              )
-            : null,
+        elevation: 2,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(

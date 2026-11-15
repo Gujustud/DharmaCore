@@ -31,4 +31,4 @@ ssh $ct 'echo SELECT file FROM _migrations | sqlite3 /opt/pocketbase-erp-dev/pb_
 
 Write-Host ""
 Write-Host "Done. Hard-refresh https://dharmacore.sscadcam.com/ (or clear site data)." -ForegroundColor Green
-Write-Host "Then open Inventory -> Inspection and tap a tool for the calibration panel." -ForegroundColor Yellow
+Write-Host "Then open Inventory -> Inspection -> Edit a tool; Calibration is under Inventory on the right." -ForegroundColor Yellow
