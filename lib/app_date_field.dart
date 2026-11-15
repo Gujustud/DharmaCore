@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+/// Shared shop date helpers + [AppDateField].
+///
+/// **Policy:** see `docs/APP_DATES.md` and `.cursor/rules/app-dates.mdc`.
+/// UI = month/day/year; storage = ISO `yyyy-MM-dd`; typing commits on blur.
+///
 /// Shared shop date display: month day year, e.g. `Nov 14, 2026`.
 final DateFormat appDateDisplayFormat = DateFormat.yMMMd();
 
