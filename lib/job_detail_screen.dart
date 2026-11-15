@@ -2140,19 +2140,49 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
             'No parts yet. Add one, or link a quote.',
             style: TextStyle(fontSize: 14, color: Colors.grey[600]),
           )
-        else
+        else ...[
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Row(
+              children: [
+                const SizedBox(width: 24), // line number gutter
+                SizedBox(
+                  width: compact ? 56 : 72,
+                  child: Text(
+                    'Qty',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: _labelColor(context),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Description',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: _labelColor(context),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 48), // delete button gutter
+              ],
+            ),
+          ),
           ...List.generate(_jobLines.length, (i) {
             final line = _jobLines[i];
             return Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.only(top: 12),
+                  SizedBox(
+                    width: 24,
                     child: Text('${i + 1}.'),
                   ),
-                  const SizedBox(width: 8),
                   SizedBox(
                     width: compact ? 56 : 72,
                     child: TextFormField(
@@ -2160,9 +2190,12 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
                       initialValue: '${line['quantity'] ?? 1}',
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(
-                        labelText: 'Qty',
                         border: OutlineInputBorder(),
                         isDense: true,
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 12,
+                        ),
                       ),
                       onChanged: (v) {
                         final n = num.tryParse(v.trim()) ?? 1;
@@ -2176,22 +2209,29 @@ class _JobDetailScreenState extends State<JobDetailScreen> with AutoOpenDrawerMi
                       key: ValueKey('job_line_desc_${line['id'] ?? 'new'}_$i'),
                       initialValue: '${line['description'] ?? ''}',
                       decoration: const InputDecoration(
-                        labelText: 'Description',
                         border: OutlineInputBorder(),
                         isDense: true,
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 12,
+                        ),
                       ),
                       onChanged: (v) => _jobLines[i]['description'] = v,
                     ),
                   ),
-                  IconButton(
-                    tooltip: 'Remove (not ordered)',
-                    onPressed: () => setState(() => _jobLines.removeAt(i)),
-                    icon: const Icon(Icons.delete_outline),
+                  SizedBox(
+                    width: 48,
+                    child: IconButton(
+                      tooltip: 'Remove (not ordered)',
+                      onPressed: () => setState(() => _jobLines.removeAt(i)),
+                      icon: const Icon(Icons.delete_outline),
+                    ),
                   ),
                 ],
               ),
             );
           }),
+        ],
       ],
     );
   }
