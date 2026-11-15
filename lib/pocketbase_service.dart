@@ -3877,6 +3877,202 @@ class PocketBaseService {
     }
   }
 
+  // --- Calibration (Inspection tools) ---
+
+  Future<List<dynamic>> getCalibrationSchedules() async {
+    try {
+      return await pb.collection('calibration_schedules').getFullList(
+        sort: 'next_due_date',
+        expand: 'tool',
+      );
+    } catch (e) {
+      print('Error getting calibration schedules: $e');
+      rethrow;
+    }
+  }
+
+  Future<dynamic> getCalibrationScheduleForTool(String toolId) async {
+    try {
+      final rows = await pb.collection('calibration_schedules').getFullList(
+        filter: 'tool = "$toolId"',
+        sort: '-updated',
+      );
+      return rows.isEmpty ? null : rows.first;
+    } catch (e) {
+      print('Error getting calibration schedule for tool: $e');
+      rethrow;
+    }
+  }
+
+  Future<List<dynamic>> getCalibrationRecordsForTool(String toolId) async {
+    try {
+      return await pb.collection('calibration_records').getFullList(
+        filter: 'tool = "$toolId"',
+        sort: '-completed_date,-created',
+      );
+    } catch (e) {
+      print('Error getting calibration records: $e');
+      rethrow;
+    }
+  }
+
+  Future<dynamic> createCalibrationSchedule({
+    required String name,
+    required String toolId,
+    required int frequencyValue,
+    required String frequencyUnit,
+    required String nextDueDate,
+    String? note,
+    int leadDays = 7,
+    bool active = true,
+    String? updatedByEmail,
+  }) async {
+    try {
+      return await pb.collection('calibration_schedules').create(body: {
+        'name': name.trim(),
+        'tool': toolId,
+        'frequency_value': frequencyValue < 1 ? 1 : frequencyValue,
+        'frequency_unit': frequencyUnit,
+        'next_due_date': nextDueDate,
+        'lead_days': leadDays,
+        'active': active,
+        if (note != null) 'note': note,
+        if (updatedByEmail != null && updatedByEmail.isNotEmpty)
+          'updated_by_email': updatedByEmail,
+      });
+    } catch (e) {
+      print('Error creating calibration schedule: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> updateCalibrationSchedule({
+    required String id,
+    required String name,
+    required String toolId,
+    required int frequencyValue,
+    required String frequencyUnit,
+    required String nextDueDate,
+    String? lastCompletedDate,
+    String? note,
+    int leadDays = 7,
+    bool active = true,
+    String? updatedByEmail,
+  }) async {
+    try {
+      await pb.collection('calibration_schedules').update(id, body: {
+        'name': name.trim(),
+        'tool': toolId,
+        'frequency_value': frequencyValue < 1 ? 1 : frequencyValue,
+        'frequency_unit': frequencyUnit,
+        'next_due_date': nextDueDate,
+        'last_completed_date':
+            (lastCompletedDate != null && lastCompletedDate.isNotEmpty)
+                ? lastCompletedDate
+                : null,
+        'lead_days': leadDays,
+        'active': active,
+        'note': note ?? '',
+        if (updatedByEmail != null && updatedByEmail.isNotEmpty)
+          'updated_by_email': updatedByEmail,
+      });
+    } catch (e) {
+      print('Error updating calibration schedule: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> deleteCalibrationSchedule(String id) async {
+    try {
+      await pb.collection('calibration_schedules').delete(id);
+    } catch (e) {
+      print('Error deleting calibration schedule: $e');
+      rethrow;
+    }
+  }
+
+  Future<dynamic> createCalibrationRecord({
+    required String name,
+    required String toolId,
+    String? completedDate,
+    String? note,
+    String? updatedByEmail,
+    String? scheduleId,
+    List<http.MultipartFile>? certificateFiles,
+  }) async {
+    try {
+      final body = <String, dynamic>{
+        'name': name.trim(),
+        'tool': toolId,
+        if (completedDate != null && completedDate.isNotEmpty)
+          'completed_date': completedDate,
+        if (note != null) 'note': note,
+        if (updatedByEmail != null && updatedByEmail.isNotEmpty)
+          'updated_by_email': updatedByEmail,
+        if (scheduleId != null && scheduleId.isNotEmpty) 'schedule': scheduleId,
+      };
+      if (certificateFiles != null && certificateFiles.isNotEmpty) {
+        return await pb.collection('calibration_records').create(
+          body: body,
+          files: certificateFiles,
+        );
+      }
+      return await pb.collection('calibration_records').create(body: body);
+    } catch (e) {
+      print('Error creating calibration record: $e');
+      rethrow;
+    }
+  }
+
+  /// Log a calibration and advance [next_due_date] from the completed date.
+  Future<void> completeCalibrationSchedule({
+    required String scheduleId,
+    required String name,
+    required String toolId,
+    required int frequencyValue,
+    required String frequencyUnit,
+    required String completedDate,
+    String? note,
+    int leadDays = 7,
+    bool active = true,
+    String? updatedByEmail,
+    List<http.MultipartFile>? certificateFiles,
+  }) async {
+    try {
+      await createCalibrationRecord(
+        name: name,
+        toolId: toolId,
+        completedDate: completedDate,
+        note: note,
+        updatedByEmail: updatedByEmail,
+        scheduleId: scheduleId,
+        certificateFiles: certificateFiles,
+      );
+
+      final completed = DateTime.parse(completedDate);
+      final from = DateTime(completed.year, completed.month, completed.day);
+      final next = _advanceMaintenanceDue(
+        from: from,
+        frequencyValue: frequencyValue,
+        frequencyUnit: frequencyUnit,
+      );
+      final nextStr =
+          '${next.year.toString().padLeft(4, '0')}-${next.month.toString().padLeft(2, '0')}-${next.day.toString().padLeft(2, '0')}';
+
+      await pb.collection('calibration_schedules').update(scheduleId, body: {
+        'last_completed_date': completedDate,
+        'next_due_date': nextStr,
+        'lead_days': leadDays,
+        'active': active,
+        if (updatedByEmail != null && updatedByEmail.isNotEmpty)
+          'updated_by_email': updatedByEmail,
+      });
+    } catch (e) {
+      print('Error completing calibration schedule: $e');
+      rethrow;
+    }
+  }
+
   // --- Wiki tables (reusable grids embedded via {{table:id}}) ---
 
   Future<List<RecordModel>> getWikiTablesForPage(String pageId) async {

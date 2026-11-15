@@ -1,13 +1,16 @@
 // inventory_screen.dart
 import 'package:flutter/material.dart';
-import 'models.dart';
-import 'pocketbase_service.dart';
-import 'transfer_dialog.dart';
 import 'add_tool_screen.dart';
-import 'return_dialog.dart';
+import 'calibration_panel.dart';
 import 'drawer_behavior.dart';
 import 'list_toolbar_widgets.dart';
+import 'maintenance_schedule_utils.dart';
+import 'models.dart';
+import 'pocketbase_service.dart';
+import 'return_dialog.dart';
 import 'tool_style_icons.dart';
+import 'transfer_dialog.dart';
+import 'ui_breakpoints.dart';
 import 'workspace_layout.dart';
 import 'workspace_scaffold.dart';
 
@@ -44,6 +47,16 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
   // Available filter options (derived from loaded tools)
   List<String> _availableBrands = [];
   List<String> _availableSubcats = [];
+
+  /// Inspection: selected tool for the right-hand calibration panel.
+  Tool? _selectedTool;
+  /// toolId → calibration_schedules record
+  final Map<String, dynamic> _calibrationByToolId = {};
+
+  bool get _isInspectionCategory {
+    final c = widget.categoryFilter?.trim().toLowerCase() ?? '';
+    return c == 'inspection';
+  }
 
   @override
   GlobalKey<ScaffoldState> get scaffoldKey => _scaffoldKey;
@@ -350,12 +363,41 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
         ToolStyleIcons.typeOrder,
       );
 
+      final calByTool = <String, dynamic>{};
+      if (_isInspectionCategory) {
+        try {
+          final schedules = await _pbService.getCalibrationSchedules();
+          for (final s in schedules) {
+            final toolId = s.data['tool']?.toString() ?? '';
+            if (toolId.isEmpty) continue;
+            // Prefer first (list is sorted by next_due_date); keep earliest due.
+            calByTool.putIfAbsent(toolId, () => s);
+          }
+        } catch (e) {
+          // Collection may not exist until migration is applied on CT.
+          print('Calibration schedules unavailable: $e');
+        }
+      }
+
       setState(() {
         _toolsWithLocations = toolsWithLocs;
         _filteredTools = toolsWithLocs;
         _showToolDetails = showDetails;
         _availableBrands = brands;
         _availableSubcats = subcats;
+        _calibrationByToolId
+          ..clear()
+          ..addAll(calByTool);
+        if (_selectedTool != null) {
+          Tool? still;
+          for (final t in toolsWithLocs) {
+            if (t.tool.id == _selectedTool!.id) {
+              still = t.tool;
+              break;
+            }
+          }
+          _selectedTool = still;
+        }
         _isLoading = false;
       });
       // Re-apply search/filter when opening with initialSearchQuery (e.g. from main page)
@@ -477,6 +519,32 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
             ),
         ],
       ],
+    );
+  }
+
+  void _openCalibrationFor(Tool tool) {
+    final width = MediaQuery.sizeOf(context).width;
+    if (width >= kWorkspaceWideBreakpointPx) {
+      setState(() => _selectedTool = tool);
+      return;
+    }
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (ctx) {
+        return SizedBox(
+          height: MediaQuery.sizeOf(ctx).height * 0.92,
+          child: CalibrationPanel(
+            tool: tool,
+            schedule: _calibrationByToolId[tool.id],
+            onChanged: () {
+              _loadData();
+            },
+            onClose: () => Navigator.of(ctx).pop(),
+          ),
+        );
+      },
     );
   }
 
@@ -715,17 +783,46 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
                               padding: const EdgeInsets.all(16),
                               itemCount: _filteredTools.length,
                               itemBuilder: (context, index) {
+                                final item = _filteredTools[index];
+                                final tool = item.tool;
+                                final schedule =
+                                    _calibrationByToolId[tool.id];
+                                MaintenanceDueStatus? due;
+                                if (schedule != null) {
+                                  try {
+                                    due = dueStatusOf(
+                                      Map<String, dynamic>.from(
+                                        schedule.data as Map,
+                                      ),
+                                    );
+                                  } catch (_) {
+                                    due = null;
+                                  }
+                                }
+                                final selected =
+                                    _selectedTool?.id == tool.id;
                                 return ToolCard(
-                                  toolWithLocations: _filteredTools[index],
+                                  toolWithLocations: item,
                                   allLocations: _allLocations,
-                                  showToolDetails: _showToolDetails, // NEW
-                                  onTap: () => _navigateToEditTool(_filteredTools[index].tool),
-                                  onEdit: () => _navigateToEditTool(_filteredTools[index].tool),
-                                  onDuplicate: () => _navigateToDuplicateTool(_filteredTools[index].tool),
-                                  onDelete: () => _deleteTool(_filteredTools[index].tool),
+                                  showToolDetails: _showToolDetails,
+                                  selected: selected,
+                                  calibrationDue: _isInspectionCategory
+                                      ? due
+                                      : null,
+                                  onTap: () {
+                                    if (_isInspectionCategory) {
+                                      _openCalibrationFor(tool);
+                                    } else {
+                                      _navigateToEditTool(tool);
+                                    }
+                                  },
+                                  onEdit: () => _navigateToEditTool(tool),
+                                  onDuplicate: () =>
+                                      _navigateToDuplicateTool(tool),
+                                  onDelete: () => _deleteTool(tool),
                                   onTransfer: (sourceLocation) {
                                     _handleTransfer(
-                                      tool: _filteredTools[index].tool,
+                                      tool: tool,
                                       sourceLocation: sourceLocation,
                                     );
                                   },
@@ -735,6 +832,32 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
         ),
       ],
     );
+
+    final width = MediaQuery.sizeOf(context).width;
+    final useCalPanel =
+        width >= kWorkspaceWideBreakpointPx && _isInspectionCategory;
+    final showCalPanel = useCalPanel &&
+        _selectedTool != null &&
+        !_isLoading &&
+        _errorMessage == null;
+
+    final scaffoldBody = showCalPanel
+        ? Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(child: bodyContent),
+              SizedBox(
+                width: (width * 0.38).clamp(320.0, 480.0),
+                child: CalibrationPanel(
+                  tool: _selectedTool!,
+                  schedule: _calibrationByToolId[_selectedTool!.id],
+                  onChanged: _loadData,
+                  onClose: () => setState(() => _selectedTool = null),
+                ),
+              ),
+            ],
+          )
+        : bodyContent;
 
     return WorkspaceScaffold(
       scaffoldKey: _scaffoldKey,
@@ -750,7 +873,7 @@ class _InventoryScreenState extends State<InventoryScreen> with AutoOpenDrawerMi
           ),
         ],
       ),
-      body: bodyContent,
+      body: scaffoldBody,
     );
   }
 }
@@ -763,7 +886,9 @@ class ToolCard extends StatelessWidget {
   final VoidCallback onDuplicate;
   final VoidCallback onDelete;
   final Function(ToolLocation) onTransfer;
-  final bool showToolDetails; // NEW
+  final bool showToolDetails;
+  final bool selected;
+  final MaintenanceDueStatus? calibrationDue;
 
   const ToolCard({
     Key? key,
@@ -774,7 +899,9 @@ class ToolCard extends StatelessWidget {
     required this.onDuplicate,
     required this.onDelete,
     required this.onTransfer,
-    required this.showToolDetails, // NEW
+    required this.showToolDetails,
+    this.selected = false,
+    this.calibrationDue,
   }) : super(key: key);
 
   @override
@@ -796,7 +923,13 @@ class ToolCard extends StatelessWidget {
       onTap: onTap,
       child: Card(
         margin: const EdgeInsets.only(bottom: 16),
-        elevation: 2,
+        elevation: selected ? 4 : 2,
+        shape: selected
+            ? RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: scheme.primary, width: 2),
+              )
+            : null,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Row(
@@ -808,7 +941,17 @@ class ToolCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(tool.toolName, style: titleStyle),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(tool.toolName, style: titleStyle),
+                        ),
+                        if (calibrationDue != null) ...[
+                          const SizedBox(width: 8),
+                          CalibrationDueBadge(status: calibrationDue!),
+                        ],
+                      ],
+                    ),
                     const SizedBox(height: 4),
                     if (tool.subcategory != null &&
                         tool.subcategory!.isNotEmpty) ...[
