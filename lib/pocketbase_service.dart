@@ -4026,6 +4026,53 @@ class PocketBaseService {
     }
   }
 
+  Future<void> updateCalibrationRecord({
+    required String id,
+    required String name,
+    required String toolId,
+    String? completedDate,
+    String? note,
+    String? updatedByEmail,
+    String? scheduleId,
+    List<http.MultipartFile>? certificateFiles,
+  }) async {
+    try {
+      final body = <String, dynamic>{
+        'name': name.trim(),
+        'tool': toolId,
+        'completed_date':
+            (completedDate != null && completedDate.isNotEmpty)
+                ? completedDate
+                : null,
+        'note': note ?? '',
+        if (updatedByEmail != null && updatedByEmail.isNotEmpty)
+          'updated_by_email': updatedByEmail,
+        if (scheduleId != null && scheduleId.isNotEmpty) 'schedule': scheduleId,
+      };
+      if (certificateFiles != null && certificateFiles.isNotEmpty) {
+        await pb.collection('calibration_records').update(
+          id,
+          body: body,
+          files: certificateFiles,
+        );
+        return;
+      }
+      await pb.collection('calibration_records').update(id, body: body);
+    } catch (e) {
+      print('Error updating calibration record: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> deleteCalibrationRecord(String id) async {
+    try {
+      await pb.collection('calibration_records').delete(id);
+    } catch (e) {
+      print('Error deleting calibration record: $e');
+      rethrow;
+    }
+  }
+
   /// Log a calibration and advance [next_due_date] from the completed date.
   Future<void> completeCalibrationSchedule({
     required String scheduleId,

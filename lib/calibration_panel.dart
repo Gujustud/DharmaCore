@@ -152,20 +152,32 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
     }
   }
 
-  Future<void> _addCalibration() async {
-    final dateCtrl = TextEditingController(text: formatAppDate(todayDate()));
-    final noteCtrl = TextEditingController();
+  Future<_CalFormResult?> _showCalibrationForm({
+    required String title,
+    String? initialDateText,
+    String? initialLab,
+    String? existingCertName,
+    bool showUpdateNextDue = true,
+    bool showDelete = false,
+  }) async {
+    final dateCtrl = TextEditingController(
+      text: initialDateText?.trim().isNotEmpty == true
+          ? initialDateText!
+          : formatAppDate(todayDate()),
+    );
+    final labCtrl = TextEditingController(text: initialLab ?? '');
     Uint8List? pdfBytes;
     String? pdfName;
-    var updateNextDue = true;
+    var updateNextDue = showUpdateNextDue;
+    var existingLabel = existingCertName;
 
-    final ok = await showDialog<bool>(
+    final result = await showDialog<Object?>(
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setLocal) {
             return AlertDialog(
-              title: const Text('Add calibration'),
+              title: Text(title),
               content: SizedBox(
                 width: 420,
                 child: Column(
@@ -174,7 +186,8 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
                   children: [
                     AppDateField(
                       controller: dateCtrl,
-                      initialDate: todayDate(),
+                      initialDate:
+                          parseAppDate(dateCtrl.text) ?? todayDate(),
                       labelText: 'Calibration date',
                       allowEmpty: false,
                       firstDate: DateTime(2000),
@@ -182,18 +195,16 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
                     ),
                     const SizedBox(height: 12),
                     TextField(
-                      controller: noteCtrl,
+                      controller: labCtrl,
                       decoration: const InputDecoration(
-                        labelText: 'Note (optional)',
-                        hintText: 'Vendor, pass/fail, etc.',
+                        labelText: 'Calibrated at (lab / vendor)',
+                        hintText: 'e.g. Wescan',
                       ),
-                      minLines: 2,
-                      maxLines: 4,
                     ),
                     const SizedBox(height: 12),
                     OutlinedButton.icon(
                       onPressed: () async {
-                        final result = await FilePicker.pickFiles(
+                        final picked = await FilePicker.pickFiles(
                           type: FileType.custom,
                           allowedExtensions: const [
                             'pdf',
@@ -205,8 +216,8 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
                           allowMultiple: false,
                           withData: true,
                         );
-                        if (result == null || result.files.isEmpty) return;
-                        final f = result.files.first;
+                        if (picked == null || picked.files.isEmpty) return;
+                        final f = picked.files.first;
                         final bytes = f.bytes;
                         if (bytes == null || bytes.isEmpty) return;
                         setLocal(() {
@@ -214,35 +225,43 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
                           pdfName = f.name.trim().isNotEmpty
                               ? f.name.trim()
                               : 'certificate.pdf';
+                          existingLabel = pdfName;
                         });
                       },
                       icon: const Icon(Icons.upload_file, size: 20),
                       label: Text(
-                        pdfName == null
+                        existingLabel == null || existingLabel!.isEmpty
                             ? 'Upload certificate (PDF)'
-                            : pdfName!,
+                            : existingLabel!,
                       ),
                     ),
-                    CheckboxListTile(
-                      contentPadding: EdgeInsets.zero,
-                      value: updateNextDue,
-                      onChanged: (v) =>
-                          setLocal(() => updateNextDue = v ?? true),
-                      title: const Text(
-                        'Set next due to 1 year after this date',
+                    if (showUpdateNextDue)
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        value: updateNextDue,
+                        onChanged: (v) =>
+                            setLocal(() => updateNextDue = v ?? true),
+                        title: const Text(
+                          'Set next due to 1 year after this date',
+                        ),
+                        controlAffinity: ListTileControlAffinity.leading,
                       ),
-                      controlAffinity: ListTileControlAffinity.leading,
-                    ),
                   ],
                 ),
               ),
               actions: [
+                if (showDelete)
+                  TextButton(
+                    onPressed: () => Navigator.pop(context, 'delete'),
+                    style: TextButton.styleFrom(foregroundColor: Colors.red),
+                    child: const Text('Delete'),
+                  ),
                 TextButton(
-                  onPressed: () => Navigator.pop(context, false),
+                  onPressed: () => Navigator.pop(context, null),
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
-                  onPressed: () => Navigator.pop(context, true),
+                  onPressed: () => Navigator.pop(context, 'save'),
                   child: const Text('Save'),
                 ),
               ],
@@ -251,14 +270,32 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
         );
       },
     );
-    if (ok != true) return;
+
+    if (result == 'delete') {
+      return const _CalFormResult(delete: true);
+    }
+    if (result != 'save') return null;
 
     final completed = parseAppDate(dateCtrl.text);
     if (completed == null) {
       _toast('Invalid calibration date', error: true);
-      return;
+      return null;
     }
-    final completedIso = formatAppDateIso(completed);
+    return _CalFormResult(
+      completedIso: formatAppDateIso(completed),
+      lab: labCtrl.text.trim(),
+      updateNextDue: updateNextDue,
+      pdfBytes: pdfBytes,
+      pdfName: pdfName,
+    );
+  }
+
+  Future<void> _addCalibration() async {
+    final form = await _showCalibrationForm(title: 'Add calibration');
+    if (form == null || form.delete) return;
+
+    final completed = parseAppDate(form.completedIso)!;
+    final completedIso = form.completedIso!;
     final nextIso = formatAppDateIso(
       advanceMaintenanceDue(
         from: completed,
@@ -267,15 +304,16 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
       ),
     );
     final lead = int.tryParse(_leadCtrl.text.trim()) ?? 7;
-    final note = noteCtrl.text.trim();
+    final note = form.lab;
+    final updateNextDue = form.updateNextDue;
 
     List<http.MultipartFile>? certFiles;
-    if (pdfBytes != null && pdfBytes!.isNotEmpty) {
+    if (form.pdfBytes != null && form.pdfBytes!.isNotEmpty) {
       certFiles = [
         http.MultipartFile.fromBytes(
           'certificate',
-          pdfBytes!,
-          filename: pdfName ?? 'certificate.pdf',
+          form.pdfBytes!,
+          filename: form.pdfName ?? 'certificate.pdf',
         ),
       ];
     }
@@ -285,7 +323,6 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
       String? scheduleId = widget.schedule?.id?.toString();
 
       if (scheduleId == null || scheduleId.isEmpty) {
-        // If not advancing due from this (possibly old) date, seed next due from today.
         final seedNext = updateNextDue
             ? nextIso
             : formatAppDateIso(
@@ -356,6 +393,84 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
       }
 
       _toast('Calibration saved');
+      await widget.onChanged();
+      if (!mounted) return;
+      await _loadHistory();
+    } catch (e) {
+      _toast('Error: $e', error: true);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _editCalibration(dynamic record) async {
+    final data = Map<String, dynamic>.from(record.data as Map);
+    final existingCert = data['certificate']?.toString().trim() ?? '';
+    final form = await _showCalibrationForm(
+      title: 'Edit calibration',
+      initialDateText: formatMaintenanceDateLabel(data['completed_date']),
+      initialLab: data['note']?.toString() ?? '',
+      existingCertName: existingCert.isNotEmpty ? existingCert : null,
+      showUpdateNextDue: false,
+      showDelete: true,
+    );
+    if (form == null) return;
+
+    setState(() => _saving = true);
+    try {
+      if (form.delete) {
+        final confirm = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Delete calibration?'),
+            content: const Text('This removes the history entry and certificate.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                child: const Text('Delete'),
+              ),
+            ],
+          ),
+        );
+        if (confirm == true) {
+          await _pb.deleteCalibrationRecord(record.id);
+          _toast('Calibration deleted');
+          await widget.onChanged();
+          if (!mounted) return;
+          await _loadHistory();
+        }
+        return;
+      }
+
+      List<http.MultipartFile>? certFiles;
+      if (form.pdfBytes != null && form.pdfBytes!.isNotEmpty) {
+        certFiles = [
+          http.MultipartFile.fromBytes(
+            'certificate',
+            form.pdfBytes!,
+            filename: form.pdfName ?? 'certificate.pdf',
+          ),
+        ];
+      }
+
+      await _pb.updateCalibrationRecord(
+        id: record.id,
+        name: data['name']?.toString().trim().isNotEmpty == true
+            ? data['name'].toString()
+            : _autoName,
+        toolId: widget.tool.id,
+        completedDate: form.completedIso,
+        note: form.lab,
+        updatedByEmail: AuthService.instance.email,
+        scheduleId: data['schedule']?.toString(),
+        certificateFiles: certFiles,
+      );
+      _toast('Calibration updated');
       await widget.onChanged();
       if (!mounted) return;
       await _loadHistory();
@@ -503,30 +618,57 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
             final d = Map<String, dynamic>.from(r.data as Map);
             final hasCert =
                 (d['certificate']?.toString().trim().isNotEmpty ?? false);
+            final lab = d['note']?.toString().trim() ?? '';
             return ListTile(
               dense: true,
               contentPadding: EdgeInsets.zero,
+              onTap: _saving ? null : () => _editCalibration(r),
               title: Text(
                 formatMaintenanceDateLabel(d['completed_date']),
                 style: textTheme.bodyMedium?.copyWith(
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              subtitle: (d['note']?.toString().trim().isNotEmpty == true)
-                  ? Text(d['note'].toString())
-                  : null,
-              trailing: hasCert
-                  ? IconButton(
+              subtitle: lab.isNotEmpty ? Text(lab) : const Text('Tap to edit'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (hasCert)
+                    IconButton(
                       tooltip: 'Open certificate',
                       icon: const Icon(Icons.picture_as_pdf_outlined),
                       onPressed: () => _openCertificate(r),
-                    )
-                  : null,
+                    ),
+                  IconButton(
+                    tooltip: 'Edit',
+                    icon: const Icon(Icons.edit_outlined, size: 20),
+                    onPressed: _saving ? null : () => _editCalibration(r),
+                  ),
+                ],
+              ),
             );
           }),
       ],
     );
   }
+}
+
+class _CalFormResult {
+  final bool delete;
+  final String? completedIso;
+  final String lab;
+  final bool updateNextDue;
+  final Uint8List? pdfBytes;
+  final String? pdfName;
+
+  const _CalFormResult({
+    this.delete = false,
+    this.completedIso,
+    this.lab = '',
+    this.updateNextDue = true,
+    this.pdfBytes,
+    this.pdfName,
+  });
 }
 
 class _DueChip extends StatelessWidget {
