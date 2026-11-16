@@ -1,4 +1,9 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 
 import 'app_date_field.dart';
 import 'auth_service.dart';
@@ -7,18 +12,22 @@ import 'maintenance_schedule_utils.dart';
 import 'models.dart';
 import 'pocketbase_service.dart';
 
-/// Calibration schedule + history for an Inspection tool.
-/// Designed to embed in Edit Tool (right column under Inventory), not as a page panel.
+/// Calibration block for Edit Tool (Inspection) — under Inventory, above Price History.
 class CalibrationPanel extends StatefulWidget {
   final Tool tool;
   final dynamic schedule; // PocketBase record or null
   final VoidCallback onChanged;
+  /// Live form values (Edit Tool) — preferred over [tool] for display.
+  final String? assetId;
+  final String? serialNumber;
 
   const CalibrationPanel({
     super.key,
     required this.tool,
     required this.schedule,
     required this.onChanged,
+    this.assetId,
+    this.serialNumber,
   });
 
   @override
@@ -27,13 +36,9 @@ class CalibrationPanel extends StatefulWidget {
 
 class _CalibrationPanelState extends State<CalibrationPanel> {
   final _pb = PocketBaseService();
-  final _nameCtrl = TextEditingController();
-  final _freqCtrl = TextEditingController(text: '12');
   final _nextDueCtrl = TextEditingController();
-  final _noteCtrl = TextEditingController();
   final _leadCtrl = TextEditingController(text: '7');
 
-  String _freqUnit = 'months';
   bool _active = true;
   bool _saving = false;
   bool _loadingHistory = true;
@@ -48,6 +53,8 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
       return {};
     }
   }
+
+  String get _autoName => '${widget.tool.toolName} calibration';
 
   @override
   void initState() {
@@ -68,31 +75,15 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
 
   @override
   void dispose() {
-    _nameCtrl.dispose();
-    _freqCtrl.dispose();
     _nextDueCtrl.dispose();
-    _noteCtrl.dispose();
     _leadCtrl.dispose();
     super.dispose();
   }
 
   void _hydrateFromSchedule() {
     final data = _data;
-    final defaultName = '${widget.tool.toolName} calibration';
-    _nameCtrl.text = (data['name']?.toString().trim().isNotEmpty == true)
-        ? data['name'].toString()
-        : defaultName;
-    final freq = data['frequency_value'];
-    _freqCtrl.text = freq != null
-        ? '${freq is num ? freq.toInt() : int.tryParse('$freq') ?? 12}'
-        : '12';
-    _freqUnit = '${data['frequency_unit'] ?? 'months'}';
-    if (_freqUnit != 'days' && _freqUnit != 'weeks' && _freqUnit != 'months') {
-      _freqUnit = 'months';
-    }
     final next = parseMaintenanceDate(data['next_due_date']);
     _nextDueCtrl.text = next != null ? formatAppDate(next) : '';
-    _noteCtrl.text = data['note']?.toString() ?? '';
     _leadCtrl.text = '${leadDaysOf(data)}';
     _active = scheduleIsActive(data);
   }
@@ -115,34 +106,22 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
     }
   }
 
-  Future<void> _saveSchedule() async {
-    final name = _nameCtrl.text.trim();
-    if (name.isEmpty) {
-      _toast('Name is required', error: true);
-      return;
-    }
-    final freq = int.tryParse(_freqCtrl.text.trim()) ?? 0;
-    if (freq < 1) {
-      _toast('Frequency must be at least 1', error: true);
-      return;
-    }
+  Future<void> _saveNextDue() async {
     final next = parseAppDate(_nextDueCtrl.text);
     if (next == null) {
       _toast('Next due date is required', error: true);
       return;
     }
     final lead = int.tryParse(_leadCtrl.text.trim()) ?? 7;
-
     setState(() => _saving = true);
     try {
       if (widget.schedule == null) {
         await _pb.createCalibrationSchedule(
-          name: name,
+          name: _autoName,
           toolId: widget.tool.id,
-          frequencyValue: freq,
-          frequencyUnit: _freqUnit,
+          frequencyValue: 12,
+          frequencyUnit: 'months',
           nextDueDate: formatAppDateIso(next),
-          note: _noteCtrl.text.trim(),
           leadDays: lead,
           active: _active,
           updatedByEmail: AuthService.instance.email,
@@ -150,19 +129,20 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
       } else {
         await _pb.updateCalibrationSchedule(
           id: widget.schedule.id,
-          name: name,
+          name: _data['name']?.toString().trim().isNotEmpty == true
+              ? _data['name'].toString()
+              : _autoName,
           toolId: widget.tool.id,
-          frequencyValue: freq,
-          frequencyUnit: _freqUnit,
+          frequencyValue: 12,
+          frequencyUnit: 'months',
           nextDueDate: formatAppDateIso(next),
           lastCompletedDate: _data['last_completed_date']?.toString(),
-          note: _noteCtrl.text.trim(),
           leadDays: lead,
           active: _active,
           updatedByEmail: AuthService.instance.email,
         );
       }
-      _toast('Calibration schedule saved');
+      _toast('Next due saved');
       widget.onChanged();
     } catch (e) {
       _toast('Error: $e', error: true);
@@ -171,91 +151,234 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
     }
   }
 
-  Future<void> _markCalibrated() async {
-    if (widget.schedule == null) {
-      _toast('Save a schedule first', error: true);
-      return;
-    }
+  Future<void> _addCalibration() async {
     final dateCtrl = TextEditingController(text: formatAppDate(todayDate()));
     final noteCtrl = TextEditingController();
+    Uint8List? pdfBytes;
+    String? pdfName;
+    var updateNextDue = true;
+
     final ok = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Mark calibrated'),
-        content: SizedBox(
-          width: 400,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              AppDateField(
-                controller: dateCtrl,
-                initialDate: todayDate(),
-                labelText: 'Completed date',
-                allowEmpty: false,
-                firstDate: DateTime(2020),
-                lastDate: DateTime(2100),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: noteCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Note (optional)',
-                  hintText: 'e.g. Wescan cert on file',
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setLocal) {
+            return AlertDialog(
+              title: const Text('Add calibration'),
+              content: SizedBox(
+                width: 420,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    AppDateField(
+                      controller: dateCtrl,
+                      initialDate: todayDate(),
+                      labelText: 'Calibration date',
+                      allowEmpty: false,
+                      firstDate: DateTime(2000),
+                      lastDate: DateTime(2100),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: noteCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Note (optional)',
+                        hintText: 'Vendor, pass/fail, etc.',
+                      ),
+                      minLines: 2,
+                      maxLines: 4,
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final result = await FilePicker.pickFiles(
+                          type: FileType.custom,
+                          allowedExtensions: const [
+                            'pdf',
+                            'png',
+                            'jpg',
+                            'jpeg',
+                            'webp',
+                          ],
+                          allowMultiple: false,
+                          withData: true,
+                        );
+                        if (result == null || result.files.isEmpty) return;
+                        final f = result.files.first;
+                        final bytes = f.bytes;
+                        if (bytes == null || bytes.isEmpty) return;
+                        setLocal(() {
+                          pdfBytes = bytes;
+                          pdfName = f.name.trim().isNotEmpty
+                              ? f.name.trim()
+                              : 'certificate.pdf';
+                        });
+                      },
+                      icon: const Icon(Icons.upload_file, size: 20),
+                      label: Text(
+                        pdfName == null
+                            ? 'Upload certificate (PDF)'
+                            : pdfName!,
+                      ),
+                    ),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      value: updateNextDue,
+                      onChanged: (v) =>
+                          setLocal(() => updateNextDue = v ?? true),
+                      title: const Text(
+                        'Set next due to 1 year after this date',
+                      ),
+                      controlAffinity: ListTileControlAffinity.leading,
+                    ),
+                  ],
                 ),
-                minLines: 2,
-                maxLines: 4,
               ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Mark calibrated'),
-          ),
-        ],
-      ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
     if (ok != true) return;
 
     final completed = parseAppDate(dateCtrl.text);
     if (completed == null) {
-      _toast('Invalid completed date', error: true);
+      _toast('Invalid calibration date', error: true);
       return;
     }
+    final completedIso = formatAppDateIso(completed);
+    final nextIso = formatAppDateIso(
+      advanceMaintenanceDue(
+        from: completed,
+        frequencyValue: 12,
+        frequencyUnit: 'months',
+      ),
+    );
+    final lead = int.tryParse(_leadCtrl.text.trim()) ?? 7;
+    final note = noteCtrl.text.trim();
 
-    final freq = _data['frequency_value'];
-    final freqValue =
-        freq is num ? freq.toInt() : int.tryParse('$freq') ?? 1;
-    final unit = '${_data['frequency_unit'] ?? _freqUnit}';
+    List<http.MultipartFile>? certFiles;
+    if (pdfBytes != null && pdfBytes!.isNotEmpty) {
+      certFiles = [
+        http.MultipartFile.fromBytes(
+          'certificate',
+          pdfBytes!,
+          filename: pdfName ?? 'certificate.pdf',
+        ),
+      ];
+    }
 
     setState(() => _saving = true);
     try {
-      await _pb.completeCalibrationSchedule(
-        scheduleId: widget.schedule.id,
-        name: _nameCtrl.text.trim().isEmpty
-            ? '${widget.tool.toolName} calibration'
-            : _nameCtrl.text.trim(),
-        toolId: widget.tool.id,
-        frequencyValue: freqValue,
-        frequencyUnit: unit,
-        completedDate: formatAppDateIso(completed),
-        note: noteCtrl.text.trim(),
-        leadDays: leadDaysOf(_data),
-        active: scheduleIsActive(_data),
-        updatedByEmail: AuthService.instance.email,
-      );
-      _toast('Logged and next due updated');
+      String? scheduleId = widget.schedule?.id?.toString();
+
+      if (scheduleId == null || scheduleId.isEmpty) {
+        // If not advancing due from this (possibly old) date, seed next due from today.
+        final seedNext = updateNextDue
+            ? nextIso
+            : formatAppDateIso(
+                advanceMaintenanceDue(
+                  from: todayDate(),
+                  frequencyValue: 12,
+                  frequencyUnit: 'months',
+                ),
+              );
+        final created = await _pb.createCalibrationSchedule(
+          name: _autoName,
+          toolId: widget.tool.id,
+          frequencyValue: 12,
+          frequencyUnit: 'months',
+          nextDueDate: seedNext,
+          leadDays: lead,
+          active: _active,
+          updatedByEmail: AuthService.instance.email,
+        );
+        scheduleId = created.id.toString();
+        if (updateNextDue) {
+          await _pb.updateCalibrationSchedule(
+            id: scheduleId,
+            name: _autoName,
+            toolId: widget.tool.id,
+            frequencyValue: 12,
+            frequencyUnit: 'months',
+            nextDueDate: nextIso,
+            lastCompletedDate: completedIso,
+            leadDays: lead,
+            active: _active,
+            updatedByEmail: AuthService.instance.email,
+          );
+        }
+        await _pb.createCalibrationRecord(
+          name: _autoName,
+          toolId: widget.tool.id,
+          completedDate: completedIso,
+          note: note,
+          updatedByEmail: AuthService.instance.email,
+          scheduleId: scheduleId,
+          certificateFiles: certFiles,
+        );
+      } else if (updateNextDue) {
+        await _pb.completeCalibrationSchedule(
+          scheduleId: scheduleId,
+          name: _autoName,
+          toolId: widget.tool.id,
+          frequencyValue: 12,
+          frequencyUnit: 'months',
+          completedDate: completedIso,
+          note: note,
+          leadDays: lead,
+          active: _active,
+          updatedByEmail: AuthService.instance.email,
+          certificateFiles: certFiles,
+        );
+      } else {
+        await _pb.createCalibrationRecord(
+          name: _autoName,
+          toolId: widget.tool.id,
+          completedDate: completedIso,
+          note: note,
+          updatedByEmail: AuthService.instance.email,
+          scheduleId: scheduleId,
+          certificateFiles: certFiles,
+        );
+      }
+
+      _toast('Calibration saved');
       widget.onChanged();
       await _loadHistory();
     } catch (e) {
       _toast('Error: $e', error: true);
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _openCertificate(dynamic record) async {
+    try {
+      final data = Map<String, dynamic>.from(record.data as Map);
+      final filename = data['certificate']?.toString() ?? '';
+      if (filename.isEmpty) {
+        _toast('No certificate on file', error: true);
+        return;
+      }
+      final url = _pb.pb.files.getUrl(record, filename);
+      final uri = Uri.parse(url.toString());
+      final launched =
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!launched) _toast('Could not open certificate', error: true);
+    } catch (e) {
+      _toast('Error: $e', error: true);
     }
   }
 
@@ -274,9 +397,10 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
     final scheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final status = widget.schedule == null ? null : dueStatusOf(_data);
-    final serial = (widget.tool.serialNumber ?? '').trim();
+    final id = (widget.assetId ?? widget.tool.modelNumber ?? '').trim();
+    final serial =
+        (widget.serialNumber ?? widget.tool.serialNumber ?? '').trim();
 
-    // Shrink-wrap Column so this can sit inside Edit Tool's right ListView.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
@@ -294,91 +418,54 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
             if (status != null) _DueChip(status: status),
           ],
         ),
-        if (serial.isNotEmpty) ...[
-          const SizedBox(height: 4),
+        if (id.isNotEmpty || serial.isNotEmpty) ...[
+          const SizedBox(height: 6),
           Text(
-            'S/N $serial',
+            [
+              if (id.isNotEmpty) 'ID $id',
+              if (serial.isNotEmpty) 'S/N $serial',
+            ].join(' · '),
             style: textTheme.bodySmall?.copyWith(
               color: scheme.onSurfaceVariant,
             ),
           ),
         ],
         const SizedBox(height: 12),
-        TextField(
-          controller: _nameCtrl,
-          decoration: const InputDecoration(
-            labelText: 'Schedule name',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _freqCtrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Every',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              flex: 2,
-              child: DropdownButtonFormField<String>(
-                value: _freqUnit,
-                decoration: const InputDecoration(
-                  labelText: 'Unit',
-                  border: OutlineInputBorder(),
-                ),
-                items: const [
-                  DropdownMenuItem(value: 'days', child: Text('days')),
-                  DropdownMenuItem(value: 'weeks', child: Text('weeks')),
-                  DropdownMenuItem(value: 'months', child: Text('months')),
-                ],
-                onChanged: (v) {
-                  if (v == null) return;
-                  setState(() => _freqUnit = v);
-                },
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
         AppDateField(
           controller: _nextDueCtrl,
           labelText: 'Next due',
-          allowEmpty: false,
+          allowEmpty: true,
           firstDate: DateTime(2020),
           lastDate: DateTime(2100),
         ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _leadCtrl,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-            labelText: 'Lead days (due soon)',
-            border: OutlineInputBorder(),
+        const SizedBox(height: 4),
+        Text(
+          'Usually 1 year after the last calibration.',
+          style: textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
           ),
         ),
-        const SizedBox(height: 8),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           title: const Text('Active'),
+          subtitle: const Text('Off = paused (no due alerts)'),
           value: _active,
           onChanged: (v) => setState(() => _active = v),
         ),
-        TextField(
-          controller: _noteCtrl,
-          decoration: const InputDecoration(
-            labelText: 'Note',
-            border: OutlineInputBorder(),
-            hintText: 'Vendor, tolerance, etc.',
+        InventoryListActionButton(
+          label: _saving ? 'Saving…' : 'Save next due',
+          icon: Icons.save_outlined,
+          onPressed: _saving ? null : _saveNextDue,
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: kListToolbarControlHeight,
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: _saving ? null : _addCalibration,
+            icon: const Icon(Icons.add, size: 20),
+            label: const Text('Add calibration'),
           ),
-          minLines: 2,
-          maxLines: 4,
         ),
         if (widget.schedule != null) ...[
           const SizedBox(height: 8),
@@ -389,29 +476,7 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
             ),
           ),
         ],
-        const SizedBox(height: 16),
-        InventoryListActionButton(
-          label: _saving
-              ? 'Saving…'
-              : (widget.schedule == null
-                  ? 'Create schedule'
-                  : 'Save schedule'),
-          icon: Icons.save_outlined,
-          onPressed: _saving ? null : _saveSchedule,
-        ),
-        if (widget.schedule != null) ...[
-          const SizedBox(height: 8),
-          SizedBox(
-            height: kListToolbarControlHeight,
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: _saving ? null : _markCalibrated,
-              icon: const Icon(Icons.verified_outlined, size: 20),
-              label: const Text('Mark calibrated'),
-            ),
-          ),
-        ],
-        const SizedBox(height: 24),
+        const SizedBox(height: 20),
         Text(
           'History',
           style: textTheme.titleSmall?.copyWith(
@@ -426,14 +491,16 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
           )
         else if (_history.isEmpty)
           Text(
-            'No calibration records yet.',
+            'No calibrations logged yet. Use Add calibration to enter past or new ones.',
             style: textTheme.bodySmall?.copyWith(
               color: scheme.onSurfaceVariant,
             ),
           )
         else
-          ..._history.take(12).map((r) {
+          ..._history.take(20).map((r) {
             final d = Map<String, dynamic>.from(r.data as Map);
+            final hasCert =
+                (d['certificate']?.toString().trim().isNotEmpty ?? false);
             return ListTile(
               dense: true,
               contentPadding: EdgeInsets.zero,
@@ -445,6 +512,13 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
               ),
               subtitle: (d['note']?.toString().trim().isNotEmpty == true)
                   ? Text(d['note'].toString())
+                  : null,
+              trailing: hasCert
+                  ? IconButton(
+                      tooltip: 'Open certificate',
+                      icon: const Icon(Icons.picture_as_pdf_outlined),
+                      onPressed: () => _openCertificate(r),
+                    )
                   : null,
             );
           }),

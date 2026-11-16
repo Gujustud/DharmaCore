@@ -187,6 +187,7 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
   // Form controllers
   final _toolNameController = TextEditingController();
   final _modelNumberController = TextEditingController();
+  final _serialNumberController = TextEditingController();
   final _urlController = TextEditingController();
   final _diameterInController = TextEditingController();
   final _diameterMmController = TextEditingController();
@@ -1265,6 +1266,7 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
     _autoGenerateName = false;
     _toolNameController.text = widget.isDuplicate ? '${tool.toolName} (Copy)' : tool.toolName;
     _modelNumberController.text = tool.modelNumber ?? '';
+    _serialNumberController.text = tool.serialNumber ?? '';
     _urlController.text = tool.url ?? '';
     
     // Ensure category exists (default to Cutting Tools)
@@ -3330,6 +3332,9 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
           'model_number': _modelNumberController.text.isEmpty 
               ? null 
               : _modelNumberController.text,
+          'serial_number': _serialNumberController.text.trim().isEmpty
+              ? null
+              : _serialNumberController.text.trim(),
           'url': rawUrl.isEmpty ? null : rawUrl,
           'brand': _selectedBrandId,
           'supplier': _selectedSupplierId,
@@ -3558,16 +3563,18 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
                   ),
                   const SizedBox(height: 16),
             
-            // Model Number with Import button
+            // Model / ID Number with Import button
             Row(
               children: [
                 Expanded(
                   child: TextFormField(
                     controller: _modelNumberController,
-                    decoration: const InputDecoration(
-                      labelText: 'Model Number',
+                    decoration: InputDecoration(
+                      labelText: _isInspectionCategory
+                          ? 'ID Number'
+                          : 'Model Number',
                       floatingLabelBehavior: FloatingLabelBehavior.always,
-                      border: OutlineInputBorder(),
+                      border: const OutlineInputBorder(),
                     ),
                   ),
                 ),
@@ -3595,6 +3602,17 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
                 ],
               ],
             ),
+            if (_isInspectionCategory) ...[
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: _serialNumberController,
+                decoration: const InputDecoration(
+                  labelText: 'Serial Number',
+                  floatingLabelBehavior: FloatingLabelBehavior.always,
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
             
             // Brand and Supplier row (explicit Tab order: Brand → Supplier)
@@ -4142,7 +4160,6 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
                     ),
                     const SizedBox(height: 24),
                     ..._buildInventoryAndHistorySection(context),
-                    ..._buildCalibrationSection(context),
                   ],
                 ),
               ),
@@ -4157,18 +4174,15 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
   Widget _buildMobileSidePanel(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ..._buildInventoryAndHistorySection(context),
-        ..._buildCalibrationSection(context),
-      ],
+      children: _buildInventoryAndHistorySection(context),
     );
   }
 
-  /// Inspection edit: calibration block under Inventory on the right (or mobile panel).
+  /// Inspection edit: calibration sits above Price History.
   List<Widget> _buildCalibrationSection(BuildContext context) {
     if (!_isEditMode || !_isInspectionCategory) return const [];
     return [
-      const SizedBox(height: 24),
+      const SizedBox(height: 32),
       const Divider(),
       const SizedBox(height: 16),
       if (_loadingCalibration)
@@ -4181,11 +4195,13 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
           tool: widget.tool!,
           schedule: _calibrationSchedule,
           onChanged: _loadCalibrationSchedule,
+          assetId: _modelNumberController.text,
+          serialNumber: _serialNumberController.text,
         ),
     ];
   }
 
-  /// Shared inventory, performance stats, price history, then movement history.
+  /// Shared inventory, performance stats, calibration, price history, movement history.
   List<Widget> _buildInventoryAndHistorySection(BuildContext context) {
     return [
       const SizedBox(height: 16),
@@ -4427,6 +4443,7 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
           },
         ),
       ],
+      ..._buildCalibrationSection(context),
       if (_isEditMode) ...[
         const SizedBox(height: 32),
         const Divider(),
@@ -5045,6 +5062,7 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
   void dispose() {
     _toolNameController.dispose();
     _modelNumberController.dispose();
+    _serialNumberController.dispose();
     _urlController.dispose();
     _diameterInController.dispose();
     _diameterMmController.dispose();
