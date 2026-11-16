@@ -3906,9 +3906,11 @@ class PocketBaseService {
 
   Future<List<dynamic>> getCalibrationRecordsForTool(String toolId) async {
     try {
+      // Sort by completed_date only — multi-field sorts including -created
+      // returned 400 on the live shop PB build (same as maintenance_records).
       return await pb.collection('calibration_records').getFullList(
         filter: 'tool = "$toolId"',
-        sort: '-completed_date,-created',
+        sort: '-completed_date',
       );
     } catch (e) {
       print('Error getting calibration records: $e');

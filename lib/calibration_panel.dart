@@ -16,7 +16,7 @@ import 'pocketbase_service.dart';
 class CalibrationPanel extends StatefulWidget {
   final Tool tool;
   final dynamic schedule; // PocketBase record or null
-  final VoidCallback onChanged;
+  final Future<void> Function() onChanged;
   /// Live form values (Edit Tool) — preferred over [tool] for display.
   final String? assetId;
   final String? serialNumber;
@@ -97,12 +97,13 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
         _history = rows;
         _loadingHistory = false;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() {
         _history = [];
         _loadingHistory = false;
       });
+      _toast('Could not load calibration history: $e', error: true);
     }
   }
 
@@ -143,7 +144,7 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
         );
       }
       _toast('Next due saved');
-      widget.onChanged();
+      await widget.onChanged();
     } catch (e) {
       _toast('Error: $e', error: true);
     } finally {
@@ -355,7 +356,8 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
       }
 
       _toast('Calibration saved');
-      widget.onChanged();
+      await widget.onChanged();
+      if (!mounted) return;
       await _loadHistory();
     } catch (e) {
       _toast('Error: $e', error: true);

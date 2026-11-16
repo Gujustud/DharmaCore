@@ -1408,7 +1408,7 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
     }
   }
 
-  Future<void> _loadCalibrationSchedule() async {
+  Future<void> _loadCalibrationSchedule({bool showSpinner = true}) async {
     if (!_isEditMode || !_isInspectionCategory) {
       if (_calibrationSchedule != null || _loadingCalibration) {
         setState(() {
@@ -1419,7 +1419,9 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
       return;
     }
 
-    setState(() => _loadingCalibration = true);
+    if (showSpinner) {
+      setState(() => _loadingCalibration = true);
+    }
     try {
       final pbService = PocketBaseService();
       final schedule =
@@ -4192,7 +4194,7 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
         CalibrationPanel(
           tool: widget.tool!,
           schedule: _calibrationSchedule,
-          onChanged: _loadCalibrationSchedule,
+          onChanged: () => _loadCalibrationSchedule(showSpinner: false),
           assetId: _modelNumberController.text,
           serialNumber: _serialNumberController.text,
         ),
