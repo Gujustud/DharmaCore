@@ -422,7 +422,7 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
           const SizedBox(height: 6),
           Text(
             [
-              if (id.isNotEmpty) 'ID $id',
+              if (id.isNotEmpty) 'Model $id',
               if (serial.isNotEmpty) 'S/N $serial',
             ].join(' · '),
             style: textTheme.bodySmall?.copyWith(

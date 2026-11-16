@@ -3563,18 +3563,16 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
                   ),
                   const SizedBox(height: 16),
             
-            // Model / ID Number with Import button
+            // Model Number with Import button
             Row(
               children: [
                 Expanded(
                   child: TextFormField(
                     controller: _modelNumberController,
-                    decoration: InputDecoration(
-                      labelText: _isInspectionCategory
-                          ? 'ID Number'
-                          : 'Model Number',
+                    decoration: const InputDecoration(
+                      labelText: 'Model Number',
                       floatingLabelBehavior: FloatingLabelBehavior.always,
-                      border: const OutlineInputBorder(),
+                      border: OutlineInputBorder(),
                     ),
                   ),
                 ),
