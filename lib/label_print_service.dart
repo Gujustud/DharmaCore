@@ -463,8 +463,9 @@ class LabelPrintService {
     }
 
     final maxBlock = imageHeight - 2 * edgePad;
-    var nameFontSize = imageHeight * 0.40;
-    var fieldFontSize = imageHeight * 0.26;
+    // Moderate sizes — oversized type made stickers very long on P710.
+    var nameFontSize = imageHeight * 0.34;
+    var fieldFontSize = imageHeight * 0.24;
     late TextPainter namePainter;
     late TextPainter lbhPainter;
     late TextPainter tlPainter;

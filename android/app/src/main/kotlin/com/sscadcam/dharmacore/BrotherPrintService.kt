@@ -214,7 +214,13 @@ class BrotherPrintService : Service() {
             info.isSpecialTape = false
             val labelOrdinal = if (useW12) LabelInfo.PT.W12.ordinal else LabelInfo.PT.W18.ordinal
             info.labelNameIndex = labelOrdinal
-            info.printQuality = PrinterInfo.PrintQuality.HIGH_RESOLUTION
+            // P710 HIGH_RESOLUTION is 180×360 (2:1 along feed) and stretches square
+            // bitmaps into the ultra-wide squashed stickers. NORMAL is 180×180.
+            info.printQuality = if (isP710Family) {
+                PrinterInfo.PrintQuality.NORMAL
+            } else {
+                PrinterInfo.PrintQuality.HIGH_RESOLUTION
+            }
             info.skipStatusCheck = true
             if (!printer.setPrinterInfo(info)) {
                 lastError = "setPrinterInfo failed for $port"
@@ -318,11 +324,8 @@ class BrotherPrintService : Service() {
     private fun maxSaneFor(isP710Family: Boolean) = if (isP710Family) 140 else 300
 
     /**
-     * Fit content into the printable band.
-     *
-     * P910: uniform scale (360×360), with side margins.
-     * P710 high-res: 180 dpi across × 360 dpi along feed — scale width to the
-     * head only; **keep feed length** so labels don't collapse to ~1".
+     * Fit content into the printable band with **uniform** scale (keep glyph
+     * aspect). P710 uses NORMAL 180×180 quality — do not stretch feed length.
      */
     private fun fitToPrintableArea(
         src: Bitmap,
@@ -334,17 +337,8 @@ class BrotherPrintService : Service() {
         val margin = marginBase.coerceAtMost((width / 2) - 1).coerceAtLeast(0)
         val innerW = (width - margin * 2).coerceAtLeast(1)
 
-        val scaleX = innerW.toFloat() / src.width.toFloat()
-        // When Flutter already rasterized at P710 native height (~112), scale
-        // uniformly so glyphs aren't squashed. Only the old 256→112 path used
-        // anisotropic scaleY=1 (kept length but flattened text).
-        val alreadyNative = isP710Family && src.width in 90..130
-        val scaleY = when {
-            alreadyNative -> scaleX
-            isP710Family -> 1.0f
-            else -> scaleX
-        }
-        val innerH = (src.height * scaleY).toInt().coerceAtLeast(1)
+        val scale = innerW.toFloat() / src.width.toFloat()
+        val innerH = (src.height * scale).toInt().coerceAtLeast(1)
 
         val scaled = if (src.width == innerW && src.height == innerH) {
             src
