@@ -204,7 +204,7 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
                     const SizedBox(height: 12),
                     OutlinedButton.icon(
                       onPressed: () async {
-                        final picked = await FilePicker.pickFiles(
+                        final f = await FilePicker.pickFile(
                           type: FileType.custom,
                           allowedExtensions: const [
                             'pdf',
@@ -213,13 +213,10 @@ class _CalibrationPanelState extends State<CalibrationPanel> {
                             'jpeg',
                             'webp',
                           ],
-                          allowMultiple: false,
-                          withData: true,
                         );
-                        if (picked == null || picked.files.isEmpty) return;
-                        final f = picked.files.first;
-                        final bytes = f.bytes;
-                        if (bytes == null || bytes.isEmpty) return;
+                        if (f == null) return;
+                        final bytes = await f.readAsBytes();
+                        if (bytes.isEmpty) return;
                         setLocal(() {
                           pdfBytes = bytes;
                           pdfName = f.name.trim().isNotEmpty

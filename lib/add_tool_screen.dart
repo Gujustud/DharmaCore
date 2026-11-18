@@ -2174,15 +2174,10 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
   
   Future<void> _pickPhoto() async {
     try {
-      final result = await FilePicker.pickFiles(
-        type: FileType.image,
-        allowMultiple: false,
-        withData: true,
-      );
-      if (result == null || result.files.isEmpty) return;
+      final picked = await FilePicker.pickFile(type: FileType.image);
+      if (picked == null) return;
 
-      final picked = result.files.first;
-      final bytes = picked.bytes ?? await picked.readAsBytes();
+      final bytes = await picked.readAsBytes();
       if (!mounted || bytes.isEmpty) return;
 
       setState(() {

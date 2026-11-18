@@ -36,7 +36,8 @@ dependencies:
   cupertino_icons: ^2.0.0
   pocketbase: ^0.23.3
   reorderables: ^0.6.0
-  file_picker: ^12.0.0-beta.4
+  # v12+ returns List<PlatformFile> (no FilePickerResult); use pickFile() for one file.
+  file_picker: ^13.0.0
   shared_preferences: ^2.2.2
   intl: ^0.20.2
   http: ^1.2.2
@@ -48,7 +49,8 @@ dependencies:
   image: ^4.1.7
   flutter_markdown: ^0.7.7+1
   markdown: ^7.3.0
-  google_fonts: ^9.0.0
+  # Stay on 8.x — google_fonts 9 pulls material_ui TextTheme and breaks Flutter TextTheme.
+  google_fonts: ^8.2.1
   pdf: ^3.11.3
   printing: ^5.14.2
 

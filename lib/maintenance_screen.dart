@@ -39,18 +39,16 @@ Future<void> _pickPendingPhotos({
   int maxFiles = 8,
 }) async {
   if (current.length >= maxFiles) return;
-  final result = await FilePicker.pickFiles(
+  final files = await FilePicker.pickFiles(
     type: FileType.custom,
     allowedExtensions: const ['png', 'jpg', 'jpeg', 'gif', 'webp'],
-    allowMultiple: true,
-    withData: true,
   );
-  if (result == null || result.files.isEmpty) return;
+  if (files.isEmpty) return;
   final next = List<_PendingPhoto>.from(current);
-  for (final file in result.files) {
+  for (final file in files) {
     if (next.length >= maxFiles) break;
-    final bytes = file.bytes;
-    if (bytes == null || bytes.isEmpty) continue;
+    final bytes = await file.readAsBytes();
+    if (bytes.isEmpty) continue;
     final name = (file.name.trim().isNotEmpty)
         ? file.name.trim()
         : 'photo-${DateTime.now().millisecondsSinceEpoch}.jpg';

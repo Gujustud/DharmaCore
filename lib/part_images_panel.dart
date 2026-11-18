@@ -126,13 +126,11 @@ class _PartImagesPanelState extends State<PartImagesPanel> {
       return;
     }
 
-    final result = await FilePicker.pickFiles(
+    final files = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: widget.allowedExtensions,
-      allowMultiple: true,
-      withData: true,
     );
-    if (result == null || result.files.isEmpty) return;
+    if (files.isEmpty) return;
 
     setState(() => _uploading = true);
     try {
@@ -140,9 +138,9 @@ class _PartImagesPanelState extends State<PartImagesPanel> {
       RecordModel? last;
       var count = widget.filenames.length;
 
-      for (final file in result.files) {
+      for (final file in files) {
         if (count >= _maxFiles) break;
-        final bytes = file.bytes ?? await file.readAsBytes();
+        final bytes = await file.readAsBytes();
         if (bytes.isEmpty) continue;
 
         final name = _safeFilename(file.name, bytes);

@@ -231,22 +231,20 @@ class _WikiEditScreenState extends State<WikiEditScreen> {
       return;
     }
 
-    final result = await FilePicker.pickFiles(
+    final files = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf'],
-      allowMultiple: true,
-      withData: true,
     );
-    if (result == null || result.files.isEmpty) return;
+    if (files.isEmpty) return;
 
     setState(() => _uploading = true);
     try {
       final remaining = 12 - names.length;
       final uploads = <http.MultipartFile>[];
-      for (final f in result.files) {
+      for (final f in files) {
         if (uploads.length >= remaining) break;
-        final bytes = f.bytes;
-        if (bytes == null || bytes.isEmpty) continue;
+        final bytes = await f.readAsBytes();
+        if (bytes.isEmpty) continue;
         uploads.add(_wikiAttachmentPart(f.name, bytes));
       }
       if (uploads.isEmpty) return;
@@ -309,13 +307,11 @@ class _WikiEditScreenState extends State<WikiEditScreen> {
       return;
     }
 
-    final result = await FilePicker.pickFiles(
+    final files = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
-      allowMultiple: true,
-      withData: true,
     );
-    if (result == null || result.files.isEmpty) return;
+    if (files.isEmpty) return;
 
     setState(() => _uploading = true);
     try {
@@ -323,10 +319,10 @@ class _WikiEditScreenState extends State<WikiEditScreen> {
       final before = wikiAttachmentNames(record).toSet();
       final remaining = 12 - before.length;
       final uploads = <http.MultipartFile>[];
-      for (final f in result.files) {
+      for (final f in files) {
         if (uploads.length >= remaining) break;
-        final bytes = f.bytes;
-        if (bytes == null || bytes.isEmpty) continue;
+        final bytes = await f.readAsBytes();
+        if (bytes.isEmpty) continue;
         uploads.add(_wikiAttachmentPart(f.name, bytes));
       }
       if (uploads.isEmpty) return;

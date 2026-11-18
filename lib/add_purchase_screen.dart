@@ -350,21 +350,22 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
       );
       return;
     }
-    final result = await FilePicker.pickFiles(
+    final files = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf', 'png', 'jpg', 'jpeg', 'webp'],
-      allowMultiple: true,
-      withData: true,
     );
-    if (result == null || result.files.isEmpty) return;
+    if (files.isEmpty) return;
+    final uploads = <_PendingCert>[];
+    final remaining = 8 - named.length - pending.length;
+    for (final f in files) {
+      if (uploads.length >= remaining) break;
+      final bytes = await f.readAsBytes();
+      if (bytes.isEmpty) continue;
+      uploads.add((name: f.name, bytes: bytes));
+    }
+    if (uploads.isEmpty) return;
     setState(() {
-      final remaining = 8 - named.length - pending.length;
-      for (final f in result.files) {
-        if (pending.length >= remaining) break;
-        final bytes = f.bytes;
-        if (bytes == null || bytes.isEmpty) continue;
-        pending.add((name: f.name, bytes: bytes));
-      }
+      pending.addAll(uploads);
       line['pendingMillCerts'] = pending;
     });
   }
@@ -723,13 +724,11 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
       );
       return;
     }
-    final result = await FilePicker.pickFiles(
+    final files = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf', 'png', 'jpg', 'jpeg', 'webp'],
-      allowMultiple: true,
-      withData: true,
     );
-    if (result == null || result.files.isEmpty) return;
+    if (files.isEmpty) return;
 
     final purchaseId = _purchaseRecord?.id ?? widget.purchase?.id;
     if (purchaseId != null) {
@@ -737,10 +736,10 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
       try {
         final remaining = 12 - _existingCertNames.length;
         final uploads = <http.MultipartFile>[];
-        for (final f in result.files) {
+        for (final f in files) {
           if (uploads.length >= remaining) break;
-          final bytes = f.bytes;
-          if (bytes == null || bytes.isEmpty) continue;
+          final bytes = await f.readAsBytes();
+          if (bytes.isEmpty) continue;
           uploads.add(_purchaseCertPart(f.name, bytes));
         }
         if (uploads.isEmpty) return;
@@ -761,15 +760,16 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
       return;
     }
 
-    setState(() {
-      final remaining = 12 - _pendingCerts.length;
-      for (final f in result.files) {
-        if (_pendingCerts.length >= remaining) break;
-        final bytes = f.bytes;
-        if (bytes == null || bytes.isEmpty) continue;
-        _pendingCerts.add((name: f.name, bytes: bytes));
-      }
-    });
+    final remaining = 12 - _pendingCerts.length;
+    final pending = <_PendingCert>[];
+    for (final f in files) {
+      if (pending.length >= remaining) break;
+      final bytes = await f.readAsBytes();
+      if (bytes.isEmpty) continue;
+      pending.add((name: f.name, bytes: bytes));
+    }
+    if (pending.isEmpty) return;
+    setState(() => _pendingCerts.addAll(pending));
   }
 
   Future<void> _removeCert(String filename) async {
