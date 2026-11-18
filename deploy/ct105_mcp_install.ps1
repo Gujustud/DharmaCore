@@ -29,10 +29,11 @@ scp $unit "${ct}:/etc/systemd/system/dharmacore-mcp.service"
 scp $nginxFix "${ct}:/tmp/ct105_fix_nginx_mcp.py"
 
 Write-Host "Strip CRLF from copied files..." -ForegroundColor Cyan
-ssh $ct 'sed -i "s/\r$//" /opt/dharmacore/mcp-server/mcp_server.py /opt/dharmacore/mcp-server/requirements.txt /etc/systemd/system/dharmacore-mcp.service /tmp/ct105_fix_nginx_mcp.py'
+# Do NOT use sed s/\r$// -- GNU sed often treats \r as literal r and deletes trailing r (str -> st).
+ssh $ct 'perl -pi -e "s/\r//g" /opt/dharmacore/mcp-server/mcp_server.py /opt/dharmacore/mcp-server/requirements.txt /etc/systemd/system/dharmacore-mcp.service /tmp/ct105_fix_nginx_mcp.py'
 
 Write-Host "Create venv + pip install (may take a minute)..." -ForegroundColor Cyan
-ssh $ct 'rm -rf /opt/dharmacore/mcp-server/.venv; python3 -m venv /opt/dharmacore/mcp-server/.venv; /opt/dharmacore/mcp-server/.venv/bin/pip install --upgrade pip; /opt/dharmacore/mcp-server/.venv/bin/pip install -r /opt/dharmacore/mcp-server/requirements.txt'
+ssh $ct 'test -x /opt/dharmacore/mcp-server/.venv/bin/pip || python3 -m venv /opt/dharmacore/mcp-server/.venv; /opt/dharmacore/mcp-server/.venv/bin/pip install -r /opt/dharmacore/mcp-server/requirements.txt'
 if ($LASTEXITCODE -ne 0) {
   throw "pip install failed on CT (exit $LASTEXITCODE). See errors above."
 }
