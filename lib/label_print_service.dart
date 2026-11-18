@@ -126,6 +126,35 @@ class LabelPrintService {
     return painter;
   }
 
+  /// Rows (top, bottom-exclusive) that actually contain ink, relative to the
+  /// painter origin. Line boxes carry ascent/descent whitespace that wastes
+  /// most of a 70-dot 12mm tape.
+  static Future<(double, double)> _inkRows(TextPainter painter) async {
+    final w = math.max(1, painter.width.ceil());
+    final h = math.max(1, painter.height.ceil());
+    final recorder = ui.PictureRecorder();
+    painter.paint(Canvas(recorder), Offset.zero);
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(w, h);
+    final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+    picture.dispose();
+    image.dispose();
+    if (data == null) return (0.0, h.toDouble());
+    int? top;
+    var bottom = 0;
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        if (data.getUint8((y * w + x) * 4 + 3) > 96) {
+          top ??= y;
+          bottom = y + 1;
+          break;
+        }
+      }
+    }
+    if (top == null) return (0.0, h.toDouble());
+    return (top.toDouble(), bottom.toDouble());
+  }
+
   static Future<Uint8List> _canvasLabelToPng({
     required int imageWidth,
     required int imageHeight,
@@ -446,9 +475,9 @@ class LabelPrintService {
     int? height,
   }) async {
     final imageHeight = height ?? labelHeightPx12mm;
-    // Pack name + LBH + TL into nearly the full tape height; shrink if metrics overflow.
     const edgePad = 1.0;
-    const lineGap = 0.0;
+    final lineGap = math.max(2.0, imageHeight * 0.05);
+    const fieldToNameRatio = 0.78;
     final leftMargin = math.max(3.0, imageHeight * 0.05);
     final rightMargin = math.max(3, (imageHeight * 0.06).round());
     const maxNameChars = 28;
@@ -462,39 +491,29 @@ class LabelPrintService {
       name = '${name.substring(0, maxNameChars - 1)}…';
     }
 
+    // Size by measured ink so the three lines fill the printable tape height.
     final maxBlock = imageHeight - 2 * edgePad;
-    // Moderate sizes — oversized type made stickers very long on P710.
-    var nameFontSize = imageHeight * 0.34;
-    var fieldFontSize = imageHeight * 0.24;
+    var nameFontSize = imageHeight * 0.45;
     late TextPainter namePainter;
     late TextPainter lbhPainter;
     late TextPainter tlPainter;
+    var inks = <(double, double)>[];
     var textBlockH = double.infinity;
     for (var attempt = 0; attempt < 12; attempt++) {
-      namePainter = _labelTextPainter(
-        name,
-        fontSize: nameFontSize,
-        weight: FontWeight.w700,
-      );
-      lbhPainter = _labelTextPainter(
-        lbhLine,
-        fontSize: fieldFontSize,
-        weight: FontWeight.w700,
-      );
-      tlPainter = _labelTextPainter(
-        tlLine,
-        fontSize: fieldFontSize,
-        weight: FontWeight.w700,
-      );
-      textBlockH = namePainter.height +
-          lineGap +
-          lbhPainter.height +
-          lineGap +
-          tlPainter.height;
-      if (textBlockH <= maxBlock) break;
-      final shrink = maxBlock / textBlockH;
-      nameFontSize *= shrink * 0.98;
-      fieldFontSize *= shrink * 0.98;
+      final fieldFontSize = nameFontSize * fieldToNameRatio;
+      namePainter = _labelTextPainter(name, fontSize: nameFontSize);
+      lbhPainter = _labelTextPainter(lbhLine, fontSize: fieldFontSize);
+      tlPainter = _labelTextPainter(tlLine, fontSize: fieldFontSize);
+      inks = [
+        await _inkRows(namePainter),
+        await _inkRows(lbhPainter),
+        await _inkRows(tlPainter),
+      ];
+      textBlockH =
+          inks.fold(0.0, (sum, r) => sum + (r.$2 - r.$1)) + 2 * lineGap;
+      final fill = maxBlock / textBlockH;
+      if (fill >= 1.0 && fill < 1.03) break;
+      nameFontSize *= fill > 1.0 ? fill : fill * 0.99;
     }
 
     final textCol = math.max(
@@ -512,11 +531,11 @@ class LabelPrintService {
       rightPad: rightMargin,
       paint: (canvas) {
         var y = textTop;
-        namePainter.paint(canvas, Offset(leftMargin, y));
-        y += namePainter.height + lineGap;
-        lbhPainter.paint(canvas, Offset(leftMargin, y));
-        y += lbhPainter.height + lineGap;
-        tlPainter.paint(canvas, Offset(leftMargin, y));
+        final painters = [namePainter, lbhPainter, tlPainter];
+        for (var i = 0; i < painters.length; i++) {
+          painters[i].paint(canvas, Offset(leftMargin, y - inks[i].$1));
+          y += inks[i].$2 - inks[i].$1 + lineGap;
+        }
       },
     );
   }
