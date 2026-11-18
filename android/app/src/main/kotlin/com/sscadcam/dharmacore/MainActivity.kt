@@ -25,8 +25,8 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val TAG = "DharmaLabelPrint"
         private const val REQUEST_BLUETOOTH_CONNECT = 9001
-        /** Per-printer wait; keep short so we can try the other PT if this one is off. */
-        private const val PRINT_TIMEOUT_MS = 12_000L
+        /** Per-printer wait (P710 BLE print + cut often exceeds 12s). */
+        private const val PRINT_TIMEOUT_MS = 45_000L
         private const val POLL_MS = 200L
         private const val PREFS = "brother_print"
         private const val PREF_LAST_MAC = "last_mac"

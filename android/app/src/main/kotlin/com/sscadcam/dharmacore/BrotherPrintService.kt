@@ -36,14 +36,21 @@ class BrotherPrintService : Service() {
 
         private const val BLE_TIMEOUT_MS = 5_000L
 
-        /** 18mm printable width @ Brother HIGH_RESOLUTION (~360 dpi). */
-        private const val W18_HIGH_RES_DOTS = 256
-
-        /** 12mm printable width @ HIGH_RESOLUTION (~360 dpi) fallback. */
-        private const val W12_HIGH_RES_DOTS = 170
+        /**
+         * Printable dots *across* the tape (print-head direction).
+         *
+         * P910: true ~360 dpi both axes → 18mm ≈ 256 dots.
+         * P710/P715: 128-pin head; high-res is 180 dpi across × 360 dpi along
+         * feed (Brother raster manual). 18mm printable = 112 dots, 12mm = 70.
+         */
+        private const val W18_P910_DOTS = 256
+        private const val W12_P910_DOTS = 170
+        private const val W18_P710_DOTS = 112
+        private const val W12_P710_DOTS = 70
 
         /** Keep ink inside the printable band — PT heads clip the outer pins. */
-        private const val MARGIN_ACROSS_DOTS = 10
+        private const val MARGIN_ACROSS_P910 = 10
+        private const val MARGIN_ACROSS_P710 = 2
 
         /** Leading / trailing pad along the tape (feed direction). */
         private const val LEAD_PAD_DOTS = 14
@@ -139,22 +146,23 @@ class BrotherPrintService : Service() {
             else -> PrinterInfo.Model.PT_P910BT
         }
 
-        // Flutter PNGs are landscape. Brother PT wants tape-width × feed-length
-        // at HIGH_RESOLUTION (~360dpi). Rotate, then fit inside the printable
-        // band with margins so P710/P910 don't clip top/left text.
+        // Flutter PNGs are landscape (square 360dpi pixels for P910). Brother
+        // wants tape-width × feed-length. P710 high-res is anisotropic (180×360).
         val srcW = argb.width
         val srcH = argb.height
         val rotated = rotateLandscapeForPtTape(argb).also {
             if (it !== argb) argb.recycle()
         }
         val useW12 = tapeMm in 11..13
-        val targetTapeDots = tapeImageAreaWidthDots(model, useW12)
-        val bitmap = fitToPrintableArea(rotated, targetTapeDots).also {
+        val isP710Family =
+            model == PrinterInfo.Model.PT_P710BT || model == PrinterInfo.Model.PT_P715eBT
+        val targetTapeDots = tapeImageAreaWidthDots(model, useW12, isP710Family)
+        val bitmap = fitToPrintableArea(rotated, targetTapeDots, isP710Family).also {
             if (it !== rotated) rotated.recycle()
         }
         Log.i(
             TAG,
-            "job=$jobId model=$modelName tape=${tapeMm}mm bitmap ${srcW}x${srcH} → ${bitmap.width}x${bitmap.height} (dots=$targetTapeDots)",
+            "job=$jobId model=$modelName tape=${tapeMm}mm bitmap ${srcW}x${srcH} → ${bitmap.width}x${bitmap.height} (dots=$targetTapeDots p710=$isP710Family)",
         )
 
         val workDir = (getExternalFilesDir(null) ?: filesDir)
@@ -192,9 +200,13 @@ class BrotherPrintService : Service() {
             info.port = port
             info.macAddress = mac
             info.workPath = workDir.absolutePath
-            // FIT_TO_PAPER: ORIGINAL JNI-aborts on P910BT when bitmap dots don't
-            // exactly match the printer's expected W18 raster size.
-            info.printMode = PrinterInfo.PrintMode.FIT_TO_PAPER
+            // P910: FIT_TO_PAPER — ORIGINAL JNI-aborts when dots ≠ expected W18.
+            // P710: ORIGINAL — FIT_TO_PAPER + high-res often squashes to a short strip.
+            info.printMode = if (isP710Family) {
+                PrinterInfo.PrintMode.ORIGINAL
+            } else {
+                PrinterInfo.PrintMode.FIT_TO_PAPER
+            }
             info.isAutoCut = true
             info.isCutAtEnd = true
             info.isHalfCut = false
@@ -260,9 +272,18 @@ class BrotherPrintService : Service() {
         return Bitmap.createBitmap(src, 0, 0, src.width, src.height, matrix, true)
     }
 
-    /** Printable dots across 12mm or 18mm tape at HIGH_RESOLUTION (~360dpi). */
-    private fun tapeImageAreaWidthDots(model: PrinterInfo.Model, useW12: Boolean): Int {
-        val fallback = if (useW12) W12_HIGH_RES_DOTS else W18_HIGH_RES_DOTS
+    /** Printable dots across 12mm/18mm tape for this model. */
+    private fun tapeImageAreaWidthDots(
+        model: PrinterInfo.Model,
+        useW12: Boolean,
+        isP710Family: Boolean,
+    ): Int {
+        val fallback = when {
+            isP710Family && useW12 -> W12_P710_DOTS
+            isP710Family -> W18_P710_DOTS
+            useW12 -> W12_P910_DOTS
+            else -> W18_P910_DOTS
+        }
         try {
             val list = Printer.getLabelParamList(model) ?: return fallback
             val paperId = if (useW12) LabelInfo.PT.W12.id else LabelInfo.PT.W18.id
@@ -271,9 +292,15 @@ class BrotherPrintService : Service() {
                 ?: list.firstOrNull { it.paperName?.contains(nameHint) == true }
             if (match != null) {
                 val area = match.imageAreaWidth
-                if (area > 0) return area
+                // Prefer SDK when it looks like a real cross-tape width for this family.
+                if (area > 0) {
+                    val maxSane = if (isP710Family) 140 else 300
+                    val minSane = if (isP710Family) 48 else 100
+                    if (area in minSane..maxSane) return area
+                    Log.w(TAG, "ignoring odd imageAreaWidth=$area for p710=$isP710Family")
+                }
                 val pins = match.headPinNum - match.pinOffsetLeft - match.pinOffsetRight
-                if (pins > 0) return pins
+                if (pins in minSaneFor(isP710Family)..maxSaneFor(isP710Family)) return pins
             }
         } catch (e: Exception) {
             Log.w(TAG, "getLabelParamList: ${e.message}")
@@ -281,17 +308,32 @@ class BrotherPrintService : Service() {
         return fallback
     }
 
+    private fun minSaneFor(isP710Family: Boolean) = if (isP710Family) 48 else 100
+    private fun maxSaneFor(isP710Family: Boolean) = if (isP710Family) 140 else 300
+
     /**
-     * Scale content into the printable band and pad with white so ink isn't
-     * clipped on the outer pins (top/bottom of the sticker) or at feed start
-     * (left of the sticker). Critical for P710BT which clips harder than P910.
+     * Fit content into the printable band.
+     *
+     * P910: uniform scale (360×360), with side margins.
+     * P710 high-res: 180 dpi across × 360 dpi along feed — scale width to the
+     * head only; **keep feed length** so labels don't collapse to ~1".
      */
-    private fun fitToPrintableArea(src: Bitmap, printableWidth: Int): Bitmap {
-        val width = printableWidth.coerceAtLeast(64)
-        val margin = MARGIN_ACROSS_DOTS.coerceAtMost((width / 2) - 1).coerceAtLeast(0)
+    private fun fitToPrintableArea(
+        src: Bitmap,
+        printableWidth: Int,
+        isP710Family: Boolean,
+    ): Bitmap {
+        val width = printableWidth.coerceAtLeast(48)
+        val marginBase = if (isP710Family) MARGIN_ACROSS_P710 else MARGIN_ACROSS_P910
+        val margin = marginBase.coerceAtMost((width / 2) - 1).coerceAtLeast(0)
         val innerW = (width - margin * 2).coerceAtLeast(1)
-        val scale = innerW.toFloat() / src.width.toFloat()
-        val innerH = (src.height * scale).toInt().coerceAtLeast(1)
+
+        val scaleX = innerW.toFloat() / src.width.toFloat()
+        // P710: across-tape is ~half the dpi of our 360dpi Flutter canvas; along
+        // tape stays 360dpi — do not apply scaleX to height (that made ~1" labels).
+        val scaleY = if (isP710Family) 1.0f else scaleX
+        val innerH = (src.height * scaleY).toInt().coerceAtLeast(1)
+
         val scaled = if (src.width == innerW && src.height == innerH) {
             src
         } else {
