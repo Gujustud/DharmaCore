@@ -65,6 +65,66 @@ Must print `active` and healthy JSON. If it crash-loops again, `systemctl stop`,
 
 ---
 
+## MCP server (Extract from URL / tool import)
+
+Shop web builds call **`https://dharmacore.sscadcam.com/mcp`** (see `scripts/build_web_shop.ps1`).  
+That path must reverse-proxy to a FastAPI process on CT 105 (usually **`127.0.0.1:8001`**, code in repo `mcp-server/`).
+
+**Symptom if MCP is down:** app toast like `Unexpected token '<' … is not valid JSON`, or browser/`curl` → **`502 Bad Gateway`** on `/mcp/`. Nginx is up; upstream on **8001** is not.
+
+### Diagnose (laptop PowerShell)
+
+    cd c:\cribhub
+    .\deploy\ct105_mcp_diagnose.ps1
+
+Or one-shot public check:
+
+    curl.exe https://dharmacore.sscadcam.com/mcp/
+
+### On CT 105 — what to look for
+
+    systemctl list-units --type=service --all | grep -iE 'mcp|ollama'
+    ss -tlnp | grep 8001
+    grep -RIn 'mcp\|8001' /etc/nginx/sites-enabled /etc/nginx/conf.d
+    curl -sS http://127.0.0.1:8001/health
+
+**Nginx** should have something like (exact file name varies — often the dharmacore / pocketbase site):
+
+    location /mcp/ {
+        proxy_pass http://127.0.0.1:8001/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+    }
+
+Trailing slashes matter: `/mcp/` → `http://127.0.0.1:8001/` strips the `/mcp` prefix so FastAPI sees `/api/extract-page-images`.
+
+**systemd** example (adjust paths after you place `mcp-server/` on the CT):
+
+    # /etc/systemd/system/dharmacore-mcp.service
+    [Unit]
+    Description=DharmaCore MCP (tool import / page images)
+    After=network.target
+
+    [Service]
+    Type=simple
+    WorkingDirectory=/opt/dharmacore/mcp-server
+    ExecStart=/opt/dharmacore/mcp-server/.venv/bin/uvicorn mcp_server:app --host 127.0.0.1 --port 8001
+    Restart=always
+    RestartSec=5
+
+    [Install]
+    WantedBy=multi-user.target
+
+Ollama is only required for **Import specs** (LLM). **Extract from URL** (page images) needs FastAPI + httpx + BeautifulSoup only.
+
+After fixing: `curl.exe https://dharmacore.sscadcam.com/mcp/health` should return JSON, then retry Extract from URL in the app.
+
+---
+
 ## Why Cursor / the agent can’t finish step 2 alone
 
 `scp`/`ssh` to CT 105 need a **password** (or an SSH key). Non-interactive agent shells can’t type that password (`BatchMode` → permission denied; interactive `scp` hangs).
@@ -115,5 +175,7 @@ Application ID is `com.sscadcam.dharmacore`. Uninstall any old `com.example.crib
 | `SHOP_NEXT.md` | Living shop checklist |
 | `.\scripts\build_web_shop.ps1` | Live shop web build + zip |
 | `.\scripts\buildapk_shop.bat` | Live shop Android APK |
+| `.\deploy\ct105_mcp_diagnose.ps1` | MCP / Extract-from-URL 502 diagnose on CT 105 |
+| `mcp-server/` | FastAPI MCP (images + tool import) |
 | `DEPLOY.md` | Old CribHub production |
 | `DEPLOY_ERP.md` | erp-dev CT **103** (`.104`) |
