@@ -31,14 +31,24 @@ Write-Host "Strip CRLF from copied files..." -ForegroundColor Cyan
 ssh $ct "sed -i 's/\r$//' $remoteDir/mcp_server.py $remoteDir/requirements.txt /etc/systemd/system/dharmacore-mcp.service /tmp/ct105_fix_nginx_mcp.py"
 
 Write-Host "Create venv + pip install (may take a minute)..." -ForegroundColor Cyan
-ssh $ct "python3 -m venv $remoteDir/.venv && $remoteDir/.venv/bin/pip install --upgrade pip && $remoteDir/.venv/bin/pip install -r $remoteDir/requirements.txt"
+ssh $ct "rm -rf $remoteDir/.venv && python3 -m venv $remoteDir/.venv && $remoteDir/.venv/bin/pip install --upgrade pip && $remoteDir/.venv/bin/pip install -r $remoteDir/requirements.txt"
+if ($LASTEXITCODE -ne 0) {
+  throw "pip install failed on CT (exit $LASTEXITCODE). See errors above."
+}
 
 Write-Host "Fix nginx /mcp proxy (strip /mcp prefix for FastAPI)..." -ForegroundColor Cyan
 ssh $ct "python3 /tmp/ct105_fix_nginx_mcp.py"
+if ($LASTEXITCODE -ne 0) { throw "nginx mcp fix failed" }
 ssh $ct "nginx -t && systemctl reload nginx"
+if ($LASTEXITCODE -ne 0) { throw "nginx reload failed" }
 
 Write-Host "Enable + start dharmacore-mcp..." -ForegroundColor Cyan
 ssh $ct "systemctl daemon-reload && systemctl enable --now dharmacore-mcp && sleep 2 && systemctl is-active dharmacore-mcp"
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "Service not active — recent logs:" -ForegroundColor Yellow
+  ssh $ct "journalctl -u dharmacore-mcp -n 40 --no-pager"
+  throw "dharmacore-mcp failed to start"
+}
 
 Write-Host "Local health..." -ForegroundColor Cyan
 ssh $ct "curl -sS -m 5 http://127.0.0.1:8001/health; echo"
