@@ -446,13 +446,15 @@ class LabelPrintService {
     int? height,
   }) async {
     final imageHeight = height ?? labelHeightPx12mm;
-    final s = imageHeight / labelHeightPx12mm;
-    final leftMargin = math.max(4.0, 10.0 * s);
-    final rightMargin = math.max(4, (12 * s).round());
-    final edgePad = math.max(2.0, imageHeight * 0.06);
-    final nameFontSize = math.max(16.0, imageHeight * 0.28);
-    final fieldFontSize = math.max(14.0, imageHeight * 0.22);
-    final lineGap = math.max(2.0, 4.0 * s);
+    // Pack name + LBS + TL into nearly the full tape height (cross-tape).
+    const edgePad = 2.0;
+    const lineGap = 1.0;
+    final usable = (imageHeight - 2 * edgePad - 2 * lineGap).clamp(24.0, 400.0);
+    // Name slightly larger than LBS/TL; sizes are line-box targets (~fontSize).
+    final nameFontSize = usable * 0.42;
+    final fieldFontSize = usable * 0.27;
+    final leftMargin = math.max(4.0, imageHeight * 0.06);
+    final rightMargin = math.max(4, (imageHeight * 0.08).round());
     const maxNameChars = 28;
     final lbsVal = (lbs ?? '').trim();
     final tlVal = (tl ?? '').trim();
@@ -472,12 +474,12 @@ class LabelPrintService {
     final lbsPainter = _labelTextPainter(
       lbsLine,
       fontSize: fieldFontSize,
-      weight: FontWeight.w600,
+      weight: FontWeight.w700,
     );
     final tlPainter = _labelTextPainter(
       tlLine,
       fontSize: fieldFontSize,
-      weight: FontWeight.w600,
+      weight: FontWeight.w700,
     );
 
     final textCol = math.max(
@@ -487,11 +489,10 @@ class LabelPrintService {
     final textBlockH =
         namePainter.height + lineGap + lbsPainter.height + lineGap + tlPainter.height;
     final computedWidth = (leftMargin + textCol + rightMargin).ceil();
-    final imageWidth = width ?? computedWidth.clamp(120, maxLabelWidthPx);
-    // Prefer top pad; if block is tall, center within tape.
-    final textTop = textBlockH + 2 * edgePad <= imageHeight
-        ? edgePad
-        : ((imageHeight - textBlockH) / 2).clamp(0.0, imageHeight.toDouble());
+    final imageWidth = width ?? computedWidth.clamp(80, maxLabelWidthPx);
+    // Center in tape if anything short; usually fills almost full height.
+    final textTop = ((imageHeight - textBlockH) / 2)
+        .clamp(0.0, imageHeight.toDouble());
 
     return _canvasLabelToPng(
       imageWidth: imageWidth,
