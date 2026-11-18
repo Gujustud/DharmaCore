@@ -14,6 +14,7 @@ import android.util.Log
 import com.brother.ptouch.sdk.LabelInfo
 import com.brother.ptouch.sdk.Printer
 import com.brother.ptouch.sdk.PrinterInfo
+import com.brother.ptouch.sdk.PrinterStatus
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.Executors
@@ -238,7 +239,7 @@ class BrotherPrintService : Service() {
 
             // Report OK as soon as the printer accepts the job so the Flutter
             // "Sending…" dialog doesn't sit through a slow endCommunication.
-            var status: PrinterInfo.PrinterStatus? = null
+            var status: PrinterStatus? = null
             try {
                 val fileStatus = printer.printFile(printPng.absolutePath)
                 status = if (fileStatus.errorCode == PrinterInfo.ErrorCode.ERROR_NONE) {
