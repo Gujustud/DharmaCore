@@ -236,13 +236,20 @@ class BrotherPrintService : Service() {
                 continue
             }
 
-            val status = try {
+            // Report OK as soon as the printer accepts the job so the Flutter
+            // "Sending…" dialog doesn't sit through a slow endCommunication.
+            var status: PrinterInfo.PrinterStatus? = null
+            try {
                 val fileStatus = printer.printFile(printPng.absolutePath)
-                if (fileStatus.errorCode == PrinterInfo.ErrorCode.ERROR_NONE) {
+                status = if (fileStatus.errorCode == PrinterInfo.ErrorCode.ERROR_NONE) {
                     fileStatus
                 } else {
                     Log.w(TAG, "printFile ${fileStatus.errorCode}, trying printImage")
                     printer.printImage(bitmap)
+                }
+                if (status.errorCode == PrinterInfo.ErrorCode.ERROR_NONE) {
+                    writeResult(this, jobId, "OK", null)
+                    Log.i(TAG, "job=$jobId success via $port")
                 }
             } finally {
                 try {
@@ -251,12 +258,10 @@ class BrotherPrintService : Service() {
                 }
             }
 
-            if (status.errorCode == PrinterInfo.ErrorCode.ERROR_NONE) {
-                writeResult(this, jobId, "OK", null)
-                Log.i(TAG, "job=$jobId success via $port")
+            if (status?.errorCode == PrinterInfo.ErrorCode.ERROR_NONE) {
                 return
             }
-            lastError = "Print error via $port: ${status.errorCode}"
+            lastError = "Print error via $port: ${status?.errorCode}"
         }
 
         writeResult(this, jobId, "PRINT_FAILED", lastError)
@@ -329,9 +334,15 @@ class BrotherPrintService : Service() {
         val innerW = (width - margin * 2).coerceAtLeast(1)
 
         val scaleX = innerW.toFloat() / src.width.toFloat()
-        // P710: across-tape is ~half the dpi of our 360dpi Flutter canvas; along
-        // tape stays 360dpi — do not apply scaleX to height (that made ~1" labels).
-        val scaleY = if (isP710Family) 1.0f else scaleX
+        // When Flutter already rasterized at P710 native height (~112), scale
+        // uniformly so glyphs aren't squashed. Only the old 256→112 path used
+        // anisotropic scaleY=1 (kept length but flattened text).
+        val alreadyNative = isP710Family && src.width in 90..130
+        val scaleY = when {
+            alreadyNative -> scaleX
+            isP710Family -> 1.0f
+            else -> scaleX
+        }
         val innerH = (src.height * scaleY).toInt().coerceAtLeast(1)
 
         val scaled = if (src.width == innerW && src.height == innerH) {

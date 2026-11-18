@@ -83,9 +83,43 @@ class MainActivity : FlutterActivity() {
                             replyError(result, "INVALID_ARGS", "imageBytes required")
                         }
                     }
+                    "preferredTapeDots" -> {
+                        val tapeMm = ((call.arguments as? Map<*, *>)?.get("tapeMm") as? Number)?.toInt() ?: 18
+                        executor.execute {
+                            try {
+                                replySuccess(result, preferredTapeDots(tapeMm))
+                            } catch (e: Exception) {
+                                replyError(result, "DOTS_ERROR", e.message)
+                            }
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    /**
+     * Cross-tape printable dots for label rasterization.
+     * P710/P715: 112 (18mm) / 70 (12mm). P910: 256 / 170.
+     */
+    private fun preferredTapeDots(tapeMm: Int): Int {
+        val useW12 = tapeMm in 11..13
+        val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        val adapter = bluetoothManager?.adapter
+        val bonded = try {
+            adapter?.bondedDevices.orEmpty()
+        } catch (_: SecurityException) {
+            emptySet()
+        }
+        val device = orderedBrotherDevices(bonded).firstOrNull()
+        val model = device?.let { modelNameFor(it) } ?: ""
+        val isP710 = model.contains("P710") || model.contains("P715")
+        return when {
+            isP710 && useW12 -> 70
+            isP710 -> 112
+            useW12 -> 170
+            else -> 256
+        }
     }
 
     private fun extractImageBytes(raw: Any?): ByteArray? {

@@ -51,11 +51,17 @@ class LabelPrintService {
     return pathToBinCode(getPathNames(location, allLocations));
   }
 
-  /// Pixels across 18mm tape at Brother HIGH_RESOLUTION (~360 dpi / ~256 dots).
+  /// Pixels across 18mm tape for P910 (~360 dpi both axes / ~256 dots).
   static const int labelHeightPx = 256;
 
-  /// Pixels across 12mm (~1/2") tape at ~360 dpi.
+  /// Pixels across 12mm (~1/2") tape for P910 (~360 dpi).
   static const int labelHeightPx12mm = 170;
+
+  /// P710/P715 18mm printable (128-pin head, high-res 180×360 → 112 dots).
+  static const int labelHeightPxP710 = 112;
+
+  /// P710/P715 12mm printable (~70 dots).
+  static const int labelHeightPx12mmP710 = 70;
 
   /// Soft cap while laying out bitmaps (before PDF scales to [targetLabelLengthMm]).
   static const int maxLabelWidthPx = 1600;
@@ -173,28 +179,45 @@ class LabelPrintService {
     }
   }
 
+  /// Cross-tape pixel height for the preferred paired Brother (P710→112, P910→256).
+  static Future<int> preferredLabelHeightPx({double tapeHeightMm = tapeHeightMm18}) async {
+    final fallback =
+        tapeHeightMm <= 12.5 ? labelHeightPx12mm : labelHeightPx;
+    if (kIsWeb || !androidUseBrotherSdk) return fallback;
+    try {
+      final dots = await _channel.invokeMethod<int>('preferredTapeDots', {
+        'tapeMm': tapeHeightMm.round(),
+      });
+      if (dots != null && dots >= 48 && dots <= 300) return dots;
+    } catch (e) {
+      debugPrint('preferredTapeDots: $e');
+    }
+    return fallback;
+  }
+
   /// Generate label as PNG bytes: BIN + tool name + QR.
-  /// Uses bundled NotoSans (not upscaled bitmap fonts).
+  /// Renders bundled NotoSans into a bitmap — Brother PT Bluetooth is raster-only
+  /// (no live font/text commands for freeform labels).
   static Future<Uint8List> generateLabelImage({
     required String toolName,
     required String binCode,
     int? width,
     int? height,
   }) async {
-    // 360dpi: TEXT top-aligned (y = edgePad). QR vertically centered.
-    // [gap] = clear horizontal pixels between text column and QR.
-    // NOTE: main@2.0.12 still centered text with the QR — that was wrong.
-    const leftMargin = 14.0;
-    const rightMargin = 16;
-    const qrVerticalMargin = 4;
-    const gap = 72.0; // ~5mm @ 360dpi — obvious space before QR
-    const toolMaxCharsPerLine = 26;
-    const binFontSize = 68.0;
-    const nameFontSize = 58.0;
-    // Inset from tape edge so BIN isn't cropped; still clearly "top".
-    const edgePad = 16.0;
-
+    // TEXT top-aligned. QR vertically centered. Scale layout to [imageHeight]
+    // so P710 (112) fills the tape instead of squashing a 256px P910 canvas.
     final imageHeight = height ?? labelHeightPx;
+    final s = imageHeight / labelHeightPx; // 1.0 on P910, ~0.44 on P710
+    final leftMargin = math.max(6.0, 14.0 * s);
+    final rightMargin = math.max(6, (16 * s).round());
+    final qrVerticalMargin = math.max(2, (4 * s).round());
+    final gap = math.max(16.0, 72.0 * s);
+    const toolMaxCharsPerLine = 26;
+    // Fill most of the tape: ~40% / ~32% of cross-tape height.
+    final binFontSize = math.max(22.0, imageHeight * 0.40);
+    final nameFontSize = math.max(18.0, imageHeight * 0.32);
+    final edgePad = math.max(2.0, imageHeight * 0.05);
+
     final qrMaxSide = imageHeight - 2 * qrVerticalMargin;
 
     final binNumber = binCode.contains('-')
@@ -228,29 +251,28 @@ class LabelPrintService {
     }
 
     // One TextPainter so BIN + name are a single stacked paragraph.
-    // height > 1.0 so ascenders are not clipped when rasterized.
     final textPainter = TextPainter(
       text: TextSpan(
         children: [
           TextSpan(
             text: binLine,
-            style: const TextStyle(
+            style: TextStyle(
               fontFamily: 'NotoSans',
               fontWeight: FontWeight.w700,
               fontSize: binFontSize,
-              color: Color(0xFF000000),
-              height: 1.15,
+              color: const Color(0xFF000000),
+              height: 1.1,
             ),
           ),
           for (final line in nameLines)
             TextSpan(
               text: '\n$line',
-              style: const TextStyle(
+              style: TextStyle(
                 fontFamily: 'NotoSans',
                 fontWeight: FontWeight.w700,
                 fontSize: nameFontSize,
-                color: Color(0xFF000000),
-                height: 1.15,
+                color: const Color(0xFF000000),
+                height: 1.1,
               ),
             ),
         ],
@@ -275,8 +297,7 @@ class LabelPrintService {
       imageHeight: imageHeight,
       rightPad: rightMargin,
       paint: (canvas) {
-        // Top-aligned (not centered): edgePad keeps BIN clear of tape crop.
-        textPainter.paint(canvas, const Offset(leftMargin, edgePad));
+        textPainter.paint(canvas, Offset(leftMargin, edgePad));
         _paintQr(
           canvas,
           qrImage: qrImage,
@@ -406,8 +427,12 @@ class LabelPrintService {
     required String toolName,
     required String binCode,
   }) async {
-    final pngBytes =
-        await generateLabelImage(toolName: toolName, binCode: binCode);
+    final height = await preferredLabelHeightPx(tapeHeightMm: tapeHeightMm18);
+    final pngBytes = await generateLabelImage(
+      toolName: toolName,
+      binCode: binCode,
+      height: height,
+    );
     await sendLabelPng(pngBytes, jobName: 'tool-$binCode');
   }
 
@@ -420,15 +445,15 @@ class LabelPrintService {
     int? width,
     int? height,
   }) async {
-    const leftMargin = 10.0;
-    const rightMargin = 12;
-    const edgePad = 8.0;
-    const nameFontSize = 36.0;
-    const fieldFontSize = 30.0;
-    const lineGap = 4.0;
-    const maxNameChars = 28;
-
     final imageHeight = height ?? labelHeightPx12mm;
+    final s = imageHeight / labelHeightPx12mm;
+    final leftMargin = math.max(4.0, 10.0 * s);
+    final rightMargin = math.max(4, (12 * s).round());
+    final edgePad = math.max(2.0, imageHeight * 0.06);
+    final nameFontSize = math.max(16.0, imageHeight * 0.28);
+    final fieldFontSize = math.max(14.0, imageHeight * 0.22);
+    final lineGap = math.max(2.0, 4.0 * s);
+    const maxNameChars = 28;
     final lbsVal = (lbs ?? '').trim();
     final tlVal = (tl ?? '').trim();
     final lbsLine = lbsVal.isEmpty ? 'LBS: ________' : 'LBS: $lbsVal';
@@ -489,10 +514,12 @@ class LabelPrintService {
     String? lbs,
     String? tl,
   }) async {
+    final height = await preferredLabelHeightPx(tapeHeightMm: tapeHeightMm12);
     final pngBytes = await generateToolTagLabelImage(
       toolName: toolName,
       lbs: lbs,
       tl: tl,
+      height: height,
     );
     await sendLabelPng(
       pngBytes,
