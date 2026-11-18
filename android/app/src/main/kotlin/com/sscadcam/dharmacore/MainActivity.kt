@@ -35,6 +35,7 @@ class MainActivity : FlutterActivity() {
     private val executor = Executors.newSingleThreadExecutor()
     private var pendingPrintBytes: ByteArray? = null
     private var pendingPrintResult: MethodChannel.Result? = null
+    private var pendingTapeMm: Int = 18
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -42,19 +43,20 @@ class MainActivity : FlutterActivity() {
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "printLabel" -> {
-                        val bytes = extractImageBytes(
-                            (call.arguments as? Map<*, *>)?.get("imageBytes")
-                        )
+                        val args = call.arguments as? Map<*, *>
+                        val bytes = extractImageBytes(args?.get("imageBytes"))
                         if (bytes == null) {
                             replyError(result, "INVALID_ARGS", "imageBytes required")
                             return@setMethodCallHandler
                         }
+                        val tapeMm = (args?.get("tapeMm") as? Number)?.toInt() ?: 18
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                             val needConnect = checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
                             val needScan = checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED
                             if (needConnect || needScan) {
                                 pendingPrintBytes = bytes
                                 pendingPrintResult = result
+                                pendingTapeMm = tapeMm
                                 val perms = mutableListOf<String>()
                                 if (needConnect) perms.add(Manifest.permission.BLUETOOTH_CONNECT)
                                 if (needScan) perms.add(Manifest.permission.BLUETOOTH_SCAN)
@@ -62,7 +64,7 @@ class MainActivity : FlutterActivity() {
                                 return@setMethodCallHandler
                             }
                         }
-                        executor.execute { runPrintViaService(bytes, result) }
+                        executor.execute { runPrintViaService(bytes, result, tapeMm) }
                     }
                     "exportLabelPng" -> {
                         val args = call.arguments as? Map<*, *>
@@ -113,11 +115,13 @@ class MainActivity : FlutterActivity() {
         if (requestCode != REQUEST_BLUETOOTH_CONNECT) return
         val bytes = pendingPrintBytes
         val res = pendingPrintResult
+        val tapeMm = pendingTapeMm
         pendingPrintBytes = null
         pendingPrintResult = null
+        pendingTapeMm = 18
         val granted = grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }
         if (granted && bytes != null && res != null) {
-            executor.execute { runPrintViaService(bytes, res) }
+            executor.execute { runPrintViaService(bytes, res, tapeMm) }
         } else if (res != null) {
             runOnUiThread {
                 Toast.makeText(this, "Bluetooth permission needed for printing", Toast.LENGTH_LONG).show()
@@ -149,7 +153,11 @@ class MainActivity : FlutterActivity() {
      * Tries each paired Brother PT in priority order (connected first, then last-used)
      * so whichever printer is powered on can take the job.
      */
-    private fun runPrintViaService(pngBytes: ByteArray, result: MethodChannel.Result) {
+    private fun runPrintViaService(
+        pngBytes: ByteArray,
+        result: MethodChannel.Result,
+        tapeMm: Int = 18,
+    ) {
         val replied = AtomicBoolean(false)
         fun success() {
             if (replied.compareAndSet(false, true)) replySuccess(result)
@@ -199,7 +207,7 @@ class MainActivity : FlutterActivity() {
 
                 Log.i(
                     TAG,
-                    "starting BrotherPrintService job=$jobId model=$modelName mac=${device.address} connected=${isBluetoothConnected(device)}",
+                    "starting BrotherPrintService job=$jobId model=$modelName tape=${tapeMm}mm mac=${device.address} connected=${isBluetoothConnected(device)}",
                 )
                 val intent = Intent(this, BrotherPrintService::class.java).apply {
                     action = BrotherPrintService.ACTION_PRINT
@@ -207,6 +215,7 @@ class MainActivity : FlutterActivity() {
                     putExtra(BrotherPrintService.EXTRA_MAC, device.address)
                     putExtra(BrotherPrintService.EXTRA_MODEL, modelName)
                     putExtra(BrotherPrintService.EXTRA_JOB_ID, jobId)
+                    putExtra(BrotherPrintService.EXTRA_TAPE_MM, tapeMm)
                 }
                 startService(intent)
 

@@ -4265,7 +4265,7 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
             color: Colors.blue,
             tooltip: 'Add Inventory',
           ),
-          if (_isEditMode && (kIsWeb || (!kIsWeb && Platform.isAndroid)))
+          if (_isEditMode && (kIsWeb || (!kIsWeb && Platform.isAndroid))) ...[
             IconButton(
               onPressed: _showPrintLabelDialog,
               icon: const Icon(Icons.print),
@@ -4275,6 +4275,15 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
                       ? 'Print bin label (system print → PT-P910BT)'
                       : 'Print bin label'),
             ),
+            if (_category.trim().toLowerCase() == 'cutting tools')
+              IconButton(
+                onPressed: _showPrintToolTagDialog,
+                icon: const Icon(Icons.label_outline),
+                tooltip: kIsWeb
+                    ? 'Print ½″ tool tag (system print → PT-P910BT, 12mm)'
+                    : 'Print ½″ tool tag (12mm tape)',
+              ),
+          ],
         ],
       ),
       const SizedBox(height: 8),
@@ -4712,7 +4721,137 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
     );
     if (chosen != null) await _printLabelForBin(chosen);
   }
-  
+
+  /// Optional LBS/TL fill, then print 12mm (~½″) holder-tag sticker.
+  Future<void> _showPrintToolTagDialog() async {
+    if (widget.tool == null) return;
+    final lbsController = TextEditingController();
+    final tlController = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Print tool tag (½″)'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              widget.tool!.toolName,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Leave LBS / TL blank to print empty lines for sharpie.',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: lbsController,
+              decoration: const InputDecoration(
+                labelText: 'LBS',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              textCapitalization: TextCapitalization.characters,
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: tlController,
+              decoration: const InputDecoration(
+                labelText: 'TL',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              textCapitalization: TextCapitalization.characters,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Print'),
+          ),
+        ],
+      ),
+    );
+    final lbs = lbsController.text;
+    final tl = tlController.text;
+    lbsController.dispose();
+    tlController.dispose();
+    if (confirmed != true || !mounted) return;
+    await _printToolTag(lbs: lbs, tl: tl);
+  }
+
+  Future<void> _printToolTag({String? lbs, String? tl}) async {
+    if (widget.tool == null) return;
+
+    if (!kIsWeb && mounted) {
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const PopScope(
+          canPop: false,
+          child: AlertDialog(
+            content: Row(
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(width: 20),
+                Expanded(child: Text('Sending tool tag to Brother printer…')),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    try {
+      await LabelPrintService.printToolTagLabel(
+        toolName: widget.tool!.toolName,
+        lbs: lbs,
+        tl: tl,
+      );
+      if (mounted) {
+        if (!kIsWeb) Navigator.of(context, rootNavigator: true).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              kIsWeb
+                  ? 'Opened system print — PT-P910BT, 12mm, Length ${LabelPrintService.targetToolTagLengthMm.round()} mm'
+                  : 'Tool tag sent to Brother printer',
+            ),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } on PlatformException catch (e) {
+      if (mounted) {
+        if (!kIsWeb) Navigator.of(context, rootNavigator: true).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Print failed (${e.code}): ${e.message ?? e.code}'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 8),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        if (!kIsWeb) Navigator.of(context, rootNavigator: true).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Print failed: $e'),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 8),
+          ),
+        );
+      }
+    }
+  }
+
   // NEW: Build history items with smart transfer pairing
   List<Widget> _buildHistoryItems(List<InventoryHistory> historyList) {
     final widgets = <Widget>[];

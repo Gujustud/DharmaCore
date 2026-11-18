@@ -13,8 +13,8 @@ import 'package:qr/qr.dart';
 
 import 'models.dart';
 
-/// Label printing for Brother PT-P910BT (18mm TZe; P710BT still supported on Android).
-/// Tool labels: line 1 = tool name, line 2 = BIN, QR = tool + BIN.
+/// Label printing for Brother PT-P910BT (18mm bin tags + 12mm / ~1/2" tool tags).
+/// Bin labels: tool name + BIN + QR. Tool tags: name + LBS/TL blanks (or filled).
 /// Material labels: code / identity / length, QR = piece id.
 /// Android: Bluetooth via Brother SDK. Web/desktop Chrome: system print dialog.
 class LabelPrintService {
@@ -54,10 +54,14 @@ class LabelPrintService {
   /// Pixels across 18mm tape at Brother HIGH_RESOLUTION (~360 dpi / ~256 dots).
   static const int labelHeightPx = 256;
 
+  /// Pixels across 12mm (~1/2") tape at ~360 dpi.
+  static const int labelHeightPx12mm = 170;
+
   /// Soft cap while laying out bitmaps (before PDF scales to [targetLabelLengthMm]).
   static const int maxLabelWidthPx = 1600;
 
-  static const double _tapeHeightMm = 18;
+  static const double tapeHeightMm18 = 18;
+  static const double tapeHeightMm12 = 12;
   static const double _dpi = 360;
 
   /// Fixed along-tape length for the Windows / Chrome → Brother print path.
@@ -66,6 +70,9 @@ class LabelPrintService {
   /// paper **18 mm**). The PDF page is always this long; long stickers scale
   /// down to fit so the QR is never cropped by the driver Length setting.
   static const double targetLabelLengthMm = 70;
+
+  /// Along-tape length for 12mm tool-tag stickers (Chrome → Brother).
+  static const double targetToolTagLengthMm = 50;
 
   /// Trim trailing blank tape: keep ink + [rightPad] px only.
   static img.Image _cropLabelToContent(img.Image image, {int rightPad = 16}) {
@@ -282,11 +289,14 @@ class LabelPrintService {
     );
   }
 
-  /// PDF / driver page: always [targetLabelLengthMm] × 18mm (landscape).
-  static PdfPageFormat _labelPageFormat() {
+  /// PDF / driver page for [tapeHeightMm] (landscape: length × tape height).
+  static PdfPageFormat _labelPageFormat({
+    double tapeHeightMm = tapeHeightMm18,
+    double lengthMm = targetLabelLengthMm,
+  }) {
     return PdfPageFormat(
-      targetLabelLengthMm * PdfPageFormat.mm,
-      _tapeHeightMm * PdfPageFormat.mm,
+      lengthMm * PdfPageFormat.mm,
+      tapeHeightMm * PdfPageFormat.mm,
       marginAll: 0,
     );
   }
@@ -301,6 +311,8 @@ class LabelPrintService {
 
   /// Send a label PNG to the printer (Android Bluetooth) or system print (web).
   ///
+  /// [tapeHeightMm] selects Brother tape (18 = bin labels, 12 ≈ 1/2" tool tags).
+  ///
   /// Android: one-tap via Brother SDK in a separate `:brother_print` process.
   /// PT-P910BT is Bluetooth-only — Android's system print dialog will **not**
   /// list it (Brother Print Service Plugin is Wi‑Fi models only), so we do
@@ -308,42 +320,62 @@ class LabelPrintService {
   static Future<void> sendLabelPng(
     Uint8List pngBytes, {
     String jobName = 'label',
+    double tapeHeightMm = tapeHeightMm18,
+    double lengthMm = targetLabelLengthMm,
   }) async {
     if (kIsWeb || !androidUseBrotherSdk) {
-      await _sendViaSystemPrint(pngBytes, jobName: jobName);
+      await _sendViaSystemPrint(
+        pngBytes,
+        jobName: jobName,
+        tapeHeightMm: tapeHeightMm,
+        lengthMm: lengthMm,
+      );
       return;
     }
     // Pass Uint8List directly (becomes byte[] on Android) — not List<int>.
     await _channel.invokeMethod<void>('printLabel', {
       'imageBytes': pngBytes,
+      'tapeMm': tapeHeightMm.round(),
     });
   }
 
   static Future<void> _sendViaSystemPrint(
     Uint8List pngBytes, {
     required String jobName,
+    double tapeHeightMm = tapeHeightMm18,
+    double lengthMm = targetLabelLengthMm,
   }) async {
-    final format = _labelPageFormat();
+    final format = _labelPageFormat(
+      tapeHeightMm: tapeHeightMm,
+      lengthMm: lengthMm,
+    );
     await Printing.layoutPdf(
       name: jobName,
       format: format,
-      onLayout: (_) => _pngAsLabelPdf(pngBytes),
+      onLayout: (_) => _pngAsLabelPdf(
+        pngBytes,
+        tapeHeightMm: tapeHeightMm,
+        lengthMm: lengthMm,
+      ),
     );
   }
 
   /// Wrap PNG in a PDF for the browser → Brother print dialog.
-  ///
-  /// Page is always [targetLabelLengthMm] × 18mm. The sticker is
-  /// left-aligned and scaled to fit (never cropped) — set Brother
-  /// **Length** once to [targetLabelLengthMm] mm and leave it
-  /// (paper **18 mm**).
-  static Future<Uint8List> _pngAsLabelPdf(Uint8List pngBytes) async {
-    final page = _labelPageFormat();
+  static Future<Uint8List> _pngAsLabelPdf(
+    Uint8List pngBytes, {
+    double tapeHeightMm = tapeHeightMm18,
+    double lengthMm = targetLabelLengthMm,
+  }) async {
+    final page = _labelPageFormat(
+      tapeHeightMm: tapeHeightMm,
+      lengthMm: lengthMm,
+    );
     final pageW = page.width;
     final pageH = page.height;
     final decoded = img.decodePng(pngBytes);
+    final defaultH = tapeHeightMm <= 12.5 ? labelHeightPx12mm : labelHeightPx;
     final srcW = (decoded?.width ?? maxLabelWidthPx).toDouble();
-    final srcH = (decoded?.height ?? labelHeightPx).toDouble();
+    final srcH = (decoded?.height ?? defaultH).toDouble();
     final scale = math.min(pageW / srcW, pageH / srcH);
     final drawW = srcW * scale;
     final drawH = srcH * scale;
@@ -369,7 +401,7 @@ class LabelPrintService {
     return doc.save();
   }
 
-  /// Send tool bin label (Android or web system print).
+  /// Send tool bin label (Android or web system print) — 18mm tape.
   static Future<void> printLabel({
     required String toolName,
     required String binCode,
@@ -377,6 +409,97 @@ class LabelPrintService {
     final pngBytes =
         await generateLabelImage(toolName: toolName, binCode: binCode);
     await sendLabelPng(pngBytes, jobName: 'tool-$binCode');
+  }
+
+  /// 12mm (~1/2") holder-tag sticker: tool name + LBS/TL lines.
+  /// Empty [lbs]/[tl] print as blanks for sharpie.
+  static Future<Uint8List> generateToolTagLabelImage({
+    required String toolName,
+    String? lbs,
+    String? tl,
+    int? width,
+    int? height,
+  }) async {
+    const leftMargin = 10.0;
+    const rightMargin = 12;
+    const edgePad = 8.0;
+    const nameFontSize = 36.0;
+    const fieldFontSize = 30.0;
+    const lineGap = 4.0;
+    const maxNameChars = 28;
+
+    final imageHeight = height ?? labelHeightPx12mm;
+    final lbsVal = (lbs ?? '').trim();
+    final tlVal = (tl ?? '').trim();
+    final lbsLine = lbsVal.isEmpty ? 'LBS: ________' : 'LBS: $lbsVal';
+    final tlLine = tlVal.isEmpty ? 'TL:  ________' : 'TL:  $tlVal';
+
+    var name = toolName.trim();
+    if (name.length > maxNameChars) {
+      name = '${name.substring(0, maxNameChars - 1)}…';
+    }
+
+    final namePainter = _labelTextPainter(
+      name,
+      fontSize: nameFontSize,
+      weight: FontWeight.w700,
+    );
+    final lbsPainter = _labelTextPainter(
+      lbsLine,
+      fontSize: fieldFontSize,
+      weight: FontWeight.w600,
+    );
+    final tlPainter = _labelTextPainter(
+      tlLine,
+      fontSize: fieldFontSize,
+      weight: FontWeight.w600,
+    );
+
+    final textCol = math.max(
+      namePainter.width,
+      math.max(lbsPainter.width, tlPainter.width),
+    );
+    final textBlockH =
+        namePainter.height + lineGap + lbsPainter.height + lineGap + tlPainter.height;
+    final computedWidth = (leftMargin + textCol + rightMargin).ceil();
+    final imageWidth = width ?? computedWidth.clamp(120, maxLabelWidthPx);
+    // Prefer top pad; if block is tall, center within tape.
+    final textTop = textBlockH + 2 * edgePad <= imageHeight
+        ? edgePad
+        : ((imageHeight - textBlockH) / 2).clamp(0.0, imageHeight.toDouble());
+
+    return _canvasLabelToPng(
+      imageWidth: imageWidth,
+      imageHeight: imageHeight,
+      rightPad: rightMargin,
+      paint: (canvas) {
+        var y = textTop;
+        namePainter.paint(canvas, Offset(leftMargin, y));
+        y += namePainter.height + lineGap;
+        lbsPainter.paint(canvas, Offset(leftMargin, y));
+        y += lbsPainter.height + lineGap;
+        tlPainter.paint(canvas, Offset(leftMargin, y));
+      },
+    );
+  }
+
+  /// Print 12mm tool-tag sticker (holder tags). Optional [lbs]/[tl] fill the blanks.
+  static Future<void> printToolTagLabel({
+    required String toolName,
+    String? lbs,
+    String? tl,
+  }) async {
+    final pngBytes = await generateToolTagLabelImage(
+      toolName: toolName,
+      lbs: lbs,
+      tl: tl,
+    );
+    await sendLabelPng(
+      pngBytes,
+      jobName: 'tool-tag',
+      tapeHeightMm: tapeHeightMm12,
+      lengthMm: targetToolTagLengthMm,
+    );
   }
 
   /// QR payload for a material piece — stable id, not human length text.

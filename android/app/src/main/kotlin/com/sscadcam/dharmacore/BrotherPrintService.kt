@@ -31,11 +31,16 @@ class BrotherPrintService : Service() {
         const val EXTRA_MAC = "mac"
         const val EXTRA_MODEL = "model"
         const val EXTRA_JOB_ID = "job_id"
+        /** Tape height in mm: 18 (bin labels) or 12 (~1/2" tool tags). */
+        const val EXTRA_TAPE_MM = "tape_mm"
 
         private const val BLE_TIMEOUT_MS = 5_000L
 
         /** 18mm printable width @ Brother HIGH_RESOLUTION (~360 dpi). */
         private const val W18_HIGH_RES_DOTS = 256
+
+        /** 12mm printable width @ HIGH_RESOLUTION (~360 dpi) fallback. */
+        private const val W12_HIGH_RES_DOTS = 170
 
         /** Keep ink inside the printable band — PT heads clip the outer pins. */
         private const val MARGIN_ACROSS_DOTS = 10
@@ -75,6 +80,7 @@ class BrotherPrintService : Service() {
         val mac = intent.getStringExtra(EXTRA_MAC)
         val modelName = intent.getStringExtra(EXTRA_MODEL) ?: "PT_P910BT"
         val jobId = intent.getStringExtra(EXTRA_JOB_ID)
+        val tapeMm = intent.getIntExtra(EXTRA_TAPE_MM, 18)
         if (pngPath.isNullOrBlank() || mac.isNullOrBlank() || jobId.isNullOrBlank()) {
             Log.e(TAG, "missing extras")
             stopSelf(startId)
@@ -83,7 +89,7 @@ class BrotherPrintService : Service() {
 
         executor.execute {
             try {
-                runPrint(pngPath, mac, modelName, jobId)
+                runPrint(pngPath, mac, modelName, jobId, tapeMm)
             } catch (t: Throwable) {
                 Log.e(TAG, "print failed", t)
                 writeResult(this, jobId, "PRINT_ERROR", t.message ?: t.javaClass.simpleName)
@@ -94,7 +100,13 @@ class BrotherPrintService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun runPrint(pngPath: String, mac: String, modelName: String, jobId: String) {
+    private fun runPrint(
+        pngPath: String,
+        mac: String,
+        modelName: String,
+        jobId: String,
+        tapeMm: Int,
+    ) {
         if (!File(pngPath).isFile) {
             writeResult(this, jobId, "FILE_MISSING", "Label image not found")
             return
@@ -135,13 +147,14 @@ class BrotherPrintService : Service() {
         val rotated = rotateLandscapeForPtTape(argb).also {
             if (it !== argb) argb.recycle()
         }
-        val targetTapeDots = w18ImageAreaWidthDots(model)
+        val useW12 = tapeMm in 11..13
+        val targetTapeDots = tapeImageAreaWidthDots(model, useW12)
         val bitmap = fitToPrintableArea(rotated, targetTapeDots).also {
             if (it !== rotated) rotated.recycle()
         }
         Log.i(
             TAG,
-            "job=$jobId model=$modelName bitmap ${srcW}x${srcH} → ${bitmap.width}x${bitmap.height} (W18 dots=$targetTapeDots)",
+            "job=$jobId model=$modelName tape=${tapeMm}mm bitmap ${srcW}x${srcH} → ${bitmap.width}x${bitmap.height} (dots=$targetTapeDots)",
         )
 
         val workDir = (getExternalFilesDir(null) ?: filesDir)
@@ -186,7 +199,8 @@ class BrotherPrintService : Service() {
             info.isCutAtEnd = true
             info.isHalfCut = false
             info.isSpecialTape = false
-            info.labelNameIndex = LabelInfo.PT.W18.ordinal
+            val labelOrdinal = if (useW12) LabelInfo.PT.W12.ordinal else LabelInfo.PT.W18.ordinal
+            info.labelNameIndex = labelOrdinal
             info.printQuality = PrinterInfo.PrintQuality.HIGH_RESOLUTION
             info.skipStatusCheck = true
             if (!printer.setPrinterInfo(info)) {
@@ -195,7 +209,7 @@ class BrotherPrintService : Service() {
             }
             try {
                 val labelInfo = printer.labelInfo ?: LabelInfo()
-                labelInfo.labelNameIndex = LabelInfo.PT.W18.ordinal
+                labelInfo.labelNameIndex = labelOrdinal
                 labelInfo.isAutoCut = true
                 labelInfo.isEndCut = true
                 labelInfo.isHalfCut = false
@@ -246,13 +260,15 @@ class BrotherPrintService : Service() {
         return Bitmap.createBitmap(src, 0, 0, src.width, src.height, matrix, true)
     }
 
-    /** Printable dots across 18mm tape at HIGH_RESOLUTION (~360dpi). */
-    private fun w18ImageAreaWidthDots(model: PrinterInfo.Model): Int {
+    /** Printable dots across 12mm or 18mm tape at HIGH_RESOLUTION (~360dpi). */
+    private fun tapeImageAreaWidthDots(model: PrinterInfo.Model, useW12: Boolean): Int {
+        val fallback = if (useW12) W12_HIGH_RES_DOTS else W18_HIGH_RES_DOTS
         try {
-            val list = Printer.getLabelParamList(model) ?: return W18_HIGH_RES_DOTS
-            val w18Id = LabelInfo.PT.W18.id
-            val match = list.firstOrNull { it.paperID == w18Id }
-                ?: list.firstOrNull { it.paperName?.contains("18") == true }
+            val list = Printer.getLabelParamList(model) ?: return fallback
+            val paperId = if (useW12) LabelInfo.PT.W12.id else LabelInfo.PT.W18.id
+            val nameHint = if (useW12) "12" else "18"
+            val match = list.firstOrNull { it.paperID == paperId }
+                ?: list.firstOrNull { it.paperName?.contains(nameHint) == true }
             if (match != null) {
                 val area = match.imageAreaWidth
                 if (area > 0) return area
@@ -262,7 +278,7 @@ class BrotherPrintService : Service() {
         } catch (e: Exception) {
             Log.w(TAG, "getLabelParamList: ${e.message}")
         }
-        return W18_HIGH_RES_DOTS
+        return fallback
     }
 
     /**
