@@ -81,6 +81,16 @@ Or one-shot public check:
 
     curl.exe https://dharmacore.sscadcam.com/mcp/
 
+### Install / start MCP (laptop PowerShell)
+
+If diagnose shows no listener on **8001** and no MCP unit (typical after cutover):
+
+    cd c:\cribhub
+    git pull
+    .\deploy\ct105_mcp_install.ps1
+
+Copies `mcp-server/` to `/opt/dharmacore/mcp-server`, creates **`dharmacore-mcp`** systemd unit, fixes nginx `/mcp/` → `127.0.0.1:8001/` (prefix strip), starts the service, and checks `/mcp/health`.
+
 ### On CT 105 — what to look for
 
     systemctl list-units --type=service --all | grep -iE 'mcp|ollama'
@@ -176,6 +186,7 @@ Application ID is `com.sscadcam.dharmacore`. Uninstall any old `com.example.crib
 | `.\scripts\build_web_shop.ps1` | Live shop web build + zip |
 | `.\scripts\buildapk_shop.bat` | Live shop Android APK |
 | `.\deploy\ct105_mcp_diagnose.ps1` | MCP / Extract-from-URL 502 diagnose on CT 105 |
+| `.\deploy\ct105_mcp_install.ps1` | Install + start MCP on CT 105 (`dharmacore-mcp`) |
 | `mcp-server/` | FastAPI MCP (images + tool import) |
 | `DEPLOY.md` | Old CribHub production |
 | `DEPLOY_ERP.md` | erp-dev CT **103** (`.104`) |

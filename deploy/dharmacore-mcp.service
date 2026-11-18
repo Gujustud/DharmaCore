@@ -1,0 +1,13 @@
+[Unit]
+Description=DharmaCore MCP (tool import / page images)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/dharmacore/mcp-server
+ExecStart=/opt/dharmacore/mcp-server/.venv/bin/uvicorn mcp_server:app --host 127.0.0.1 --port 8001
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
