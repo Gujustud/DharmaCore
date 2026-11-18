@@ -221,6 +221,9 @@ class BrotherPrintService : Service() {
             } else {
                 PrinterInfo.PrintQuality.HIGH_RESOLUTION
             }
+            // SDK default is pattern dither, which speckles anti-aliased edges.
+            info.halftone = PrinterInfo.Halftone.THRESHOLD
+            info.thresholdingValue = 127
             info.skipStatusCheck = true
             if (!printer.setPrinterInfo(info)) {
                 lastError = "setPrinterInfo failed for $port"
@@ -336,6 +339,20 @@ class BrotherPrintService : Service() {
         val marginBase = if (isP710Family) MARGIN_ACROSS_P710 else MARGIN_ACROSS_P910
         val margin = marginBase.coerceAtMost((width / 2) - 1).coerceAtLeast(0)
         val innerW = (width - margin * 2).coerceAtLeast(1)
+
+        // Flutter renders P710 labels at exact dot size; resampling a 1-bit
+        // raster by a non-integer factor makes stroke widths uneven.
+        if (isP710Family && src.width <= width) {
+            val out = Bitmap.createBitmap(
+                width,
+                src.height + LEAD_PAD_DOTS + TRAIL_PAD_DOTS,
+                Bitmap.Config.ARGB_8888,
+            )
+            out.eraseColor(Color.WHITE)
+            val left = ((width - src.width) / 2).toFloat()
+            Canvas(out).drawBitmap(src, left, LEAD_PAD_DOTS.toFloat(), null)
+            return out
+        }
 
         val scale = innerW.toFloat() / src.width.toFloat()
         val innerH = (src.height * scale).toInt().coerceAtLeast(1)

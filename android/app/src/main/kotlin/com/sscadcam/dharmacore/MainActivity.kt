@@ -100,7 +100,9 @@ class MainActivity : FlutterActivity() {
 
     /**
      * Cross-tape printable dots for label rasterization.
-     * P710/P715: 112 (18mm) / 70 (12mm). P910: 256 / 170.
+     * P710/P715: 108 (18mm) / 66 (12mm) — the 112/70-dot printable band minus
+     * BrotherPrintService's 2-dot side margins, so the bitmap prints 1:1.
+     * P910: 256 / 170.
      */
     private fun preferredTapeDots(tapeMm: Int): Int {
         val useW12 = tapeMm in 11..13
@@ -115,8 +117,8 @@ class MainActivity : FlutterActivity() {
         val model = device?.let { modelNameFor(it) } ?: ""
         val isP710 = model.contains("P710") || model.contains("P715")
         return when {
-            isP710 && useW12 -> 70
-            isP710 -> 112
+            isP710 && useW12 -> 66
+            isP710 -> 108
             useW12 -> 170
             else -> 256
         }

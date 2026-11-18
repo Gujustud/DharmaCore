@@ -57,11 +57,11 @@ class LabelPrintService {
   /// Pixels across 12mm (~1/2") tape for P910 (~360 dpi).
   static const int labelHeightPx12mm = 170;
 
-  /// P710/P715 18mm printable (128-pin head, high-res 180×360 → 112 dots).
-  static const int labelHeightPxP710 = 112;
+  /// P710/P715 18mm: 112-dot printable band at 180 dpi minus 2-dot side margins.
+  static const int labelHeightPxP710 = 108;
 
-  /// P710/P715 12mm printable (~70 dots).
-  static const int labelHeightPx12mmP710 = 70;
+  /// P710/P715 12mm: 70-dot printable band minus 2-dot side margins.
+  static const int labelHeightPx12mmP710 = 66;
 
   /// Soft cap while laying out bitmaps (before PDF scales to [targetLabelLengthMm]).
   static const int maxLabelWidthPx = 1600;
@@ -107,6 +107,7 @@ class LabelPrintService {
     String text, {
     required double fontSize,
     FontWeight weight = FontWeight.w700,
+    double letterSpacing = 0,
   }) {
     final painter = TextPainter(
       text: TextSpan(
@@ -115,6 +116,7 @@ class LabelPrintService {
           fontFamily: 'NotoSans',
           fontWeight: weight,
           fontSize: fontSize,
+          letterSpacing: letterSpacing,
           color: const Color(0xFF000000),
           height: 1.05,
         ),
@@ -208,7 +210,7 @@ class LabelPrintService {
     }
   }
 
-  /// Cross-tape pixel height for the preferred paired Brother (P710→112, P910→256).
+  /// Cross-tape pixel height for the preferred paired Brother (P710→108, P910→256).
   static Future<int> preferredLabelHeightPx({double tapeHeightMm = tapeHeightMm18}) async {
     final fallback =
         tapeHeightMm <= 12.5 ? labelHeightPx12mm : labelHeightPx;
@@ -476,9 +478,10 @@ class LabelPrintService {
   }) async {
     final imageHeight = height ?? labelHeightPx12mm;
     const edgePad = 1.0;
-    final lineGap = math.max(2.0, imageHeight * 0.05);
+    // Whole-pixel offsets keep stems on the 180 dpi dot grid.
+    final lineGap = math.max(2.0, imageHeight * 0.05).roundToDouble();
     const fieldToNameRatio = 0.78;
-    final leftMargin = math.max(3.0, imageHeight * 0.05);
+    final leftMargin = math.max(3.0, imageHeight * 0.05).roundToDouble();
     final rightMargin = math.max(3, (imageHeight * 0.06).round());
     const maxNameChars = 28;
     final lbhVal = (lbh ?? '').trim();
@@ -501,9 +504,21 @@ class LabelPrintService {
     var textBlockH = double.infinity;
     for (var attempt = 0; attempt < 12; attempt++) {
       final fieldFontSize = nameFontSize * fieldToNameRatio;
-      namePainter = _labelTextPainter(name, fontSize: nameFontSize);
-      lbhPainter = _labelTextPainter(lbhLine, fontSize: fieldFontSize);
-      tlPainter = _labelTextPainter(tlLine, fontSize: fieldFontSize);
+      namePainter = _labelTextPainter(
+        name,
+        fontSize: nameFontSize,
+        letterSpacing: nameFontSize * 0.04,
+      );
+      lbhPainter = _labelTextPainter(
+        lbhLine,
+        fontSize: fieldFontSize,
+        letterSpacing: fieldFontSize * 0.04,
+      );
+      tlPainter = _labelTextPainter(
+        tlLine,
+        fontSize: fieldFontSize,
+        letterSpacing: fieldFontSize * 0.04,
+      );
       inks = [
         await _inkRows(namePainter),
         await _inkRows(lbhPainter),
@@ -523,7 +538,8 @@ class LabelPrintService {
     final computedWidth = (leftMargin + textCol + rightMargin).ceil();
     final imageWidth = width ?? computedWidth.clamp(80, maxLabelWidthPx);
     final textTop = ((imageHeight - textBlockH) / 2)
-        .clamp(0.0, imageHeight.toDouble());
+        .clamp(0.0, imageHeight.toDouble())
+        .roundToDouble();
 
     return _canvasLabelToPng(
       imageWidth: imageWidth,
