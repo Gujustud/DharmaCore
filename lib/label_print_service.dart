@@ -446,15 +446,11 @@ class LabelPrintService {
     int? height,
   }) async {
     final imageHeight = height ?? labelHeightPx12mm;
-    // Pack name + LBS + TL into nearly the full tape height (cross-tape).
-    const edgePad = 2.0;
-    const lineGap = 1.0;
-    final usable = (imageHeight - 2 * edgePad - 2 * lineGap).clamp(24.0, 400.0);
-    // Name slightly larger than LBS/TL; sizes are line-box targets (~fontSize).
-    final nameFontSize = usable * 0.42;
-    final fieldFontSize = usable * 0.27;
-    final leftMargin = math.max(4.0, imageHeight * 0.06);
-    final rightMargin = math.max(4, (imageHeight * 0.08).round());
+    // Pack name + LBS + TL into nearly the full tape height; shrink if metrics overflow.
+    const edgePad = 1.0;
+    const lineGap = 0.0;
+    final leftMargin = math.max(3.0, imageHeight * 0.05);
+    final rightMargin = math.max(3, (imageHeight * 0.06).round());
     const maxNameChars = 28;
     final lbsVal = (lbs ?? '').trim();
     final tlVal = (tl ?? '').trim();
@@ -466,31 +462,46 @@ class LabelPrintService {
       name = '${name.substring(0, maxNameChars - 1)}…';
     }
 
-    final namePainter = _labelTextPainter(
-      name,
-      fontSize: nameFontSize,
-      weight: FontWeight.w700,
-    );
-    final lbsPainter = _labelTextPainter(
-      lbsLine,
-      fontSize: fieldFontSize,
-      weight: FontWeight.w700,
-    );
-    final tlPainter = _labelTextPainter(
-      tlLine,
-      fontSize: fieldFontSize,
-      weight: FontWeight.w700,
-    );
+    final maxBlock = imageHeight - 2 * edgePad;
+    var nameFontSize = imageHeight * 0.40;
+    var fieldFontSize = imageHeight * 0.26;
+    late TextPainter namePainter;
+    late TextPainter lbsPainter;
+    late TextPainter tlPainter;
+    var textBlockH = double.infinity;
+    for (var attempt = 0; attempt < 12; attempt++) {
+      namePainter = _labelTextPainter(
+        name,
+        fontSize: nameFontSize,
+        weight: FontWeight.w700,
+      );
+      lbsPainter = _labelTextPainter(
+        lbsLine,
+        fontSize: fieldFontSize,
+        weight: FontWeight.w700,
+      );
+      tlPainter = _labelTextPainter(
+        tlLine,
+        fontSize: fieldFontSize,
+        weight: FontWeight.w700,
+      );
+      textBlockH = namePainter.height +
+          lineGap +
+          lbsPainter.height +
+          lineGap +
+          tlPainter.height;
+      if (textBlockH <= maxBlock) break;
+      final shrink = maxBlock / textBlockH;
+      nameFontSize *= shrink * 0.98;
+      fieldFontSize *= shrink * 0.98;
+    }
 
     final textCol = math.max(
       namePainter.width,
       math.max(lbsPainter.width, tlPainter.width),
     );
-    final textBlockH =
-        namePainter.height + lineGap + lbsPainter.height + lineGap + tlPainter.height;
     final computedWidth = (leftMargin + textCol + rightMargin).ceil();
     final imageWidth = width ?? computedWidth.clamp(80, maxLabelWidthPx);
-    // Center in tape if anything short; usually fills almost full height.
     final textTop = ((imageHeight - textBlockH) / 2)
         .clamp(0.0, imageHeight.toDouble());
 
