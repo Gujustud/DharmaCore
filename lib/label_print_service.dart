@@ -14,7 +14,7 @@ import 'package:qr/qr.dart';
 import 'models.dart';
 
 /// Label printing for Brother PT-P910BT (18mm bin tags + 12mm / ~1/2" tool tags).
-/// Bin labels: tool name + BIN + QR. Tool tags: name + LBS/TL blanks (or filled).
+/// Bin labels: tool name + BIN + QR. Tool tags: name + LBH/TL blanks (or filled).
 /// Material labels: code / identity / length, QR = piece id.
 /// Android: Bluetooth via Brother SDK. Web/desktop Chrome: system print dialog.
 class LabelPrintService {
@@ -436,25 +436,25 @@ class LabelPrintService {
     await sendLabelPng(pngBytes, jobName: 'tool-$binCode');
   }
 
-  /// 12mm (~1/2") holder-tag sticker: tool name + LBS/TL lines.
-  /// Empty [lbs]/[tl] print as blanks for sharpie.
+  /// 12mm (~1/2") holder-tag sticker: tool name + LBH/TL lines.
+  /// LBH = length below holder. Empty [lbh]/[tl] print as blanks for sharpie.
   static Future<Uint8List> generateToolTagLabelImage({
     required String toolName,
-    String? lbs,
+    String? lbh,
     String? tl,
     int? width,
     int? height,
   }) async {
     final imageHeight = height ?? labelHeightPx12mm;
-    // Pack name + LBS + TL into nearly the full tape height; shrink if metrics overflow.
+    // Pack name + LBH + TL into nearly the full tape height; shrink if metrics overflow.
     const edgePad = 1.0;
     const lineGap = 0.0;
     final leftMargin = math.max(3.0, imageHeight * 0.05);
     final rightMargin = math.max(3, (imageHeight * 0.06).round());
     const maxNameChars = 28;
-    final lbsVal = (lbs ?? '').trim();
+    final lbhVal = (lbh ?? '').trim();
     final tlVal = (tl ?? '').trim();
-    final lbsLine = lbsVal.isEmpty ? 'LBS: ________' : 'LBS: $lbsVal';
+    final lbhLine = lbhVal.isEmpty ? 'LBH: ________' : 'LBH: $lbhVal';
     final tlLine = tlVal.isEmpty ? 'TL:  ________' : 'TL:  $tlVal';
 
     var name = toolName.trim();
@@ -466,7 +466,7 @@ class LabelPrintService {
     var nameFontSize = imageHeight * 0.40;
     var fieldFontSize = imageHeight * 0.26;
     late TextPainter namePainter;
-    late TextPainter lbsPainter;
+    late TextPainter lbhPainter;
     late TextPainter tlPainter;
     var textBlockH = double.infinity;
     for (var attempt = 0; attempt < 12; attempt++) {
@@ -475,8 +475,8 @@ class LabelPrintService {
         fontSize: nameFontSize,
         weight: FontWeight.w700,
       );
-      lbsPainter = _labelTextPainter(
-        lbsLine,
+      lbhPainter = _labelTextPainter(
+        lbhLine,
         fontSize: fieldFontSize,
         weight: FontWeight.w700,
       );
@@ -487,7 +487,7 @@ class LabelPrintService {
       );
       textBlockH = namePainter.height +
           lineGap +
-          lbsPainter.height +
+          lbhPainter.height +
           lineGap +
           tlPainter.height;
       if (textBlockH <= maxBlock) break;
@@ -498,7 +498,7 @@ class LabelPrintService {
 
     final textCol = math.max(
       namePainter.width,
-      math.max(lbsPainter.width, tlPainter.width),
+      math.max(lbhPainter.width, tlPainter.width),
     );
     final computedWidth = (leftMargin + textCol + rightMargin).ceil();
     final imageWidth = width ?? computedWidth.clamp(80, maxLabelWidthPx);
@@ -513,23 +513,23 @@ class LabelPrintService {
         var y = textTop;
         namePainter.paint(canvas, Offset(leftMargin, y));
         y += namePainter.height + lineGap;
-        lbsPainter.paint(canvas, Offset(leftMargin, y));
-        y += lbsPainter.height + lineGap;
+        lbhPainter.paint(canvas, Offset(leftMargin, y));
+        y += lbhPainter.height + lineGap;
         tlPainter.paint(canvas, Offset(leftMargin, y));
       },
     );
   }
 
-  /// Print 12mm tool-tag sticker (holder tags). Optional [lbs]/[tl] fill the blanks.
+  /// Print 12mm tool-tag sticker (holder tags). Optional [lbh]/[tl] fill the blanks.
   static Future<void> printToolTagLabel({
     required String toolName,
-    String? lbs,
+    String? lbh,
     String? tl,
   }) async {
     final height = await preferredLabelHeightPx(tapeHeightMm: tapeHeightMm12);
     final pngBytes = await generateToolTagLabelImage(
       toolName: toolName,
-      lbs: lbs,
+      lbh: lbh,
       tl: tl,
       height: height,
     );

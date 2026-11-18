@@ -4717,10 +4717,10 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
     if (chosen != null) await _printLabelForBin(chosen);
   }
 
-  /// Optional LBS/TL fill, then print 12mm (~½″) holder-tag sticker.
+  /// Optional LBH/TL fill, then print 12mm (~½″) holder-tag sticker.
   Future<void> _showPrintToolTagDialog() async {
     if (widget.tool == null) return;
-    final lbsController = TextEditingController();
+    final lbhController = TextEditingController();
     final tlController = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
@@ -4736,14 +4736,14 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
             ),
             const SizedBox(height: 12),
             const Text(
-              'Leave LBS / TL blank to print empty lines for sharpie.',
+              'Leave LBH / TL blank to print empty lines for sharpie.',
               style: TextStyle(fontSize: 13),
             ),
             const SizedBox(height: 12),
             TextField(
-              controller: lbsController,
+              controller: lbhController,
               decoration: const InputDecoration(
-                labelText: 'LBS',
+                labelText: 'LBH (length below holder)',
                 border: OutlineInputBorder(),
                 isDense: true,
               ),
@@ -4773,15 +4773,15 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
         ],
       ),
     );
-    final lbs = lbsController.text;
+    final lbh = lbhController.text;
     final tl = tlController.text;
-    lbsController.dispose();
+    lbhController.dispose();
     tlController.dispose();
     if (confirmed != true || !mounted) return;
-    await _printToolTag(lbs: lbs, tl: tl);
+    await _printToolTag(lbh: lbh, tl: tl);
   }
 
-  Future<void> _printToolTag({String? lbs, String? tl}) async {
+  Future<void> _printToolTag({String? lbh, String? tl}) async {
     if (widget.tool == null) return;
 
     if (!kIsWeb && mounted) {
@@ -4806,7 +4806,7 @@ class _AddToolScreenState extends State<AddToolScreen> with AutoOpenDrawerMixin 
     try {
       await LabelPrintService.printToolTagLabel(
         toolName: widget.tool!.toolName,
-        lbs: lbs,
+        lbh: lbh,
         tl: tl,
       );
       if (mounted) {
