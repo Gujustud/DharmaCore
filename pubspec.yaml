@@ -33,7 +33,7 @@ dependencies:
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.8
+  cupertino_icons: ^2.0.0
   pocketbase: ^0.23.3
   reorderables: ^0.6.0
   file_picker: ^12.0.0-beta.4
@@ -48,7 +48,7 @@ dependencies:
   image: ^4.1.7
   flutter_markdown: ^0.7.7+1
   markdown: ^7.3.0
-  google_fonts: ^8.2.1
+  google_fonts: ^9.0.0
   pdf: ^3.11.3
   printing: ^5.14.2
 
