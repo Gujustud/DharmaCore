@@ -1130,6 +1130,8 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
               onDuplicate: () {
                 final source = Map<String, dynamic>.from(_lineItems[index]);
                 source.remove('id');
+                source.remove('cad_files');
+                source.remove('cad_file_bytes');
                 source['local_key'] = _newLocalLineKey();
                 source['line_number'] = _nextLineNumber();
                 setState(() {

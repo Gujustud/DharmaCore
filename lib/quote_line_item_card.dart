@@ -1,10 +1,43 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 
 import 'material_form_icons.dart';
 import 'material_stock_dialogs.dart';
 import 'models.dart';
+import 'pocketbase_service.dart';
 import 'quote_calculations.dart';
 import 'shelf_stock_match.dart';
+
+/// PocketBase `cad_files` on a quote line (max 1).
+String? quoteCadFilenameOf(Map<String, dynamic> item) {
+  final raw = item['cad_files'];
+  if (raw == null || raw == '') return null;
+  if (raw is List) {
+    for (final e in raw) {
+      final s = e.toString().trim();
+      if (s.isNotEmpty) return s;
+    }
+    return null;
+  }
+  final s = raw.toString().trim();
+  return s.isEmpty ? null : s;
+}
+
+String? quoteLineRecordIdOf(Map<String, dynamic> item) {
+  final id = '${item['id'] ?? ''}'.trim();
+  if (id.isEmpty || id.startsWith('tmp_')) return null;
+  return id;
+}
+
+String formatCadFileBytes(dynamic raw) {
+  final n = raw is num ? raw.toDouble() : double.tryParse('$raw');
+  if (n == null || n <= 0) return '';
+  if (n < 1024) return '${n.round()} B';
+  if (n < 1024 * 1024) return '${(n / 1024).toStringAsFixed(1)} KB';
+  return '${(n / (1024 * 1024)).toStringAsFixed(1)} MB';
+}
 
 /// Resolved material source for a quote line (falls back from vendor_supplied).
 String quoteMaterialSourceOf(Map<String, dynamic> item) {
@@ -161,6 +194,11 @@ class QuoteLineItemCard extends StatefulWidget {
 
 class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
   bool _detailsOpen = false;
+  bool _cadUploading = false;
+  bool _cadSectionOpen = true;
+
+  static const _cadMaxBytes = 52428800; // 50 MB
+  static const _cadExtensions = ['step', 'stp', 'x_t', 'x_b'];
 
   late final TextEditingController _partNumber;
   late final TextEditingController _partQty;
@@ -660,6 +698,244 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
   /// Match outlined dense fields (`_dec`) so chips/buttons align in a row.
   static const double _fieldControlHeight = 48;
 
+  void _cadSnack(String msg, {bool success = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: success ? Colors.green : null,
+      ),
+    );
+  }
+
+  Future<void> _pickAndUploadCad({bool replace = false}) async {
+    final recordId = quoteLineRecordIdOf(widget.lineItem);
+    if (recordId == null) {
+      _cadSnack('Save the quote first to upload CAD.');
+      return;
+    }
+
+    final existing = quoteCadFilenameOf(widget.lineItem);
+    if (!replace && existing != null) return;
+
+    final files = await FilePicker.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: _cadExtensions,
+    );
+    if (files.isEmpty) return;
+
+    final file = files.first;
+    final bytes = await file.readAsBytes();
+    if (bytes.isEmpty) {
+      _cadSnack('File is empty.');
+      return;
+    }
+    if (bytes.length > _cadMaxBytes) {
+      _cadSnack('CAD file must be 50 MB or smaller.');
+      return;
+    }
+
+    final name = _safeCadFilename(file.name);
+    setState(() => _cadUploading = true);
+    try {
+      final pb = PocketBaseService().pb;
+      final updated = await pb.collection('quote_line_items').update(
+        recordId,
+        body: {'cad_file_bytes': bytes.length},
+        files: [
+          http.MultipartFile.fromBytes(
+            'cad_files',
+            bytes,
+            filename: name,
+          ),
+        ],
+      );
+      final stored = quoteCadFilenameOf({
+            'cad_files': updated.data['cad_files'],
+          }) ??
+          name;
+      _patch({
+        'cad_files': stored,
+        'cad_file_bytes': bytes.length,
+      });
+      if (mounted) {
+        setState(() {
+          _detailsOpen = true;
+          _cadSectionOpen = true;
+        });
+        _cadSnack('CAD uploaded', success: true);
+      }
+    } catch (e) {
+      _cadSnack('CAD upload failed: $e');
+    } finally {
+      if (mounted) setState(() => _cadUploading = false);
+    }
+  }
+
+  String _safeCadFilename(String? name) {
+    final trimmed = (name ?? '').trim();
+    if (trimmed.isNotEmpty) return trimmed;
+    return 'part-${DateTime.now().millisecondsSinceEpoch}.step';
+  }
+
+  Future<void> _downloadCad() async {
+    final recordId = quoteLineRecordIdOf(widget.lineItem);
+    final filename = quoteCadFilenameOf(widget.lineItem);
+    if (recordId == null || filename == null) return;
+    try {
+      final pb = PocketBaseService().pb;
+      final record =
+          await pb.collection('quote_line_items').getOne(recordId);
+      final url = pb.files.getUrl(record, filename).toString();
+      final uri = Uri.parse(url);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      }
+    } catch (e) {
+      _cadSnack('Download failed: $e');
+    }
+  }
+
+  Future<void> _deleteCad() async {
+    final recordId = quoteLineRecordIdOf(widget.lineItem);
+    final filename = quoteCadFilenameOf(widget.lineItem);
+    if (recordId == null || filename == null) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove CAD file'),
+        content: Text('Remove "$filename" from this part?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+
+    try {
+      await PocketBaseService().pb.collection('quote_line_items').update(
+        recordId,
+        body: {
+          'cad_files-': filename,
+          'cad_file_bytes': 0,
+        },
+      );
+      _patch({'cad_files': null, 'cad_file_bytes': null});
+      _cadSnack('CAD removed', success: true);
+    } catch (e) {
+      _cadSnack('Remove failed: $e');
+    }
+  }
+
+  Widget _cadUploadIconButton({required bool hasFile}) {
+    return SizedBox(
+      width: _fieldControlHeight,
+      height: _fieldControlHeight,
+      child: IconButton(
+        onPressed: _cadUploading
+            ? null
+            : () {
+                if (hasFile) {
+                  setState(() {
+                    _detailsOpen = true;
+                    _cadSectionOpen = true;
+                  });
+                } else {
+                  _pickAndUploadCad();
+                }
+              },
+        tooltip: hasFile ? 'CAD file attached' : 'Upload CAD',
+        icon: _cadUploading
+            ? const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(
+                hasFile ? Icons.view_in_ar : Icons.view_in_ar_outlined,
+                color: hasFile ? Theme.of(context).colorScheme.primary : null,
+              ),
+      ),
+    );
+  }
+
+  Widget _cadAttachedSection(String filename) {
+    final sizeLabel = formatCadFileBytes(widget.lineItem['cad_file_bytes']);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InkWell(
+          onTap: () => setState(() => _cadSectionOpen = !_cadSectionOpen),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'CAD',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ),
+                Text(
+                  _cadSectionOpen ? '▼' : '▶',
+                  style: TextStyle(color: Colors.grey[600]),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (_cadSectionOpen)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Icon(
+                  Icons.view_in_ar,
+                  size: 20,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 360),
+                  child: Text(
+                    sizeLabel.isEmpty ? filename : '$filename · $sizeLabel',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                TextButton(
+                  onPressed: _cadUploading ? null : _downloadCad,
+                  child: const Text('Download'),
+                ),
+                TextButton(
+                  onPressed: _cadUploading
+                      ? null
+                      : () => _pickAndUploadCad(replace: true),
+                  child: const Text('Replace'),
+                ),
+                TextButton(
+                  onPressed: _cadUploading ? null : _deleteCad,
+                  style: TextButton.styleFrom(foregroundColor: Colors.red),
+                  child: const Text('Remove'),
+                ),
+              ],
+            ),
+          ),
+        const Divider(height: 1),
+      ],
+    );
+  }
+
   InputDecoration _dec(String label) => InputDecoration(
         labelText: label,
         border: const OutlineInputBorder(),
@@ -763,6 +1039,8 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
     final materialCadLabel = markup != null
         ? 'Actual cost (CAD) (Markup cost (CAD): \$${formatQuoteMoney(_num(markup))})'
         : 'Actual cost (CAD)';
+    final cadFilename = quoteCadFilenameOf(item);
+    final hasCad = cadFilename != null;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
@@ -825,6 +1103,7 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                       setState(() => _detailsOpen = !_detailsOpen),
                   tooltip: _detailsOpen ? 'Hide details' : 'Show details',
                 );
+                final cadBtn = _cadUploadIconButton(hasFile: hasCad);
 
                 if (narrow) {
                   return Column(
@@ -846,6 +1125,8 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                           SizedBox(width: 72, child: qtyField),
                           const SizedBox(width: 8),
                           Expanded(child: qppField),
+                          const SizedBox(width: 4),
+                          cadBtn,
                         ],
                       ),
                     ],
@@ -863,6 +1144,8 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                     SizedBox(width: 72, child: qtyField),
                     const SizedBox(width: 8),
                     SizedBox(width: 100, child: qppField),
+                    const SizedBox(width: 4),
+                    cadBtn,
                     expandBtn,
                   ],
                 );
@@ -870,6 +1153,7 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
             ),
             if (_detailsOpen) ...[
               const SizedBox(height: 8),
+              if (cadFilename != null) _cadAttachedSection(cadFilename),
               _QuoteSection(
                 title: 'Materials',
                 child: Column(
