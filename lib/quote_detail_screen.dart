@@ -1132,6 +1132,7 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
                 source.remove('id');
                 source.remove('cad_files');
                 source.remove('cad_file_bytes');
+                source.remove('cad_original_name');
                 source['local_key'] = _newLocalLineKey();
                 source['line_number'] = _nextLineNumber();
                 setState(() {

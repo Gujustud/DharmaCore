@@ -1,7 +1,6 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:url_launcher/url_launcher.dart';
 
 import 'material_form_icons.dart';
 import 'material_stock_dialogs.dart';
@@ -10,7 +9,7 @@ import 'pocketbase_service.dart';
 import 'quote_calculations.dart';
 import 'shelf_stock_match.dart';
 
-/// PocketBase `cad_files` on a quote line (max 1).
+/// PocketBase stored `cad_files` name on a quote line (max 1; may include PB suffix).
 String? quoteCadFilenameOf(Map<String, dynamic> item) {
   final raw = item['cad_files'];
   if (raw == null || raw == '') return null;
@@ -23,6 +22,23 @@ String? quoteCadFilenameOf(Map<String, dynamic> item) {
   }
   final s = raw.toString().trim();
   return s.isEmpty ? null : s;
+}
+
+/// Display name: original upload name when known, else stored PocketBase name.
+String? quoteCadDisplayNameOf(Map<String, dynamic> item) {
+  final original = '${item['cad_original_name'] ?? ''}'.trim();
+  if (original.isNotEmpty) return original;
+  return quoteCadFilenameOf(item);
+}
+
+/// Part-number suggestion from a CAD filename (strip path + extension).
+String cadBasenameForPartNumber(String filename) {
+  var name = filename.trim().replaceAll('\\', '/');
+  final slash = name.lastIndexOf('/');
+  if (slash >= 0) name = name.substring(slash + 1);
+  final dot = name.lastIndexOf('.');
+  if (dot > 0) name = name.substring(0, dot);
+  return name.trim();
 }
 
 String? quoteLineRecordIdOf(Map<String, dynamic> item) {
@@ -736,12 +752,21 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
     }
 
     final name = _safeCadFilename(file.name);
+    final partSuggestion = cadBasenameForPartNumber(name);
+    final fillPartNumber = _str(widget.lineItem['part_number']).isEmpty &&
+        partSuggestion.isNotEmpty;
+
     setState(() => _cadUploading = true);
     try {
       final pb = PocketBaseService().pb;
+      final body = <String, dynamic>{
+        'cad_file_bytes': bytes.length,
+        'cad_original_name': name,
+        if (fillPartNumber) 'part_number': partSuggestion,
+      };
       final updated = await pb.collection('quote_line_items').update(
         recordId,
-        body: {'cad_file_bytes': bytes.length},
+        body: body,
         files: [
           http.MultipartFile.fromBytes(
             'cad_files',
@@ -754,9 +779,14 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
             'cad_files': updated.data['cad_files'],
           }) ??
           name;
+      if (fillPartNumber) {
+        _partNumber.text = partSuggestion;
+      }
       _patch({
         'cad_files': stored,
         'cad_file_bytes': bytes.length,
+        'cad_original_name': name,
+        if (fillPartNumber) 'part_number': partSuggestion,
       });
       if (mounted) {
         setState(() {
@@ -778,34 +808,17 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
     return 'part-${DateTime.now().millisecondsSinceEpoch}.step';
   }
 
-  Future<void> _downloadCad() async {
-    final recordId = quoteLineRecordIdOf(widget.lineItem);
-    final filename = quoteCadFilenameOf(widget.lineItem);
-    if (recordId == null || filename == null) return;
-    try {
-      final pb = PocketBaseService().pb;
-      final record =
-          await pb.collection('quote_line_items').getOne(recordId);
-      final url = pb.files.getUrl(record, filename).toString();
-      final uri = Uri.parse(url);
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      }
-    } catch (e) {
-      _cadSnack('Download failed: $e');
-    }
-  }
-
   Future<void> _deleteCad() async {
     final recordId = quoteLineRecordIdOf(widget.lineItem);
     final filename = quoteCadFilenameOf(widget.lineItem);
+    final display = quoteCadDisplayNameOf(widget.lineItem) ?? filename;
     if (recordId == null || filename == null) return;
 
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Remove CAD file'),
-        content: Text('Remove "$filename" from this part?'),
+        content: Text('Remove "$display" from this part?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -827,9 +840,14 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
         body: {
           'cad_files-': filename,
           'cad_file_bytes': 0,
+          'cad_original_name': '',
         },
       );
-      _patch({'cad_files': null, 'cad_file_bytes': null});
+      _patch({
+        'cad_files': null,
+        'cad_file_bytes': null,
+        'cad_original_name': null,
+      });
       _cadSnack('CAD removed', success: true);
     } catch (e) {
       _cadSnack('Remove failed: $e');
@@ -868,7 +886,7 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
     );
   }
 
-  Widget _cadAttachedSection(String filename) {
+  Widget _cadAttachedSection(String displayName) {
     final sizeLabel = formatCadFileBytes(widget.lineItem['cad_file_bytes']);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -909,13 +927,11 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 360),
                   child: Text(
-                    sizeLabel.isEmpty ? filename : '$filename · $sizeLabel',
+                    sizeLabel.isEmpty
+                        ? displayName
+                        : '$displayName · $sizeLabel',
                     overflow: TextOverflow.ellipsis,
                   ),
-                ),
-                TextButton(
-                  onPressed: _cadUploading ? null : _downloadCad,
-                  child: const Text('Download'),
                 ),
                 TextButton(
                   onPressed: _cadUploading
@@ -1040,6 +1056,7 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
         ? 'Actual cost (CAD) (Markup cost (CAD): \$${formatQuoteMoney(_num(markup))})'
         : 'Actual cost (CAD)';
     final cadFilename = quoteCadFilenameOf(item);
+    final cadDisplayName = quoteCadDisplayNameOf(item);
     final hasCad = cadFilename != null;
 
     return Card(
@@ -1153,7 +1170,8 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
             ),
             if (_detailsOpen) ...[
               const SizedBox(height: 8),
-              if (cadFilename != null) _cadAttachedSection(cadFilename),
+              if (cadFilename != null)
+                _cadAttachedSection(cadDisplayName ?? cadFilename),
               _QuoteSection(
                 title: 'Materials',
                 child: Column(
