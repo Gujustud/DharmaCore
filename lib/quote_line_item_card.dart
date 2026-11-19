@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -6,6 +8,7 @@ import 'material_form_icons.dart';
 import 'material_stock_dialogs.dart';
 import 'models.dart';
 import 'pocketbase_service.dart';
+import 'quote_cad_analysis.dart';
 import 'quote_calculations.dart';
 import 'shelf_stock_match.dart';
 
@@ -211,6 +214,7 @@ class QuoteLineItemCard extends StatefulWidget {
 class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
   bool _detailsOpen = false;
   bool _cadUploading = false;
+  bool _cadAnalyzing = false;
   bool _cadSectionOpen = true;
 
   static const _cadMaxBytes = 52428800; // 50 MB
@@ -786,20 +790,125 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
         'cad_files': stored,
         'cad_file_bytes': bytes.length,
         'cad_original_name': name,
+        'cad_analysis': null,
         if (fillPartNumber) 'part_number': partSuggestion,
       });
       if (mounted) {
         setState(() {
           _detailsOpen = true;
           _cadSectionOpen = true;
+          _cadUploading = false;
         });
         _cadSnack('CAD uploaded', success: true);
       }
+      // Phase B: Toolpath measure helpers (non-blocking for upload success).
+      await _analyzeCadBytes(Uint8List.fromList(bytes), name);
+      return;
     } catch (e) {
       _cadSnack('CAD upload failed: $e');
     } finally {
       if (mounted) setState(() => _cadUploading = false);
     }
+  }
+
+  Future<void> _persistCadAnalysis(Map<String, dynamic> analysis) async {
+    final recordId = quoteLineRecordIdOf(widget.lineItem);
+    final encoded = encodeCadAnalysis(analysis);
+    if (recordId != null) {
+      try {
+        await PocketBaseService().pb.collection('quote_line_items').update(
+          recordId,
+          body: {'cad_analysis': encoded},
+        );
+      } catch (e) {
+        _cadSnack('Could not save analysis: $e');
+      }
+    }
+    _patch({'cad_analysis': encoded});
+  }
+
+  Future<void> _analyzeCadBytes(Uint8List bytes, String filename) async {
+    if (!mounted) return;
+    setState(() => _cadAnalyzing = true);
+    await _persistCadAnalysis({
+      'status': 'running',
+      'error': null,
+    });
+    try {
+      final result = await PocketBaseService().analyzeCadViaToolpath(
+        filename: filename,
+        bytes: bytes,
+      );
+      if (result['success'] == true && result['data'] is Map) {
+        final data = Map<String, dynamic>.from(result['data'] as Map);
+        data['status'] = 'ok';
+        data['analyzed_at'] = DateTime.now().toUtc().toIso8601String();
+        await _persistCadAnalysis(data);
+        final stockEmpty =
+            _str(widget.lineItem['stock_size_per_part']).trim().isEmpty;
+        final suggest = cadStockSuggestOf(data);
+        if (stockEmpty && suggest != null) {
+          _stockSize.text = suggest;
+          _patch({'stock_size_per_part': suggest});
+        }
+        if (mounted) {
+          _cadSnack('CAD analyzed', success: true);
+        }
+      } else {
+        final err = '${result['error'] ?? 'Analysis failed'}';
+        await _persistCadAnalysis({
+          'status': 'error',
+          'error': err,
+        });
+        _cadSnack(err);
+      }
+    } catch (e) {
+      await _persistCadAnalysis({
+        'status': 'error',
+        'error': '$e',
+      });
+      _cadSnack('Analysis failed: $e');
+    } finally {
+      if (mounted) setState(() => _cadAnalyzing = false);
+    }
+  }
+
+  Future<void> _reanalyzeCad() async {
+    final recordId = quoteLineRecordIdOf(widget.lineItem);
+    final filename = quoteCadFilenameOf(widget.lineItem);
+    final display = quoteCadDisplayNameOf(widget.lineItem) ?? filename;
+    if (recordId == null || filename == null || display == null) {
+      _cadSnack('Save the quote first to analyze CAD.');
+      return;
+    }
+    try {
+      final pb = PocketBaseService().pb;
+      final record =
+          await pb.collection('quote_line_items').getOne(recordId);
+      final url = pb.files.getUrl(record, filename);
+      final token = pb.authStore.token;
+      final resp = await http.get(
+        url,
+        headers: {
+          if (token.isNotEmpty) 'Authorization': token,
+        },
+      );
+      if (resp.statusCode != 200 || resp.bodyBytes.isEmpty) {
+        _cadSnack('Could not download CAD for analysis (${resp.statusCode}).');
+        return;
+      }
+      await _analyzeCadBytes(resp.bodyBytes, display);
+    } catch (e) {
+      _cadSnack('Re-analyze failed: $e');
+    }
+  }
+
+  void _applySuggestedStock() {
+    final analysis = parseCadAnalysis(widget.lineItem['cad_analysis']);
+    final suggest = cadStockSuggestOf(analysis);
+    if (suggest == null) return;
+    _stockSize.text = suggest;
+    _patch({'stock_size_per_part': suggest});
   }
 
   String _safeCadFilename(String? name) {
@@ -841,12 +950,14 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
           'cad_files-': filename,
           'cad_file_bytes': 0,
           'cad_original_name': '',
+          'cad_analysis': '',
         },
       );
       _patch({
         'cad_files': null,
         'cad_file_bytes': null,
         'cad_original_name': null,
+        'cad_analysis': null,
       });
       _cadSnack('CAD removed', success: true);
     } catch (e) {
@@ -888,6 +999,13 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
 
   Widget _cadAttachedSection(String displayName) {
     final sizeLabel = formatCadFileBytes(widget.lineItem['cad_file_bytes']);
+    final analysis = parseCadAnalysis(widget.lineItem['cad_analysis']);
+    final status = cadAnalysisStatusOf(analysis);
+    final bboxLabel = cadBboxInchesLabel(analysis);
+    final featureLabel = cadFeatureSummaryLabel(analysis);
+    final stockSuggest = cadStockSuggestOf(analysis);
+    final busy = _cadUploading || _cadAnalyzing;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -914,35 +1032,91 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
         if (_cadSectionOpen)
           Padding(
             padding: const EdgeInsets.only(bottom: 12),
-            child: Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(
-                  Icons.view_in_ar,
-                  size: 20,
-                  color: Theme.of(context).colorScheme.primary,
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Icon(
+                      Icons.view_in_ar,
+                      size: 20,
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 360),
+                      child: Text(
+                        sizeLabel.isEmpty
+                            ? displayName
+                            : '$displayName · $sizeLabel',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: busy
+                          ? null
+                          : () => _pickAndUploadCad(replace: true),
+                      child: const Text('Replace'),
+                    ),
+                    TextButton(
+                      onPressed: busy ? null : _deleteCad,
+                      style:
+                          TextButton.styleFrom(foregroundColor: Colors.red),
+                      child: const Text('Remove'),
+                    ),
+                  ],
                 ),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 360),
-                  child: Text(
-                    sizeLabel.isEmpty
-                        ? displayName
-                        : '$displayName · $sizeLabel',
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                TextButton(
-                  onPressed: _cadUploading
-                      ? null
-                      : () => _pickAndUploadCad(replace: true),
-                  child: const Text('Replace'),
-                ),
-                TextButton(
-                  onPressed: _cadUploading ? null : _deleteCad,
-                  style: TextButton.styleFrom(foregroundColor: Colors.red),
-                  child: const Text('Remove'),
+                const SizedBox(height: 8),
+                if (_cadAnalyzing || status == 'running')
+                  const Row(
+                    children: [
+                      SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      SizedBox(width: 8),
+                      Text('Analyzing with Toolpath…'),
+                    ],
+                  )
+                else if (status == 'error')
+                  Text(
+                    'Analysis: ${analysis?['error'] ?? 'failed'}',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                      fontSize: 13,
+                    ),
+                  )
+                else if (status == 'ok') ...[
+                  if (bboxLabel.isNotEmpty)
+                    Text('BBox: $bboxLabel', style: const TextStyle(fontSize: 13)),
+                  if (featureLabel.isNotEmpty)
+                    Text(featureLabel, style: const TextStyle(fontSize: 13)),
+                  if (stockSuggest != null)
+                    Text(
+                      'Suggested stock: $stockSuggest',
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                ],
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    TextButton(
+                      onPressed: busy ? null : _reanalyzeCad,
+                      child: Text(
+                        status == 'ok' ? 'Re-analyze' : 'Analyze',
+                      ),
+                    ),
+                    if (stockSuggest != null)
+                      TextButton(
+                        onPressed: busy ? null : _applySuggestedStock,
+                        child: const Text('Apply stock'),
+                      ),
+                  ],
                 ),
               ],
             ),

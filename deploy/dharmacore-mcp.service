@@ -1,10 +1,11 @@
 [Unit]
-Description=DharmaCore MCP (tool import / page images)
+Description=DharmaCore MCP (tool import / Toolpath CAD)
 After=network.target
 
 [Service]
 Type=simple
 WorkingDirectory=/opt/dharmacore/mcp-server
+EnvironmentFile=-/etc/dharmacore/toolpath.env
 ExecStart=/opt/dharmacore/mcp-server/.venv/bin/uvicorn mcp_server:app --host 127.0.0.1 --port 8001
 Restart=always
 RestartSec=5

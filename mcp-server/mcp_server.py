@@ -989,6 +989,228 @@ async def fetch_image_bytes(request: ImageUrlRequest):
     except Exception as e:
         return ImageBytesResponse(success=False, error=str(e))
 
+
+# ---------------------------------------------------------------------------
+# Toolpath Engine API (quote CAD Phase B)
+# ---------------------------------------------------------------------------
+
+TOOLPATH_API_BASE = os.getenv("TOOLPATH_API_BASE", "https://api.toolpath.com/v1").rstrip("/")
+TOOLPATH_API_KEY = (os.getenv("TOOLPATH_API_KEY") or "").strip()
+TOOLPATH_MAX_BYTES = 50 * 1024 * 1024
+STOCK_PAD_IN = float(os.getenv("TOOLPATH_STOCK_PAD_IN", "0.1"))
+
+
+class ToolpathAnalyzeRequest(BaseModel):
+    filename: str
+    content_base64: str
+
+
+class ToolpathAnalyzeResponse(BaseModel):
+    success: bool
+    data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+class ToolpathStatusResponse(BaseModel):
+    configured: bool
+
+
+def _toolpath_headers() -> Dict[str, str]:
+    return {
+        "Authorization": f"Bearer {TOOLPATH_API_KEY}",
+        "Accept": "application/json",
+    }
+
+
+def _mm_to_in(v: float) -> float:
+    return v / 25.4
+
+
+def _format_inch(v: float) -> str:
+    if abs(v - round(v)) < 1e-9:
+        return str(int(round(v)))
+    s = f"{v:.3f}".rstrip("0").rstrip(".")
+    return s
+
+
+def _stock_suggest_from_bbox_in(x: float, y: float, z: float, pad: float) -> str:
+    dims = sorted([x + pad, y + pad, z + pad], reverse=True)
+    return " x ".join(_format_inch(d) for d in dims)
+
+
+async def _toolpath_wait_for_job(client: httpx.AsyncClient, job_id: str) -> Dict[str, Any]:
+    """Wait on SSE GET /v1/jobs/{id}/events until succeeded or failed."""
+    url = f"{TOOLPATH_API_BASE}/jobs/{job_id}/events"
+    event_name: Optional[str] = None
+    data_lines: List[str] = []
+    async with client.stream("GET", url, headers=_toolpath_headers(), timeout=None) as resp:
+        resp.raise_for_status()
+        async for raw in resp.aiter_lines():
+            line = raw.rstrip("\r")
+            if line.startswith(":"):
+                continue
+            if line.startswith("event:"):
+                event_name = line[6:].strip()
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+                continue
+            if line == "":
+                if event_name == "job" and data_lines:
+                    payload = json.loads("\n".join(data_lines))
+                    status = (payload.get("status") or "").lower()
+                    if status in ("succeeded", "failed"):
+                        return payload
+                event_name = None
+                data_lines = []
+    raise RuntimeError("Toolpath job stream closed without a final status")
+
+
+def _summarize_part(part: Dict[str, Any]) -> Dict[str, Any]:
+    bbox = part.get("boundingBox") or {}
+    lower = bbox.get("lower") or {}
+    upper = bbox.get("upper") or {}
+    try:
+        dx = abs(float(upper.get("x", 0)) - float(lower.get("x", 0)))
+        dy = abs(float(upper.get("y", 0)) - float(lower.get("y", 0)))
+        dz = abs(float(upper.get("z", 0)) - float(lower.get("z", 0)))
+    except (TypeError, ValueError):
+        dx = dy = dz = 0.0
+
+    bbox_mm = {"x": dx, "y": dy, "z": dz}
+    bbox_in = {
+        "x": round(_mm_to_in(dx), 4),
+        "y": round(_mm_to_in(dy), 4),
+        "z": round(_mm_to_in(dz), 4),
+    }
+
+    feature_types: Dict[str, int] = {}
+    for feat in part.get("features") or []:
+        kind = str(feat.get("featureType") or "unknown").strip() or "unknown"
+        feature_types[kind] = feature_types.get(kind, 0) + 1
+
+    return {
+        "status": "ok",
+        "error": None,
+        "toolpath_part_id": part.get("partId"),
+        "units": part.get("units") or "millimetres",
+        "bbox_mm": bbox_mm,
+        "bbox_in": bbox_in,
+        "stock_suggest_in": _stock_suggest_from_bbox_in(
+            bbox_in["x"], bbox_in["y"], bbox_in["z"], STOCK_PAD_IN
+        ),
+        "stock_pad_in": STOCK_PAD_IN,
+        "feature_count": len(part.get("features") or []),
+        "feature_types": feature_types,
+        "setup_count": len(part.get("candidateDirections") or []),
+        "kernel_version": part.get("kernelVersion"),
+    }
+
+
+@app.get("/api/toolpath/status", response_model=ToolpathStatusResponse)
+async def toolpath_status():
+    return ToolpathStatusResponse(configured=bool(TOOLPATH_API_KEY))
+
+
+@app.post("/api/toolpath/analyze", response_model=ToolpathAnalyzeResponse)
+async def toolpath_analyze(request: ToolpathAnalyzeRequest):
+    """
+    Upload CAD bytes to Toolpath, run DFM analysis, return bbox + feature summary.
+    Requires TOOLPATH_API_KEY on the server (never send the key from the browser).
+    """
+    if not TOOLPATH_API_KEY:
+        return ToolpathAnalyzeResponse(
+            success=False,
+            error="TOOLPATH_API_KEY not configured on MCP server",
+        )
+
+    filename = (request.filename or "").strip() or "part.step"
+    try:
+        raw = base64.b64decode(request.content_base64 or "", validate=False)
+    except Exception:
+        return ToolpathAnalyzeResponse(success=False, error="Invalid content_base64")
+    if not raw:
+        return ToolpathAnalyzeResponse(success=False, error="CAD file is empty")
+    if len(raw) > TOOLPATH_MAX_BYTES:
+        return ToolpathAnalyzeResponse(success=False, error="CAD file must be 50 MB or smaller")
+
+    try:
+        timeout = httpx.Timeout(30.0, read=360.0)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            create = await client.post(
+                f"{TOOLPATH_API_BASE}/parts",
+                params={"filename": filename},
+                headers=_toolpath_headers(),
+            )
+            if create.status_code >= 400:
+                detail = create.text[:500]
+                return ToolpathAnalyzeResponse(
+                    success=False,
+                    error=f"Toolpath create part failed ({create.status_code}): {detail}",
+                )
+            created = create.json()
+            part_id = created.get("partId")
+            upload_url = created.get("uploadUrl")
+            if not part_id or not upload_url:
+                return ToolpathAnalyzeResponse(
+                    success=False,
+                    error="Toolpath create part returned no partId/uploadUrl",
+                )
+
+            # Presigned storage URL — do not send the API key.
+            put = await client.put(
+                upload_url,
+                content=raw,
+                headers={"Content-Type": "application/octet-stream"},
+            )
+            if put.status_code >= 400:
+                return ToolpathAnalyzeResponse(
+                    success=False,
+                    error=f"Toolpath CAD upload failed ({put.status_code}): {put.text[:300]}",
+                )
+
+            analyze = await client.patch(
+                f"{TOOLPATH_API_BASE}/parts/{part_id}",
+                headers=_toolpath_headers(),
+            )
+            if analyze.status_code not in (200, 202):
+                return ToolpathAnalyzeResponse(
+                    success=False,
+                    error=f"Toolpath analyze failed ({analyze.status_code}): {analyze.text[:500]}",
+                )
+            job = analyze.json()
+            job_id = job.get("jobId")
+            if not job_id:
+                return ToolpathAnalyzeResponse(
+                    success=False,
+                    error="Toolpath analyze returned no jobId",
+                )
+
+            finished = await _toolpath_wait_for_job(client, job_id)
+            if (finished.get("status") or "").lower() != "succeeded":
+                err = finished.get("error") or "analysis failed"
+                return ToolpathAnalyzeResponse(success=False, error=str(err))
+
+            part_resp = await client.get(
+                f"{TOOLPATH_API_BASE}/parts/{part_id}",
+                headers=_toolpath_headers(),
+            )
+            if part_resp.status_code >= 400:
+                return ToolpathAnalyzeResponse(
+                    success=False,
+                    error=f"Toolpath get part failed ({part_resp.status_code}): {part_resp.text[:500]}",
+                )
+            summary = _summarize_part(part_resp.json())
+            return ToolpathAnalyzeResponse(success=True, data=summary)
+    except httpx.HTTPStatusError as e:
+        return ToolpathAnalyzeResponse(
+            success=False,
+            error=f"Toolpath HTTP {e.response.status_code}: {e.response.text[:400]}",
+        )
+    except Exception as e:
+        return ToolpathAnalyzeResponse(success=False, error=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", "8001"))

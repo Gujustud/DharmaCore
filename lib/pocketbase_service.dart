@@ -2704,6 +2704,61 @@ class PocketBaseService {
     }
   }
 
+  /// Toolpath DFM analysis via MCP (server holds TOOLPATH_API_KEY).
+  ///
+  /// Returns `{success, data?, error?}` where `data` is the analysis summary
+  /// (bbox inches, feature counts, stock_suggest_in, toolpath_part_id, …).
+  Future<Map<String, dynamic>> analyzeCadViaToolpath({
+    required String filename,
+    required List<int> bytes,
+  }) async {
+    const mcpServerUrl = AppConfig.mcpUrl;
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$mcpServerUrl/api/toolpath/analyze'),
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({
+              'filename': filename,
+              'content_base64': base64Encode(bytes),
+            }),
+          )
+          .timeout(const Duration(seconds: 360));
+
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      if (response.statusCode != 200) {
+        return {
+          'success': false,
+          'error': data['error']?.toString() ??
+              'Server returned status ${response.statusCode}',
+        };
+      }
+      if (data['success'] == true) {
+        return {
+          'success': true,
+          'data': data['data'],
+        };
+      }
+      return {
+        'success': false,
+        'error': data['error']?.toString() ?? 'Toolpath analysis failed',
+      };
+    } on TimeoutException {
+      return {
+        'success': false,
+        'error': 'Toolpath analysis timed out. Try again.',
+      };
+    } on http.ClientException catch (e) {
+      return {
+        'success': false,
+        'error':
+            'Cannot reach analysis server (MCP). Is dharmacore-mcp running? ($e)',
+      };
+    } catch (e) {
+      return {'success': false, 'error': 'Unexpected error: $e'};
+    }
+  }
+
   // ============================================================================
   // PURCHASE TRACKING
   // ============================================================================

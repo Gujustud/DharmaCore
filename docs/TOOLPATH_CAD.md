@@ -1,0 +1,44 @@
+# Toolpath CAD analysis (Phase B)
+
+Quote lines can upload CAD (Phase A) and optionally run **Toolpath** analysis for bounding box + feature summary. Hours and price stay manual.
+
+## Architecture
+
+- Flutter web → `POST {MCP_URL}/api/toolpath/analyze` with filename + base64 bytes
+- MCP server (`mcp-server/mcp_server.py`) holds `TOOLPATH_API_KEY` and talks to `https://api.toolpath.com/v1`
+- Results stored on `quote_line_items.cad_analysis` (JSON text)
+
+## CT 105 setup
+
+1. Create a Toolpath Engine API key (Core write + DFM write). Prefer **no browser origins** (server-only).
+2. On the CT:
+
+```bash
+sudo mkdir -p /etc/dharmacore
+sudo tee /etc/dharmacore/toolpath.env >/dev/null <<'EOF'
+TOOLPATH_API_KEY=tp_your_key_here
+EOF
+sudo chmod 600 /etc/dharmacore/toolpath.env
+```
+
+3. Redeploy MCP so the unit picks up `EnvironmentFile` (see `deploy/dharmacore-mcp.service`):
+
+```powershell
+cd c:\cribhub
+git pull
+.\deploy\ct105_mcp_install.ps1
+```
+
+4. Apply PocketBase migration `1777120000_quote_line_cad_analysis.js` and restart PocketBase (same as other shop migrations).
+5. Deploy shop web so the CAD section shows Analyze / bbox UI.
+
+## Health
+
+```bash
+curl -sS http://127.0.0.1:8001/api/toolpath/status
+curl -sS https://dharmacore.sscadcam.com/mcp/api/toolpath/status
+```
+
+Expect `{"configured":true}` when the key is loaded.
+
+Nginx `/mcp/` `proxy_read_timeout` should be **360s** (analysis can take several minutes).

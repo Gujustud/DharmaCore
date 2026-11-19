@@ -19,7 +19,7 @@ new_block = """    location /mcp/ {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 120s;
+        proxy_read_timeout 360s;
     }
 """
 
@@ -27,7 +27,7 @@ new_block = """    location /mcp/ {
 if (
     "location /mcp/" in text
     and "proxy_pass http://127.0.0.1:8001/;" in text
-    and "proxy_read_timeout 120s;" in text
+    and "proxy_read_timeout 360s;" in text
 ):
     print("nginx /mcp/ already looks correct")
     raise SystemExit(0)
