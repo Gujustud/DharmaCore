@@ -63,7 +63,42 @@ String cadFeatureSummaryLabel(Map<String, dynamic>? analysis) {
   return parts.join(' · ');
 }
 
+/// Default pad / step match MCP (`TOOLPATH_STOCK_PAD_IN` / `TOOLPATH_STOCK_STEP_IN`).
+const double kCadStockPadIn = 0.1;
+const double kCadStockStepIn = 0.5;
+
+double cadCeilToStepInches(double value, [double step = kCadStockStepIn]) {
+  if (value <= 0 || step <= 0) return 0;
+  return (value / step).ceilToDouble() * step;
+}
+
+/// Stock from bbox: +pad, then round each axis up to [step] inches (default ½").
+String? cadStockSuggestFromBboxIn(
+  Map<String, dynamic>? analysis, {
+  double pad = kCadStockPadIn,
+  double step = kCadStockStepIn,
+}) {
+  final box = analysis?['bbox_in'];
+  if (box is! Map) return null;
+  final x = double.tryParse('${box['x']}') ?? 0;
+  final y = double.tryParse('${box['y']}') ?? 0;
+  final z = double.tryParse('${box['z']}') ?? 0;
+  if (x <= 0 && y <= 0 && z <= 0) return null;
+  final dims = [
+    cadCeilToStepInches(x + pad, step),
+    cadCeilToStepInches(y + pad, step),
+    cadCeilToStepInches(z + pad, step),
+  ]..sort((a, b) => b.compareTo(a));
+  final positive = dims.where((d) => d > 0).toList();
+  if (positive.isEmpty) return null;
+  return positive.map(formatInchesValue).join(' x ');
+}
+
 String? cadStockSuggestOf(Map<String, dynamic>? analysis) {
+  // Prefer live rounding from bbox so Apply stock picks up shop 0.5" steps
+  // even if the stored suggest was from an older analyze.
+  final fromBbox = cadStockSuggestFromBboxIn(analysis);
+  if (fromBbox != null) return fromBbox;
   final s = '${analysis?['stock_suggest_in'] ?? ''}'.trim();
   return s.isEmpty ? null : s;
 }

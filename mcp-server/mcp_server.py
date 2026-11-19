@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 import json
+import math
 import os
 from typing import Optional, Dict, Any, List
 import re
@@ -997,7 +998,9 @@ async def fetch_image_bytes(request: ImageUrlRequest):
 TOOLPATH_API_BASE = os.getenv("TOOLPATH_API_BASE", "https://api.toolpath.com/v1").rstrip("/")
 TOOLPATH_API_KEY = (os.getenv("TOOLPATH_API_KEY") or "").strip()
 TOOLPATH_MAX_BYTES = 50 * 1024 * 1024
+# Pad then round each axis up to the next half-inch (shop plate/bar sizes).
 STOCK_PAD_IN = float(os.getenv("TOOLPATH_STOCK_PAD_IN", "0.1"))
+STOCK_STEP_IN = float(os.getenv("TOOLPATH_STOCK_STEP_IN", "0.5"))
 
 
 class ToolpathAnalyzeRequest(BaseModel):
@@ -1033,9 +1036,30 @@ def _format_inch(v: float) -> str:
     return s
 
 
-def _stock_suggest_from_bbox_in(x: float, y: float, z: float, pad: float) -> str:
-    dims = sorted([x + pad, y + pad, z + pad], reverse=True)
-    return " x ".join(_format_inch(d) for d in dims)
+def _ceil_to_step(v: float, step: float) -> float:
+    if v <= 0 or step <= 0:
+        return 0.0
+    # Avoid float noise leaving an exact step just under the next bucket.
+    return math.ceil((v - 1e-9) / step) * step
+
+
+def _stock_suggest_from_bbox_in(
+    x: float,
+    y: float,
+    z: float,
+    pad: float,
+    step: float = STOCK_STEP_IN,
+) -> str:
+    """BBox + pad, then round each dim up to `step` inches (default 0.5")."""
+    dims = sorted(
+        [
+            _ceil_to_step(x + pad, step),
+            _ceil_to_step(y + pad, step),
+            _ceil_to_step(z + pad, step),
+        ],
+        reverse=True,
+    )
+    return " x ".join(_format_inch(d) for d in dims if d > 0)
 
 
 async def _toolpath_wait_for_job(client: httpx.AsyncClient, job_id: str) -> Dict[str, Any]:
@@ -1100,6 +1124,7 @@ def _summarize_part(part: Dict[str, Any]) -> Dict[str, Any]:
             bbox_in["x"], bbox_in["y"], bbox_in["z"], STOCK_PAD_IN
         ),
         "stock_pad_in": STOCK_PAD_IN,
+        "stock_step_in": STOCK_STEP_IN,
         "feature_count": len(part.get("features") or []),
         "feature_types": feature_types,
         "setup_count": len(part.get("candidateDirections") or []),
