@@ -1158,13 +1158,6 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                     builder: (context, constraints) {
                       final partId = cadToolpathPartIdOf(analysis);
                       final sideBySide = constraints.maxWidth >= 560;
-                      // Slightly rectangular (~4∶3), not a perfect square.
-                      final viewerW = sideBySide
-                          ? 320.0
-                          : (constraints.maxWidth > 0
-                              ? constraints.maxWidth.clamp(220.0, 400.0)
-                              : 320.0);
-                      final viewerH = viewerW * 0.75;
 
                       final railChildren = <Widget>[
                         if (partSizeLabel.isNotEmpty)
@@ -1205,7 +1198,8 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                             IconButton(
                               onPressed: busy
                                   ? null
-                                  : () => _pickAndUploadCad(replace: true),
+                                  : () =>
+                                      _pickAndUploadCad(replace: true),
                               tooltip: 'Replace CAD',
                               icon: const Icon(
                                 Icons.upload_file_outlined,
@@ -1227,63 +1221,81 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                         ),
                       ];
 
-                      Widget rail({required bool vertical}) {
-                        if (!vertical) {
-                          return Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: railChildren,
-                          );
-                        }
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            for (var i = 0; i < railChildren.length; i++) ...[
-                              if (i > 0) const SizedBox(height: 8),
-                              railChildren[i],
-                            ],
+                      // Vertical stack, trailing-aligned (sits on the right).
+                      final rail = Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (var i = 0; i < railChildren.length; i++) ...[
+                            if (i > 0) const SizedBox(height: 8),
+                            railChildren[i],
                           ],
+                        ],
+                      );
+
+                      if (partId == null) {
+                        return Align(
+                          alignment: Alignment.centerRight,
+                          child: rail,
                         );
                       }
 
-                      final viewer = partId == null
-                          ? null
-                          : SizedBox(
-                              width: viewerW,
-                              height: viewerH,
-                              child: CadGlbViewer(
-                                key: ValueKey('cad-glb-$partId'),
-                                meshUrl: cadToolpathMeshGlbUrl(partId),
-                              ),
-                            );
-
-                      if (viewer == null) {
-                        return rail(vertical: false);
-                      }
+                      final viewer = CadGlbViewer(
+                        key: ValueKey('cad-glb-$partId'),
+                        meshUrl: cadToolpathMeshGlbUrl(partId),
+                      );
 
                       if (sideBySide) {
+                        // Viewer fills leftover width; height tracks the
+                        // rail (at least ~4∶3 of that width).
+                        final railW = 200.0;
+                        final gap = 12.0;
+                        final viewerW =
+                            (constraints.maxWidth - gap - railW)
+                                .clamp(180.0, 10000.0);
+                        final railH = (railChildren.length * 48.0) +
+                            ((railChildren.length - 1).clamp(0, 100) * 8.0);
+                        final viewerH = [
+                          viewerW * 0.75,
+                          railH,
+                          240.0,
+                        ].reduce((a, b) => a > b ? a : b);
+
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 8),
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              viewer,
-                              const SizedBox(width: 12),
-                              Expanded(child: rail(vertical: true)),
+                              Expanded(
+                                child: SizedBox(
+                                  height: viewerH,
+                                  child: viewer,
+                                ),
+                              ),
+                              SizedBox(width: gap),
+                              rail,
                             ],
                           ),
                         );
                       }
 
+                      final w = constraints.maxWidth > 0
+                          ? constraints.maxWidth
+                          : 320.0;
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            viewer,
+                            SizedBox(
+                              height: (w * 0.75).clamp(200.0, 360.0),
+                              child: viewer,
+                            ),
                             const SizedBox(height: 8),
-                            rail(vertical: true),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: rail,
+                            ),
                           ],
                         ),
                       );
