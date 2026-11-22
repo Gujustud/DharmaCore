@@ -35,32 +35,37 @@ String cadBboxInchesLabel(Map<String, dynamic>? analysis) {
   return '${formatInchesValue(x)} x ${formatInchesValue(y)} x ${formatInchesValue(z)} in';
 }
 
-String cadFeatureSummaryLabel(Map<String, dynamic>? analysis) {
+String cadFeatureCountsLabel(Map<String, dynamic>? analysis) {
   if (analysis == null) return '';
   final count = analysis['feature_count'];
   final n = count is num ? count.toInt() : int.tryParse('$count') ?? 0;
   final setups = analysis['setup_count'];
   final s = setups is num ? setups.toInt() : int.tryParse('$setups') ?? 0;
-  final types = analysis['feature_types'];
-  String typeBit = '';
-  if (types is Map && types.isNotEmpty) {
-    final entries = types.entries.toList()
-      ..sort((a, b) {
-        final an = a.value is num ? (a.value as num).toInt() : 0;
-        final bn = b.value is num ? (b.value as num).toInt() : 0;
-        return bn.compareTo(an);
-      });
-    typeBit = entries
-        .take(4)
-        .map((e) => '${e.key}×${e.value}')
-        .join(', ');
-  }
   final parts = <String>[
     if (n > 0) '$n features',
     if (s > 0) '$s setups',
-    if (typeBit.isNotEmpty) typeBit,
   ];
   return parts.join(' · ');
+}
+
+String cadFeatureTypesLabel(Map<String, dynamic>? analysis) {
+  final types = analysis?['feature_types'];
+  if (types is! Map || types.isEmpty) return '';
+  final entries = types.entries.toList()
+    ..sort((a, b) {
+      final an = a.value is num ? (a.value as num).toInt() : 0;
+      final bn = b.value is num ? (b.value as num).toInt() : 0;
+      return bn.compareTo(an);
+    });
+  return entries.take(4).map((e) => '${e.key}×${e.value}').join(', ');
+}
+
+String cadFeatureSummaryLabel(Map<String, dynamic>? analysis) {
+  final counts = cadFeatureCountsLabel(analysis);
+  final types = cadFeatureTypesLabel(analysis);
+  if (counts.isEmpty) return types;
+  if (types.isEmpty) return counts;
+  return '$counts · $types';
 }
 
 /// Default pad / step match MCP (`TOOLPATH_STOCK_PAD_IN` / `TOOLPATH_STOCK_STEP_IN`).

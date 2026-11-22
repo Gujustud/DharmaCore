@@ -997,14 +997,61 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
     );
   }
 
+  Widget _cadFactChip({required String label, required String value}) {
+    final scheme = Theme.of(context).colorScheme;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 280),
+      child: Container(
+        height: _fieldControlHeight,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: scheme.outlineVariant),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                height: 1.1,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                height: 1.2,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _cadAttachedSection(String displayName) {
     final sizeLabel = formatCadFileBytes(widget.lineItem['cad_file_bytes']);
     final analysis = parseCadAnalysis(widget.lineItem['cad_analysis']);
     final status = cadAnalysisStatusOf(analysis);
-    final bboxLabel = cadBboxInchesLabel(analysis);
-    final featureLabel = cadFeatureSummaryLabel(analysis);
+    final partSizeLabel = cadBboxInchesLabel(analysis);
+    final featureCounts = cadFeatureCountsLabel(analysis);
+    final featureTypes = cadFeatureTypesLabel(analysis);
     final stockSuggest = cadStockSuggestOf(analysis);
+    final currentStock =
+        _str(widget.lineItem['stock_size_per_part']).trim();
+    final stockApplied = stockSuggest != null &&
+        currentStock.replaceAll(' ', '') ==
+            stockSuggest.replaceAll(' ', '');
     final busy = _cadUploading || _cadAnalyzing;
+    final scheme = Theme.of(context).colorScheme;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1035,89 +1082,122 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  crossAxisAlignment: WrapCrossAlignment.center,
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Icon(
                       Icons.view_in_ar,
                       size: 20,
-                      color: Theme.of(context).colorScheme.primary,
+                      color: scheme.primary,
                     ),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 360),
+                    const SizedBox(width: 8),
+                    Expanded(
                       child: Text(
                         sizeLabel.isEmpty
                             ? displayName
                             : '$displayName · $sizeLabel',
                         overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 14),
                       ),
                     ),
-                    TextButton(
+                    IconButton(
                       onPressed: busy
                           ? null
                           : () => _pickAndUploadCad(replace: true),
-                      child: const Text('Replace'),
+                      tooltip: 'Replace CAD',
+                      icon: const Icon(Icons.upload_file_outlined, size: 20),
+                      visualDensity: VisualDensity.compact,
                     ),
-                    TextButton(
+                    IconButton(
                       onPressed: busy ? null : _deleteCad,
-                      style:
-                          TextButton.styleFrom(foregroundColor: Colors.red),
-                      child: const Text('Remove'),
+                      tooltip: 'Remove CAD',
+                      icon: Icon(
+                        Icons.delete_outline,
+                        size: 20,
+                        color: scheme.error,
+                      ),
+                      visualDensity: VisualDensity.compact,
                     ),
                   ],
                 ),
                 const SizedBox(height: 8),
                 if (_cadAnalyzing || status == 'running')
-                  const Row(
+                  Row(
                     children: [
-                      SizedBox(
+                      const SizedBox(
                         width: 16,
                         height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       ),
-                      SizedBox(width: 8),
-                      Text('Analyzing with Toolpath…'),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Analyzing…',
+                        style: TextStyle(color: scheme.onSurfaceVariant),
+                      ),
                     ],
                   )
-                else if (status == 'error')
+                else if (status == 'error') ...[
                   Text(
-                    'Analysis: ${analysis?['error'] ?? 'failed'}',
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                      fontSize: 13,
-                    ),
-                  )
-                else if (status == 'ok') ...[
-                  if (bboxLabel.isNotEmpty)
-                    Text('BBox: $bboxLabel', style: const TextStyle(fontSize: 13)),
-                  if (featureLabel.isNotEmpty)
-                    Text(featureLabel, style: const TextStyle(fontSize: 13)),
-                  if (stockSuggest != null)
-                    Text(
-                      'Suggested stock: $stockSuggest',
-                      style: const TextStyle(fontSize: 13),
-                    ),
-                ],
-                const SizedBox(height: 4),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  children: [
-                    TextButton(
-                      onPressed: busy ? null : _reanalyzeCad,
-                      child: Text(
-                        status == 'ok' ? 'Re-analyze' : 'Analyze',
-                      ),
-                    ),
-                    if (stockSuggest != null)
+                    '${analysis?['error'] ?? 'Analysis failed'}',
+                    style: TextStyle(color: scheme.error, fontSize: 13),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: busy ? null : _reanalyzeCad,
+                    child: const Text('Analyze'),
+                  ),
+                ] else if (status == 'ok') ...[
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      if (partSizeLabel.isNotEmpty)
+                        _cadFactChip(label: 'Part size', value: partSizeLabel),
+                      if (featureCounts.isNotEmpty)
+                        _cadFactChip(label: 'Features', value: featureCounts),
+                      if (stockSuggest != null)
+                        _cadFactChip(
+                          label: stockApplied ? 'Stock (applied)' : 'Stock',
+                          value: stockSuggest,
+                        ),
+                      if (stockSuggest != null)
+                        OutlinedButton.icon(
+                          onPressed: busy || stockApplied
+                              ? null
+                              : _applySuggestedStock,
+                          style: _fieldHeightOutlinedStyle,
+                          icon: Icon(
+                            stockApplied
+                                ? Icons.check
+                                : Icons.inventory_2_outlined,
+                            size: 18,
+                          ),
+                          label: Text(
+                            stockApplied ? 'Applied' : 'Apply stock',
+                          ),
+                        ),
                       TextButton(
-                        onPressed: busy ? null : _applySuggestedStock,
-                        child: const Text('Apply stock'),
+                        onPressed: busy ? null : _reanalyzeCad,
+                        child: const Text('Re-analyze'),
                       ),
+                    ],
+                  ),
+                  if (featureTypes.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      featureTypes,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
                   ],
-                ),
+                ] else
+                  TextButton(
+                    onPressed: busy ? null : _reanalyzeCad,
+                    child: const Text('Analyze'),
+                  ),
               ],
             ),
           ),
