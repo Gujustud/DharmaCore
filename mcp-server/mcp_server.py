@@ -1050,14 +1050,13 @@ def _stock_suggest_from_bbox_in(
     pad: float,
     step: float = STOCK_STEP_IN,
 ) -> str:
-    """BBox + pad, then round each dim up to `step` inches (default 0.5")."""
+    """BBox + pad, ceil to `step`, then thickness × width × length (small→large)."""
     dims = sorted(
         [
             _ceil_to_step(x + pad, step),
             _ceil_to_step(y + pad, step),
             _ceil_to_step(z + pad, step),
-        ],
-        reverse=True,
+        ]
     )
     return " x ".join(_format_inch(d) for d in dims if d > 0)
 

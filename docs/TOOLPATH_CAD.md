@@ -7,7 +7,7 @@ Quote lines can upload CAD (Phase A) and optionally run **Toolpath** analysis fo
 - Flutter web → `POST {MCP_URL}/api/toolpath/analyze` with filename + base64 bytes
 - MCP server (`mcp-server/mcp_server.py`) holds `TOOLPATH_API_KEY` and talks to `https://api.toolpath.com/v1`
 - Results stored on `quote_line_items.cad_analysis` (JSON text)
-- **Stock suggest:** bounding box (inches) + `0.1"` pad, then each axis rounded **up** to the next `0.5"` (override with `TOOLPATH_STOCK_PAD_IN` / `TOOLPATH_STOCK_STEP_IN` on the MCP host)
+- **Stock suggest:** bounding box (inches) + `0.1"` pad, each axis rounded **up** to the next `0.5"`, then ordered **thickness × width × length** (small → large) so Find on shelf treats the last number as cut length (override with `TOOLPATH_STOCK_PAD_IN` / `TOOLPATH_STOCK_STEP_IN` on the MCP host)
 
 ## CT 105 setup
 

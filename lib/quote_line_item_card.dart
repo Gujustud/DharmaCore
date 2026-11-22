@@ -1099,24 +1099,6 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                         style: const TextStyle(fontSize: 14),
                       ),
                     ),
-                    IconButton(
-                      onPressed: busy
-                          ? null
-                          : () => _pickAndUploadCad(replace: true),
-                      tooltip: 'Replace CAD',
-                      icon: const Icon(Icons.upload_file_outlined, size: 20),
-                      visualDensity: VisualDensity.compact,
-                    ),
-                    IconButton(
-                      onPressed: busy ? null : _deleteCad,
-                      tooltip: 'Remove CAD',
-                      icon: Icon(
-                        Icons.delete_outline,
-                        size: 20,
-                        color: scheme.error,
-                      ),
-                      visualDensity: VisualDensity.compact,
-                    ),
                   ],
                 ),
                 const SizedBox(height: 8),
@@ -1141,9 +1123,34 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                     style: TextStyle(color: scheme.error, fontSize: 13),
                   ),
                   const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: busy ? null : _reanalyzeCad,
-                    child: const Text('Analyze'),
+                  Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      TextButton(
+                        onPressed: busy ? null : _reanalyzeCad,
+                        child: const Text('Analyze'),
+                      ),
+                      IconButton(
+                        onPressed: busy
+                            ? null
+                            : () => _pickAndUploadCad(replace: true),
+                        tooltip: 'Replace CAD',
+                        icon: const Icon(Icons.upload_file_outlined, size: 20),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      IconButton(
+                        onPressed: busy ? null : _deleteCad,
+                        tooltip: 'Remove CAD',
+                        icon: Icon(
+                          Icons.delete_outline,
+                          size: 20,
+                          color: scheme.error,
+                        ),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ],
                   ),
                 ] else if (status == 'ok') ...[
                   Wrap(
@@ -1180,12 +1187,55 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                         onPressed: busy ? null : _reanalyzeCad,
                         child: const Text('Re-analyze'),
                       ),
+                      IconButton(
+                        onPressed: busy
+                            ? null
+                            : () => _pickAndUploadCad(replace: true),
+                        tooltip: 'Replace CAD',
+                        icon: const Icon(Icons.upload_file_outlined, size: 20),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      IconButton(
+                        onPressed: busy ? null : _deleteCad,
+                        tooltip: 'Remove CAD',
+                        icon: Icon(
+                          Icons.delete_outline,
+                          size: 20,
+                          color: scheme.error,
+                        ),
+                        visualDensity: VisualDensity.compact,
+                      ),
                     ],
                   ),
                 ] else
-                  TextButton(
-                    onPressed: busy ? null : _reanalyzeCad,
-                    child: const Text('Analyze'),
+                  Wrap(
+                    spacing: 4,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      TextButton(
+                        onPressed: busy ? null : _reanalyzeCad,
+                        child: const Text('Analyze'),
+                      ),
+                      IconButton(
+                        onPressed: busy
+                            ? null
+                            : () => _pickAndUploadCad(replace: true),
+                        tooltip: 'Replace CAD',
+                        icon: const Icon(Icons.upload_file_outlined, size: 20),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      IconButton(
+                        onPressed: busy ? null : _deleteCad,
+                        tooltip: 'Remove CAD',
+                        icon: Icon(
+                          Icons.delete_outline,
+                          size: 20,
+                          color: scheme.error,
+                        ),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ],
                   ),
               ],
             ),
@@ -1530,24 +1580,40 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                       ),
                     ],
                     const SizedBox(height: 12),
-                    Text(
-                      'Cost',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey[700],
-                      ),
+                    Row(
+                      children: [
+                        Text(
+                          'Cost',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey[700],
+                          ),
+                        ),
+                        if (materialCadHelper != null) ...[
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              materialCadHelper,
+                              textAlign: TextAlign.right,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                     const SizedBox(height: 6),
                     Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
                           child: TextField(
                             controller: _materialCad,
                             focusNode: _materialCadFocus,
-                            decoration: _dec('Actual cost (CAD)').copyWith(
-                              helperText: materialCadHelper,
-                            ),
+                            decoration: _dec('Actual cost (CAD)'),
                             keyboardType:
                                 const TextInputType.numberWithOptions(
                                     decimal: true),

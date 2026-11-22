@@ -32,7 +32,9 @@ String cadBboxInchesLabel(Map<String, dynamic>? analysis) {
   final y = double.tryParse('${box['y']}') ?? 0;
   final z = double.tryParse('${box['z']}') ?? 0;
   if (x <= 0 && y <= 0 && z <= 0) return '';
-  return '${formatInchesValue(x)} x ${formatInchesValue(y)} x ${formatInchesValue(z)} in';
+  // Thickness × width × length (small → large), same convention as stock.
+  final dims = [x, y, z]..sort();
+  return '${formatInchesValue(dims[0])} x ${formatInchesValue(dims[1])} x ${formatInchesValue(dims[2])} in';
 }
 
 String cadFeatureCountsLabel(Map<String, dynamic>? analysis) {
@@ -77,7 +79,8 @@ double cadCeilToStepInches(double value, [double step = kCadStockStepIn]) {
   return (value / step).ceilToDouble() * step;
 }
 
-/// Stock from bbox: +pad, then round each axis up to [step] inches (default ½").
+/// Stock from bbox: +pad, round each axis up to [step], then
+/// thickness × width × length (small → large) for shelf matching.
 String? cadStockSuggestFromBboxIn(
   Map<String, dynamic>? analysis, {
   double pad = kCadStockPadIn,
@@ -93,7 +96,7 @@ String? cadStockSuggestFromBboxIn(
     cadCeilToStepInches(x + pad, step),
     cadCeilToStepInches(y + pad, step),
     cadCeilToStepInches(z + pad, step),
-  ]..sort((a, b) => b.compareTo(a));
+  ]..sort();
   final positive = dims.where((d) => d > 0).toList();
   if (positive.isEmpty) return null;
   return positive.map(formatInchesValue).join(' x ');
