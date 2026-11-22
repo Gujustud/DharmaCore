@@ -998,43 +998,50 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
     );
   }
 
-  Widget _cadFactChip({required String label, required String value}) {
+  Widget _cadFactChip({
+    required String label,
+    required String value,
+    bool expandWidth = false,
+  }) {
     final scheme = Theme.of(context).colorScheme;
+    final box = Container(
+      height: _fieldControlHeight,
+      width: expandWidth ? double.infinity : null,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              height: 1.1,
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              height: 1.2,
+            ),
+          ),
+        ],
+      ),
+    );
+    if (expandWidth) return box;
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 280),
-      child: Container(
-        height: _fieldControlHeight,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: scheme.outlineVariant),
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                height: 1.1,
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                height: 1.2,
-              ),
-            ),
-          ],
-        ),
-      ),
+      child: box,
     );
   }
 
@@ -1158,79 +1165,102 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                     builder: (context, constraints) {
                       final partId = cadToolpathPartIdOf(analysis);
                       final sideBySide = constraints.maxWidth >= 560;
+                      const railW = 220.0;
+                      const gap = 12.0;
 
                       final railChildren = <Widget>[
                         if (partSizeLabel.isNotEmpty)
                           _cadFactChip(
-                              label: 'Part size', value: partSizeLabel),
+                            label: 'Part size',
+                            value: partSizeLabel,
+                            expandWidth: true,
+                          ),
                         if (stockSuggest != null)
                           _cadFactChip(
                             label:
                                 stockApplied ? 'Stock (applied)' : 'Stock',
                             value: stockSuggest,
+                            expandWidth: true,
                           ),
                         if (featureCounts.isNotEmpty)
                           _cadFactChip(
-                              label: 'Features', value: featureCounts),
+                            label: 'Features',
+                            value: featureCounts,
+                            expandWidth: true,
+                          ),
                         if (stockSuggest != null)
-                          OutlinedButton.icon(
-                            onPressed: busy || stockApplied
-                                ? null
-                                : _applySuggestedStock,
-                            style: _fieldHeightOutlinedStyle,
-                            icon: Icon(
-                              stockApplied
-                                  ? Icons.check
-                                  : Icons.inventory_2_outlined,
-                              size: 18,
-                            ),
-                            label: Text(
-                              stockApplied ? 'Applied' : 'Apply stock',
+                          SizedBox(
+                            width: double.infinity,
+                            height: _fieldControlHeight,
+                            child: OutlinedButton.icon(
+                              onPressed: busy || stockApplied
+                                  ? null
+                                  : _applySuggestedStock,
+                              style: _fieldHeightOutlinedStyle,
+                              icon: Icon(
+                                stockApplied
+                                    ? Icons.check
+                                    : Icons.inventory_2_outlined,
+                                size: 18,
+                              ),
+                              label: Text(
+                                stockApplied ? 'Applied' : 'Apply stock',
+                              ),
                             ),
                           ),
-                        TextButton(
-                          onPressed: busy ? null : _reanalyzeCad,
-                          child: const Text('Re-analyze'),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton(
+                            onPressed: busy ? null : _reanalyzeCad,
+                            child: const Text('Re-analyze'),
+                          ),
                         ),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              onPressed: busy
-                                  ? null
-                                  : () =>
-                                      _pickAndUploadCad(replace: true),
-                              tooltip: 'Replace CAD',
-                              icon: const Icon(
-                                Icons.upload_file_outlined,
-                                size: 20,
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                onPressed: busy
+                                    ? null
+                                    : () =>
+                                        _pickAndUploadCad(replace: true),
+                                tooltip: 'Replace CAD',
+                                icon: const Icon(
+                                  Icons.upload_file_outlined,
+                                  size: 20,
+                                ),
+                                visualDensity: VisualDensity.compact,
                               ),
-                              visualDensity: VisualDensity.compact,
-                            ),
-                            IconButton(
-                              onPressed: busy ? null : _deleteCad,
-                              tooltip: 'Remove CAD',
-                              icon: Icon(
-                                Icons.delete_outline,
-                                size: 20,
-                                color: scheme.error,
+                              IconButton(
+                                onPressed: busy ? null : _deleteCad,
+                                tooltip: 'Remove CAD',
+                                icon: Icon(
+                                  Icons.delete_outline,
+                                  size: 20,
+                                  color: scheme.error,
+                                ),
+                                visualDensity: VisualDensity.compact,
                               ),
-                              visualDensity: VisualDensity.compact,
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
                       ];
 
-                      // Vertical stack, trailing-aligned (sits on the right).
-                      final rail = Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          for (var i = 0; i < railChildren.length; i++) ...[
-                            if (i > 0) const SizedBox(height: 8),
-                            railChildren[i],
+                      final rail = SizedBox(
+                        width: railW,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            for (var i = 0;
+                                i < railChildren.length;
+                                i++) ...[
+                              if (i > 0) const SizedBox(height: 8),
+                              railChildren[i],
+                            ],
                           ],
-                        ],
+                        ),
                       );
 
                       if (partId == null) {
@@ -1246,49 +1276,29 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                       );
 
                       if (sideBySide) {
-                        // Viewer fills leftover width; height tracks the
-                        // rail (at least ~4∶3 of that width).
-                        final railW = 200.0;
-                        final gap = 12.0;
-                        final viewerW =
-                            (constraints.maxWidth - gap - railW)
-                                .clamp(180.0, 10000.0);
-                        final railH = (railChildren.length * 48.0) +
-                            ((railChildren.length - 1).clamp(0, 100) * 8.0);
-                        final viewerH = [
-                          viewerW * 0.75,
-                          railH,
-                          240.0,
-                        ].reduce((a, b) => a > b ? a : b);
-
+                        // Height = rail only (no forced 4∶3). Width expands.
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 8),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: SizedBox(
-                                  height: viewerH,
-                                  child: viewer,
-                                ),
-                              ),
-                              SizedBox(width: gap),
-                              rail,
-                            ],
+                          child: IntrinsicHeight(
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Expanded(child: viewer),
+                                const SizedBox(width: gap),
+                                rail,
+                              ],
+                            ),
                           ),
                         );
                       }
 
-                      final w = constraints.maxWidth > 0
-                          ? constraints.maxWidth
-                          : 320.0;
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             SizedBox(
-                              height: (w * 0.75).clamp(200.0, 360.0),
+                              height: 200,
                               child: viewer,
                             ),
                             const SizedBox(height: 8),
