@@ -1285,14 +1285,13 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                 child: avatar,
               ),
               const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  label,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: scheme.onSurface,
-                  ),
+              Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: scheme.onSurface,
                 ),
               ),
               IconButton(
@@ -1345,9 +1344,8 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
     }
 
     final markup = calc?['material_with_markup'];
-    final materialCadHelper = markup != null
-        ? 'Markup: \$${formatQuoteMoney(_num(markup))}'
-        : null;
+    final markupText =
+        markup != null ? formatQuoteMoney(_num(markup)) : '';
     final cadFilename = quoteCadFilenameOf(item);
     final cadDisplayName = quoteCadDisplayNameOf(item);
     final hasCad = cadFilename != null;
@@ -1491,78 +1489,104 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                           ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Expanded(child: _alloyCatalogField(item)),
-                        if (_linkedMaterial(item) != null) ...[
-                          const SizedBox(width: 8),
-                          Flexible(
-                            child: _fieldHeightChip(
-                              avatar: const Icon(Icons.link, size: 16),
-                              label:
-                                  '${materialFormLabel(_linkedMaterial(item)!.form)} · ${_linkedMaterial(item)!.sizeLabel}',
-                              onDeleted: () {
-                                final cleared = _clearedShelfFields();
-                                _materialNote.text =
-                                    cleared['material_note'] as String? ?? '';
-                                _patch({
-                                  'material': null,
-                                  ...cleared,
-                                });
-                              },
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _stockSize,
-                            decoration: _dec('Stock size per part'),
-                            onChanged: (v) =>
-                                _patch({'stock_size_per_part': v}),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        SizedBox(
-                          width: 72,
-                          child: TextField(
-                            controller: _pieces,
-                            decoration: _dec('Pcs'),
-                            keyboardType: TextInputType.number,
-                            onChanged: (v) {
-                              final n = int.tryParse(v);
-                              _patch({'pieces': n});
-                            },
-                          ),
-                        ),
-                        if (_shelfRefFromItem(item) != null) ...[
-                          const SizedBox(width: 8),
-                          Flexible(
-                            child: _fieldHeightChip(
-                              avatar: const Icon(
-                                Icons.inventory_2_outlined,
-                                size: 16,
-                              ),
-                              label: _shelfRefFromItem(item)!,
-                              onDeleted: _clearShelfPick,
-                            ),
-                          ),
-                        ],
-                        const SizedBox(width: 8),
-                        OutlinedButton.icon(
+                    const SizedBox(height: 16),
+                    Builder(
+                      builder: (context) {
+                        final linked = _linkedMaterial(item);
+                        final shelfRef = _shelfRefFromItem(item);
+                        final findBtn = OutlinedButton.icon(
                           onPressed: _findOnShelf,
                           style: _fieldHeightOutlinedStyle,
-                          icon: const Icon(Icons.inventory_2_outlined, size: 18),
+                          icon: const Icon(
+                            Icons.inventory_2_outlined,
+                            size: 18,
+                          ),
                           label: const Text('Find on shelf'),
-                        ),
-                      ],
+                        );
+                        // Alloy shares the same Expanded width as Stock+Pcs so
+                        // their right edges line up; chips / Find sit outside.
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                children: [
+                                  _alloyCatalogField(item),
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: TextField(
+                                          controller: _stockSize,
+                                          decoration:
+                                              _dec('Stock size per part'),
+                                          onChanged: (v) => _patch(
+                                              {'stock_size_per_part': v}),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      SizedBox(
+                                        width: 72,
+                                        child: TextField(
+                                          controller: _pieces,
+                                          decoration: _dec('Pcs'),
+                                          keyboardType: TextInputType.number,
+                                          onChanged: (v) {
+                                            final n = int.tryParse(v);
+                                            _patch({'pieces': n});
+                                          },
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                if (linked != null)
+                                  _fieldHeightChip(
+                                    avatar: const Icon(Icons.link, size: 16),
+                                    label:
+                                        '${materialFormLabel(linked.form)} · ${linked.sizeLabel}',
+                                    onDeleted: () {
+                                      final cleared = _clearedShelfFields();
+                                      _materialNote.text =
+                                          cleared['material_note'] as String? ??
+                                              '';
+                                      _patch({
+                                        'material': null,
+                                        ...cleared,
+                                      });
+                                    },
+                                  )
+                                else
+                                  const SizedBox(height: _fieldControlHeight),
+                                const SizedBox(height: 8),
+                                Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (shelfRef != null) ...[
+                                      _fieldHeightChip(
+                                        avatar: const Icon(
+                                          Icons.inventory_2_outlined,
+                                          size: 16,
+                                        ),
+                                        label: shelfRef,
+                                        onDeleted: _clearShelfPick,
+                                      ),
+                                      const SizedBox(width: 8),
+                                    ],
+                                    findBtn,
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ],
+                        );
+                      },
                     ),
                     if (quoteMaterialSourceOf(item) != 'shop_stock') ...[
                       const SizedBox(height: 8),
@@ -1580,30 +1604,13 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                       ),
                     ],
                     const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        Text(
-                          'Cost',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.grey[700],
-                          ),
-                        ),
-                        if (materialCadHelper != null) ...[
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              materialCadHelper,
-                              textAlign: TextAlign.right,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey[600],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
+                    Text(
+                      'Cost',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey[700],
+                      ),
                     ),
                     const SizedBox(height: 6),
                     Row(
@@ -1674,6 +1681,22 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                             onChanged: _onUsdShippingChanged,
                           ),
                         ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: InputDecorator(
+                            decoration: _dec('Markup (CAD)'),
+                            child: Text(
+                              markupText.isEmpty ? '—' : markupText,
+                              style: Theme.of(context).textTheme.bodyLarge,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Expanded(child: SizedBox.shrink()),
                       ],
                     ),
                     const SizedBox(height: 8),
