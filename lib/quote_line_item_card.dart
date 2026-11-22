@@ -1043,7 +1043,6 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
     final status = cadAnalysisStatusOf(analysis);
     final partSizeLabel = cadBboxInchesLabel(analysis);
     final featureCounts = cadFeatureCountsLabel(analysis);
-    final featureTypes = cadFeatureTypesLabel(analysis);
     final stockSuggest = cadStockSuggestOf(analysis);
     final currentStock =
         _str(widget.lineItem['stock_size_per_part']).trim();
@@ -1154,8 +1153,6 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                     children: [
                       if (partSizeLabel.isNotEmpty)
                         _cadFactChip(label: 'Part size', value: partSizeLabel),
-                      if (featureCounts.isNotEmpty)
-                        _cadFactChip(label: 'Features', value: featureCounts),
                       if (stockSuggest != null)
                         _cadFactChip(
                           label: stockApplied ? 'Stock (applied)' : 'Stock',
@@ -1177,22 +1174,14 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                             stockApplied ? 'Applied' : 'Apply stock',
                           ),
                         ),
+                      if (featureCounts.isNotEmpty)
+                        _cadFactChip(label: 'Features', value: featureCounts),
                       TextButton(
                         onPressed: busy ? null : _reanalyzeCad,
                         child: const Text('Re-analyze'),
                       ),
                     ],
                   ),
-                  if (featureTypes.isNotEmpty) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      featureTypes,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
                 ] else
                   TextButton(
                     onPressed: busy ? null : _reanalyzeCad,
@@ -1306,9 +1295,9 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
     }
 
     final markup = calc?['material_with_markup'];
-    final materialCadLabel = markup != null
-        ? 'Actual cost (CAD) (Markup cost (CAD): \$${formatQuoteMoney(_num(markup))})'
-        : 'Actual cost (CAD)';
+    final materialCadHelper = markup != null
+        ? 'Markup: \$${formatQuoteMoney(_num(markup))}'
+        : null;
     final cadFilename = quoteCadFilenameOf(item);
     final cadDisplayName = quoteCadDisplayNameOf(item);
     final hasCad = cadFilename != null;
@@ -1429,82 +1418,53 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
               _QuoteSection(
                 title: 'Materials',
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Row(
+                    Text(
+                      'Material source',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                    ),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
                       children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _materialCad,
-                            focusNode: _materialCadFocus,
-                            decoration: _dec(materialCadLabel),
-                            keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true),
-                            onChanged: (v) {
-                              if (v.trim().isEmpty) {
-                                _patch({'material_cost_cad': null});
-                              } else {
-                                final n = double.tryParse(v);
-                                if (n != null) {
-                                  _patch({
-                                    'material_cost_cad': quoteRound2(n),
-                                  });
-                                }
-                              }
-                            },
+                        for (final opt in const [
+                          ('buy', 'Buy'),
+                          ('shop_stock', 'Shop stock'),
+                          ('customer_supplied', 'Customer supplied'),
+                        ])
+                          ChoiceChip(
+                            label: Text(opt.$2),
+                            selected: quoteMaterialSourceOf(item) == opt.$1,
+                            onSelected: (_) => _setMaterialSource(opt.$1),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: TextField(
-                            controller: _usdCost,
-                            focusNode: _usdCostFocus,
-                            decoration: _dec('Actual cost (USD)'),
-                            keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true),
-                            onChanged: _onUsdMaterialChanged,
-                          ),
-                        ),
                       ],
                     ),
                     const SizedBox(height: 8),
                     Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _shippingCad,
-                            focusNode: _shippingCadFocus,
-                            decoration: _dec('Shipping cost (CAD)'),
-                            keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true),
-                            onChanged: (v) => _patch({
-                              'material_shipping_cost':
-                                  _dollarFromInput(v) ?? '',
-                            }),
+                        Expanded(child: _alloyCatalogField(item)),
+                        if (_linkedMaterial(item) != null) ...[
+                          const SizedBox(width: 8),
+                          Flexible(
+                            child: _fieldHeightChip(
+                              avatar: const Icon(Icons.link, size: 16),
+                              label:
+                                  '${materialFormLabel(_linkedMaterial(item)!.form)} · ${_linkedMaterial(item)!.sizeLabel}',
+                              onDeleted: () {
+                                final cleared = _clearedShelfFields();
+                                _materialNote.text =
+                                    cleared['material_note'] as String? ?? '';
+                                _patch({
+                                  'material': null,
+                                  ...cleared,
+                                });
+                              },
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: TextField(
-                            controller: _shippingUsd,
-                            focusNode: _shippingUsdFocus,
-                            decoration: _dec('Shipping cost (USD)'),
-                            keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true),
-                            onChanged: _onUsdShippingChanged,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: TextField(
-                            controller: _testingCost,
-                            decoration: _dec('Testing cost'),
-                            keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true),
-                            onChanged: (v) => _patch({
-                              'testing_cost': _dollarFromInput(v) ?? '',
-                            }),
-                          ),
-                        ),
+                        ],
                       ],
                     ),
                     const SizedBox(height: 8),
@@ -1554,32 +1514,6 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 8),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Expanded(child: _alloyCatalogField(item)),
-                        if (_linkedMaterial(item) != null) ...[
-                          const SizedBox(width: 8),
-                          Flexible(
-                            child: _fieldHeightChip(
-                              avatar: const Icon(Icons.link, size: 16),
-                              label:
-                                  '${materialFormLabel(_linkedMaterial(item)!.form)} · ${_linkedMaterial(item)!.sizeLabel}',
-                              onDeleted: () {
-                                final cleared = _clearedShelfFields();
-                                _materialNote.text =
-                                    cleared['material_note'] as String? ?? '';
-                                _patch({
-                                  'material': null,
-                                  ...cleared,
-                                });
-                              },
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
                     if (quoteMaterialSourceOf(item) != 'shop_stock') ...[
                       const SizedBox(height: 8),
                       TextField(
@@ -1588,32 +1522,94 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                         onChanged: (v) => _patch({'ordered_length': v}),
                       ),
                     ],
-                    const SizedBox(height: 8),
-                    Text('Material source',
-                        style: TextStyle(
-                            fontSize: 12, color: Colors.grey[700])),
-                    const SizedBox(height: 4),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
-                      children: [
-                        for (final opt in const [
-                          ('buy', 'Buy'),
-                          ('shop_stock', 'Shop stock'),
-                          ('customer_supplied', 'Customer supplied'),
-                        ])
-                          ChoiceChip(
-                            label: Text(opt.$2),
-                            selected: quoteMaterialSourceOf(item) == opt.$1,
-                            onSelected: (_) => _setMaterialSource(opt.$1),
-                          ),
-                      ],
-                    ),
                     if (quoteMaterialSourceOf(item) == 'buy') ...[
                       const SizedBox(height: 8),
                       supplierDropdown(
-                          'material_vendor', 'Material supplier'),
+                        'material_vendor',
+                        'Material supplier',
+                      ),
                     ],
+                    const SizedBox(height: 12),
+                    Text(
+                      'Cost',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey[700],
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _materialCad,
+                            focusNode: _materialCadFocus,
+                            decoration: _dec('Actual cost (CAD)').copyWith(
+                              helperText: materialCadHelper,
+                            ),
+                            keyboardType:
+                                const TextInputType.numberWithOptions(
+                                    decimal: true),
+                            onChanged: (v) {
+                              if (v.trim().isEmpty) {
+                                _patch({'material_cost_cad': null});
+                              } else {
+                                final n = double.tryParse(v);
+                                if (n != null) {
+                                  _patch({
+                                    'material_cost_cad': quoteRound2(n),
+                                  });
+                                }
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            controller: _usdCost,
+                            focusNode: _usdCostFocus,
+                            decoration: _dec('Actual cost (USD)'),
+                            keyboardType:
+                                const TextInputType.numberWithOptions(
+                                    decimal: true),
+                            onChanged: _onUsdMaterialChanged,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _shippingCad,
+                            focusNode: _shippingCadFocus,
+                            decoration: _dec('Shipping (CAD)'),
+                            keyboardType:
+                                const TextInputType.numberWithOptions(
+                                    decimal: true),
+                            onChanged: (v) => _patch({
+                              'material_shipping_cost':
+                                  _dollarFromInput(v) ?? '',
+                            }),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextField(
+                            controller: _shippingUsd,
+                            focusNode: _shippingUsdFocus,
+                            decoration: _dec('Shipping (USD)'),
+                            keyboardType:
+                                const TextInputType.numberWithOptions(
+                                    decimal: true),
+                            onChanged: _onUsdShippingChanged,
+                          ),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 8),
                     TextField(
                       controller: _materialNote,
