@@ -1161,6 +1161,7 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: CadGlbViewer(
+                          key: ValueKey('cad-glb-$partId'),
                           meshUrl: cadToolpathMeshGlbUrl(partId),
                         ),
                       );

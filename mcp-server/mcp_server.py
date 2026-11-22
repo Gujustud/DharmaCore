@@ -1260,33 +1260,64 @@ async def _fetch_toolpath_display_mesh_glb(
 ) -> bytes:
     """Tessellate if needed, then download the display GLB for [part_id]."""
     headers = _toolpath_headers()
+    print(f"[toolpath-mesh] start part_id={part_id}", flush=True)
 
     # Prefer analysis mesh when still available (no extra tessellate job).
     part_resp = await client.get(
         f"{TOOLPATH_API_BASE}/parts/{part_id}",
         headers=headers,
     )
+    print(
+        f"[toolpath-mesh] GET part -> {part_resp.status_code}",
+        flush=True,
+    )
     if part_resp.status_code == 410:
         raise HTTPException(
             status_code=410,
             detail="Toolpath part expired — re-analyze the CAD file",
         )
+    if part_resp.status_code == 404:
+        raise HTTPException(
+            status_code=404,
+            detail="Toolpath part not found — re-analyze the CAD file",
+        )
     if part_resp.status_code == 200:
         analysis_url = (part_resp.json() or {}).get("meshGlbUrl")
         if analysis_url:
             try:
-                return await _download_glb_bytes(client, analysis_url)
-            except HTTPException:
-                pass  # fall through to display tessellation
+                blob = await _download_glb_bytes(client, analysis_url)
+                print(
+                    f"[toolpath-mesh] analysis GLB ok ({len(blob)} bytes)",
+                    flush=True,
+                )
+                return blob
+            except HTTPException as e:
+                print(
+                    f"[toolpath-mesh] analysis GLB failed: {e.detail}; "
+                    "falling back to display tessellation",
+                    flush=True,
+                )
 
     mesh_meta = await client.get(
         f"{TOOLPATH_API_BASE}/parts/{part_id}/mesh",
         headers=headers,
     )
+    print(
+        f"[toolpath-mesh] GET display mesh meta -> {mesh_meta.status_code}",
+        flush=True,
+    )
     if mesh_meta.status_code == 404:
+        tess_headers = {
+            **headers,
+            "Idempotency-Key": f"mesh-{part_id}-{int(time.time())}"[:255],
+        }
         create = await client.post(
             f"{TOOLPATH_API_BASE}/parts/{part_id}/mesh",
-            headers=headers,
+            headers=tess_headers,
+        )
+        print(
+            f"[toolpath-mesh] POST tessellate -> {create.status_code}",
+            flush=True,
         )
         if create.status_code not in (200, 202):
             raise HTTPException(
@@ -1303,12 +1334,21 @@ async def _fetch_toolpath_display_mesh_glb(
                 detail="Toolpath tessellate returned no jobId",
             )
         finished = await _toolpath_wait_for_job(client, job_id)
+        print(
+            f"[toolpath-mesh] tessellate job -> {finished.get('status')}",
+            flush=True,
+        )
         if (finished.get("status") or "").lower() != "succeeded":
             err = finished.get("error") or "tessellation failed"
             raise HTTPException(status_code=502, detail=str(err))
         mesh_meta = await client.get(
             f"{TOOLPATH_API_BASE}/parts/{part_id}/mesh",
             headers=headers,
+        )
+        print(
+            f"[toolpath-mesh] GET display mesh meta (after job) -> "
+            f"{mesh_meta.status_code}",
+            flush=True,
         )
 
     if mesh_meta.status_code == 410:
@@ -1333,7 +1373,9 @@ async def _fetch_toolpath_display_mesh_glb(
     glb_url = (mesh_meta.json() or {}).get("meshGlbUrl")
     if not glb_url:
         raise HTTPException(status_code=502, detail="Toolpath mesh had no meshGlbUrl")
-    return await _download_glb_bytes(client, glb_url)
+    blob = await _download_glb_bytes(client, glb_url)
+    print(f"[toolpath-mesh] display GLB ok ({len(blob)} bytes)", flush=True)
+    return blob
 
 
 @app.get("/api/toolpath/parts/{part_id}/mesh.glb")
