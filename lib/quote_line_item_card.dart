@@ -1249,6 +1249,7 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
         labelText: label,
         border: const OutlineInputBorder(),
         isDense: true,
+        floatingLabelBehavior: FloatingLabelBehavior.always,
         contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       );
 
@@ -1543,8 +1544,10 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                               ),
                             ),
                             const SizedBox(width: 8),
+                            // Catalog chip sits snug after alloy; shelf + Find
+                            // share the stock/Pcs row (may be wider than chip).
                             Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 if (linked != null)
                                   _fieldHeightChip(
@@ -1620,7 +1623,11 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                           child: TextField(
                             controller: _materialCad,
                             focusNode: _materialCadFocus,
-                            decoration: _dec('Actual cost (CAD)'),
+                            decoration: _dec(
+                              markupText.isEmpty
+                                  ? 'Actual cost (CAD)'
+                                  : 'Actual cost (CAD)  $markupText',
+                            ),
                             keyboardType:
                                 const TextInputType.numberWithOptions(
                                     decimal: true),
@@ -1681,22 +1688,6 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                             onChanged: _onUsdShippingChanged,
                           ),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: InputDecorator(
-                            decoration: _dec('Markup (CAD)'),
-                            child: Text(
-                              markupText.isEmpty ? '—' : markupText,
-                              style: Theme.of(context).textTheme.bodyLarge,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        const Expanded(child: SizedBox.shrink()),
                       ],
                     ),
                     const SizedBox(height: 8),
