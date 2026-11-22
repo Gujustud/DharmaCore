@@ -1158,13 +1158,15 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                     builder: (context, constraints) {
                       final partId = cadToolpathPartIdOf(analysis);
                       final sideBySide = constraints.maxWidth >= 560;
-                      final viewerSize = sideBySide
-                          ? 300.0
+                      // Slightly rectangular (~4∶3), not a perfect square.
+                      final viewerW = sideBySide
+                          ? 320.0
                           : (constraints.maxWidth > 0
-                              ? constraints.maxWidth.clamp(200.0, 360.0)
-                              : 280.0);
+                              ? constraints.maxWidth.clamp(220.0, 400.0)
+                              : 320.0);
+                      final viewerH = viewerW * 0.75;
 
-                      final actions = <Widget>[
+                      final railChildren = <Widget>[
                         if (partSizeLabel.isNotEmpty)
                           _cadFactChip(
                               label: 'Part size', value: partSizeLabel),
@@ -1174,6 +1176,9 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                                 stockApplied ? 'Stock (applied)' : 'Stock',
                             value: stockSuggest,
                           ),
+                        if (featureCounts.isNotEmpty)
+                          _cadFactChip(
+                              label: 'Features', value: featureCounts),
                         if (stockSuggest != null)
                           OutlinedButton.icon(
                             onPressed: busy || stockApplied
@@ -1190,39 +1195,63 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                               stockApplied ? 'Applied' : 'Apply stock',
                             ),
                           ),
-                        if (featureCounts.isNotEmpty)
-                          _cadFactChip(
-                              label: 'Features', value: featureCounts),
                         TextButton(
                           onPressed: busy ? null : _reanalyzeCad,
                           child: const Text('Re-analyze'),
                         ),
-                        IconButton(
-                          onPressed: busy
-                              ? null
-                              : () => _pickAndUploadCad(replace: true),
-                          tooltip: 'Replace CAD',
-                          icon: const Icon(
-                              Icons.upload_file_outlined, size: 20),
-                          visualDensity: VisualDensity.compact,
-                        ),
-                        IconButton(
-                          onPressed: busy ? null : _deleteCad,
-                          tooltip: 'Remove CAD',
-                          icon: Icon(
-                            Icons.delete_outline,
-                            size: 20,
-                            color: scheme.error,
-                          ),
-                          visualDensity: VisualDensity.compact,
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              onPressed: busy
+                                  ? null
+                                  : () => _pickAndUploadCad(replace: true),
+                              tooltip: 'Replace CAD',
+                              icon: const Icon(
+                                Icons.upload_file_outlined,
+                                size: 20,
+                              ),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            IconButton(
+                              onPressed: busy ? null : _deleteCad,
+                              tooltip: 'Remove CAD',
+                              icon: Icon(
+                                Icons.delete_outline,
+                                size: 20,
+                                color: scheme.error,
+                              ),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ],
                         ),
                       ];
+
+                      Widget rail({required bool vertical}) {
+                        if (!vertical) {
+                          return Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: railChildren,
+                          );
+                        }
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            for (var i = 0; i < railChildren.length; i++) ...[
+                              if (i > 0) const SizedBox(height: 8),
+                              railChildren[i],
+                            ],
+                          ],
+                        );
+                      }
 
                       final viewer = partId == null
                           ? null
                           : SizedBox(
-                              width: viewerSize,
-                              height: viewerSize,
+                              width: viewerW,
+                              height: viewerH,
                               child: CadGlbViewer(
                                 key: ValueKey('cad-glb-$partId'),
                                 meshUrl: cadToolpathMeshGlbUrl(partId),
@@ -1230,12 +1259,7 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                             );
 
                       if (viewer == null) {
-                        return Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: actions,
-                        );
+                        return rail(vertical: false);
                       }
 
                       if (sideBySide) {
@@ -1246,15 +1270,7 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                             children: [
                               viewer,
                               const SizedBox(width: 12),
-                              Expanded(
-                                child: Wrap(
-                                  spacing: 8,
-                                  runSpacing: 8,
-                                  crossAxisAlignment:
-                                      WrapCrossAlignment.center,
-                                  children: actions,
-                                ),
-                              ),
+                              Expanded(child: rail(vertical: true)),
                             ],
                           ),
                         );
@@ -1267,12 +1283,7 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                           children: [
                             viewer,
                             const SizedBox(height: 8),
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 8,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: actions,
-                            ),
+                            rail(vertical: true),
                           ],
                         ),
                       );
@@ -2026,42 +2037,57 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
               ),
             ],
             const Divider(height: 24),
-            if (calc != null) ...[
-              Text(
-                'Total (CAD): \$${formatQuoteMoney(_num(calc['line_total_cad']))}',
-                style: const TextStyle(fontSize: 13),
-              ),
-              Text(
-                'Per part (CAD): \$${formatQuoteMoney(_num(calc['price_per_part_cad']))} | '
-                'Per part (USD): \$${formatQuoteMoney(_num(calc['price_per_part_usd']))}',
-                style: const TextStyle(fontSize: 13),
-              ),
-              Text(
-                'Quoted per part (CAD): \$${formatQuoteMoney(_num(calc['quoted_price_per_part_cad']))} | '
-                'Quoted per part (USD): \$${formatQuoteMoney(_num(calc['quoted_price_per_part_usd']))}',
-                style: const TextStyle(fontSize: 13),
-              ),
-              const SizedBox(height: 12),
-            ],
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              alignment: WrapAlignment.end,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (widget.onAddPart != null)
-                  OutlinedButton(
-                    onPressed: widget.onAddPart,
-                    child: const Text('Add part'),
-                  ),
-                if (widget.onDuplicate != null)
-                  OutlinedButton(
-                    onPressed: widget.onDuplicate,
-                    child: const Text('Duplicate part'),
-                  ),
-                OutlinedButton(
-                  onPressed: widget.onDelete,
-                  style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-                  child: const Text('Delete part'),
+                if (calc != null)
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Total (CAD): \$${formatQuoteMoney(_num(calc['line_total_cad']))}',
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                        Text(
+                          'Per part (CAD): \$${formatQuoteMoney(_num(calc['price_per_part_cad']))} | '
+                          'Per part (USD): \$${formatQuoteMoney(_num(calc['price_per_part_usd']))}',
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                        Text(
+                          'Quoted per part (CAD): \$${formatQuoteMoney(_num(calc['quoted_price_per_part_cad']))} | '
+                          'Quoted per part (USD): \$${formatQuoteMoney(_num(calc['quoted_price_per_part_usd']))}',
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  const Spacer(),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (widget.onAddPart != null)
+                      IconButton(
+                        onPressed: widget.onAddPart,
+                        tooltip: 'Add part',
+                        icon: const Icon(Icons.add),
+                      ),
+                    if (widget.onDuplicate != null)
+                      IconButton(
+                        onPressed: widget.onDuplicate,
+                        tooltip: 'Duplicate part',
+                        icon: const Icon(Icons.copy_outlined),
+                      ),
+                    IconButton(
+                      onPressed: widget.onDelete,
+                      tooltip: 'Delete part',
+                      icon: Icon(
+                        Icons.delete_outline,
+                        color: Colors.red[700],
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
