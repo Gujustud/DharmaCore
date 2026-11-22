@@ -6,12 +6,14 @@ Uses Ollama (Qwen2.5) to extract tool specs from vendor websites
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel
 import httpx
 import json
 import math
 import os
-from typing import Optional, Dict, Any, List
+import time
+from typing import Optional, Dict, Any, List, Tuple
 import re
 import base64
 from urllib.parse import urljoin, urlparse
@@ -1233,6 +1235,154 @@ async def toolpath_analyze(request: ToolpathAnalyzeRequest):
         )
     except Exception as e:
         return ToolpathAnalyzeResponse(success=False, error=str(e))
+
+
+# In-memory GLB cache (Toolpath mesh URLs expire ~15 min).
+_MESH_CACHE: Dict[str, Tuple[bytes, float]] = {}
+_MESH_CACHE_TTL_S = float(os.getenv("TOOLPATH_MESH_CACHE_TTL_S", "600"))
+
+
+async def _download_glb_bytes(client: httpx.AsyncClient, glb_url: str) -> bytes:
+    resp = await client.get(glb_url, follow_redirects=True)
+    if resp.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Toolpath GLB download failed ({resp.status_code})",
+        )
+    body = resp.content or b""
+    if len(body) < 12 or body[:4] != b"glTF":
+        raise HTTPException(status_code=502, detail="Toolpath mesh was not a GLB")
+    return body
+
+
+async def _fetch_toolpath_display_mesh_glb(
+    client: httpx.AsyncClient, part_id: str
+) -> bytes:
+    """Tessellate if needed, then download the display GLB for [part_id]."""
+    headers = _toolpath_headers()
+
+    # Prefer analysis mesh when still available (no extra tessellate job).
+    part_resp = await client.get(
+        f"{TOOLPATH_API_BASE}/parts/{part_id}",
+        headers=headers,
+    )
+    if part_resp.status_code == 410:
+        raise HTTPException(
+            status_code=410,
+            detail="Toolpath part expired — re-analyze the CAD file",
+        )
+    if part_resp.status_code == 200:
+        analysis_url = (part_resp.json() or {}).get("meshGlbUrl")
+        if analysis_url:
+            try:
+                return await _download_glb_bytes(client, analysis_url)
+            except HTTPException:
+                pass  # fall through to display tessellation
+
+    mesh_meta = await client.get(
+        f"{TOOLPATH_API_BASE}/parts/{part_id}/mesh",
+        headers=headers,
+    )
+    if mesh_meta.status_code == 404:
+        create = await client.post(
+            f"{TOOLPATH_API_BASE}/parts/{part_id}/mesh",
+            headers=headers,
+        )
+        if create.status_code not in (200, 202):
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"Toolpath tessellate failed ({create.status_code}): "
+                    f"{create.text[:300]}"
+                ),
+            )
+        job_id = (create.json() or {}).get("jobId")
+        if not job_id:
+            raise HTTPException(
+                status_code=502,
+                detail="Toolpath tessellate returned no jobId",
+            )
+        finished = await _toolpath_wait_for_job(client, job_id)
+        if (finished.get("status") or "").lower() != "succeeded":
+            err = finished.get("error") or "tessellation failed"
+            raise HTTPException(status_code=502, detail=str(err))
+        mesh_meta = await client.get(
+            f"{TOOLPATH_API_BASE}/parts/{part_id}/mesh",
+            headers=headers,
+        )
+
+    if mesh_meta.status_code == 410:
+        raise HTTPException(
+            status_code=410,
+            detail="Toolpath part expired — re-analyze the CAD file",
+        )
+    if mesh_meta.status_code == 404:
+        raise HTTPException(
+            status_code=404,
+            detail="No display mesh for this part — re-analyze the CAD file",
+        )
+    if mesh_meta.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Toolpath get mesh failed ({mesh_meta.status_code}): "
+                f"{mesh_meta.text[:300]}"
+            ),
+        )
+
+    glb_url = (mesh_meta.json() or {}).get("meshGlbUrl")
+    if not glb_url:
+        raise HTTPException(status_code=502, detail="Toolpath mesh had no meshGlbUrl")
+    return await _download_glb_bytes(client, glb_url)
+
+
+@app.get("/api/toolpath/parts/{part_id}/mesh.glb")
+async def toolpath_part_mesh_glb(part_id: str):
+    """
+    Proxy a Toolpath display GLB for in-app 3D viewing.
+    Uses the server API key; caches bytes briefly so Flutter can reload safely.
+    """
+    part_id = (part_id or "").strip()
+    if not part_id:
+        raise HTTPException(status_code=400, detail="part_id required")
+    if not TOOLPATH_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="TOOLPATH_API_KEY not configured on MCP server",
+        )
+
+    cached = _MESH_CACHE.get(part_id)
+    if cached is not None:
+        blob, expires_at = cached
+        if time.time() < expires_at:
+            return Response(
+                content=blob,
+                media_type="model/gltf-binary",
+                headers={
+                    "Cache-Control": "private, max-age=300",
+                    "Content-Disposition": f'inline; filename="{part_id}.glb"',
+                },
+            )
+        _MESH_CACHE.pop(part_id, None)
+
+    try:
+        timeout = httpx.Timeout(30.0, read=360.0)
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+            blob = await _fetch_toolpath_display_mesh_glb(client, part_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e)) from e
+
+    _MESH_CACHE[part_id] = (blob, time.time() + _MESH_CACHE_TTL_S)
+    return Response(
+        content=blob,
+        media_type="model/gltf-binary",
+        headers={
+            "Cache-Control": "private, max-age=300",
+            "Content-Disposition": f'inline; filename="{part_id}.glb"',
+        },
+    )
 
 
 if __name__ == "__main__":

@@ -8,6 +8,7 @@ import 'material_form_icons.dart';
 import 'material_stock_dialogs.dart';
 import 'models.dart';
 import 'pocketbase_service.dart';
+import 'cad_glb_viewer.dart';
 import 'quote_cad_analysis.dart';
 import 'quote_calculations.dart';
 import 'shelf_stock_match.dart';
@@ -1153,6 +1154,18 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                     ],
                   ),
                 ] else if (status == 'ok') ...[
+                  Builder(
+                    builder: (context) {
+                      final partId = cadToolpathPartIdOf(analysis);
+                      if (partId == null) return const SizedBox.shrink();
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: CadGlbViewer(
+                          meshUrl: cadToolpathMeshGlbUrl(partId),
+                        ),
+                      );
+                    },
+                  ),
                   Wrap(
                     spacing: 8,
                     runSpacing: 8,

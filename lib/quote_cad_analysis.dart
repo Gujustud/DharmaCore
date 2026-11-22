@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'app_config.dart';
 import 'models.dart';
 
 /// Parse `cad_analysis` JSON stored on a quote line.
@@ -110,3 +111,17 @@ String? cadStockSuggestOf(Map<String, dynamic>? analysis) {
   final s = '${analysis?['stock_suggest_in'] ?? ''}'.trim();
   return s.isEmpty ? null : s;
 }
+
+/// Toolpath Engine part id from a successful analysis (for mesh proxy).
+String? cadToolpathPartIdOf(Map<String, dynamic>? analysis) {
+  if (analysis == null) return null;
+  final id = '${analysis['toolpath_part_id'] ?? ''}'.trim();
+  return id.isEmpty ? null : id;
+}
+
+/// MCP proxy URL for the display GLB (auth key stays on the server).
+String cadToolpathMeshGlbUrl(String partId) {
+  final base = AppConfig.mcpUrl.replaceAll(RegExp(r'/+$'), '');
+  return '$base/api/toolpath/parts/$partId/mesh.glb';
+}
+
