@@ -1154,72 +1154,129 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                     ],
                   ),
                 ] else if (status == 'ok') ...[
-                  Builder(
-                    builder: (context) {
+                  LayoutBuilder(
+                    builder: (context, constraints) {
                       final partId = cadToolpathPartIdOf(analysis);
-                      if (partId == null) return const SizedBox.shrink();
+                      final sideBySide = constraints.maxWidth >= 560;
+                      final viewerSize = sideBySide
+                          ? 300.0
+                          : (constraints.maxWidth > 0
+                              ? constraints.maxWidth.clamp(200.0, 360.0)
+                              : 280.0);
+
+                      final actions = <Widget>[
+                        if (partSizeLabel.isNotEmpty)
+                          _cadFactChip(
+                              label: 'Part size', value: partSizeLabel),
+                        if (stockSuggest != null)
+                          _cadFactChip(
+                            label:
+                                stockApplied ? 'Stock (applied)' : 'Stock',
+                            value: stockSuggest,
+                          ),
+                        if (stockSuggest != null)
+                          OutlinedButton.icon(
+                            onPressed: busy || stockApplied
+                                ? null
+                                : _applySuggestedStock,
+                            style: _fieldHeightOutlinedStyle,
+                            icon: Icon(
+                              stockApplied
+                                  ? Icons.check
+                                  : Icons.inventory_2_outlined,
+                              size: 18,
+                            ),
+                            label: Text(
+                              stockApplied ? 'Applied' : 'Apply stock',
+                            ),
+                          ),
+                        if (featureCounts.isNotEmpty)
+                          _cadFactChip(
+                              label: 'Features', value: featureCounts),
+                        TextButton(
+                          onPressed: busy ? null : _reanalyzeCad,
+                          child: const Text('Re-analyze'),
+                        ),
+                        IconButton(
+                          onPressed: busy
+                              ? null
+                              : () => _pickAndUploadCad(replace: true),
+                          tooltip: 'Replace CAD',
+                          icon: const Icon(
+                              Icons.upload_file_outlined, size: 20),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        IconButton(
+                          onPressed: busy ? null : _deleteCad,
+                          tooltip: 'Remove CAD',
+                          icon: Icon(
+                            Icons.delete_outline,
+                            size: 20,
+                            color: scheme.error,
+                          ),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ];
+
+                      final viewer = partId == null
+                          ? null
+                          : SizedBox(
+                              width: viewerSize,
+                              height: viewerSize,
+                              child: CadGlbViewer(
+                                key: ValueKey('cad-glb-$partId'),
+                                meshUrl: cadToolpathMeshGlbUrl(partId),
+                              ),
+                            );
+
+                      if (viewer == null) {
+                        return Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: actions,
+                        );
+                      }
+
+                      if (sideBySide) {
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              viewer,
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  crossAxisAlignment:
+                                      WrapCrossAlignment.center,
+                                  children: actions,
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 8),
-                        child: CadGlbViewer(
-                          key: ValueKey('cad-glb-$partId'),
-                          meshUrl: cadToolpathMeshGlbUrl(partId),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            viewer,
+                            const SizedBox(height: 8),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: actions,
+                            ),
+                          ],
                         ),
                       );
                     },
-                  ),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      if (partSizeLabel.isNotEmpty)
-                        _cadFactChip(label: 'Part size', value: partSizeLabel),
-                      if (stockSuggest != null)
-                        _cadFactChip(
-                          label: stockApplied ? 'Stock (applied)' : 'Stock',
-                          value: stockSuggest,
-                        ),
-                      if (stockSuggest != null)
-                        OutlinedButton.icon(
-                          onPressed: busy || stockApplied
-                              ? null
-                              : _applySuggestedStock,
-                          style: _fieldHeightOutlinedStyle,
-                          icon: Icon(
-                            stockApplied
-                                ? Icons.check
-                                : Icons.inventory_2_outlined,
-                            size: 18,
-                          ),
-                          label: Text(
-                            stockApplied ? 'Applied' : 'Apply stock',
-                          ),
-                        ),
-                      if (featureCounts.isNotEmpty)
-                        _cadFactChip(label: 'Features', value: featureCounts),
-                      TextButton(
-                        onPressed: busy ? null : _reanalyzeCad,
-                        child: const Text('Re-analyze'),
-                      ),
-                      IconButton(
-                        onPressed: busy
-                            ? null
-                            : () => _pickAndUploadCad(replace: true),
-                        tooltip: 'Replace CAD',
-                        icon: const Icon(Icons.upload_file_outlined, size: 20),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                      IconButton(
-                        onPressed: busy ? null : _deleteCad,
-                        tooltip: 'Remove CAD',
-                        icon: Icon(
-                          Icons.delete_outline,
-                          size: 20,
-                          color: scheme.error,
-                        ),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                    ],
                   ),
                 ] else
                   Wrap(

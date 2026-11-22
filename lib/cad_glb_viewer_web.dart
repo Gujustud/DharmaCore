@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:html' as html;
+import 'dart:js_util' as js_util;
 import 'dart:typed_data';
 import 'dart:ui_web' as ui_web;
 
@@ -10,19 +11,31 @@ import 'package:http/http.dart' as http;
 
 var _cadViewerCounter = 0;
 
+/// Preset part tints for the Toolpath GLB (baseColorFactor).
+class CadPartColor {
+  final String id;
+  final String label;
+  final Color color;
+
+  const CadPartColor(this.id, this.label, this.color);
+}
+
+const kCadPartColors = <CadPartColor>[
+  CadPartColor('aluminum', 'Aluminum', Color(0xFF8B96A3)),
+  CadPartColor('blue', 'Shop blue', Color(0xFF3D6FA8)),
+  CadPartColor('charcoal', 'Charcoal', Color(0xFF3A3A3A)),
+];
+
 /// Web 3D CAD preview via `<model-viewer>`.
 ///
-/// Fetches the GLB through Dart/http first (long timeout + real error text),
-/// then feeds a blob: URL to model-viewer so the CDN element is not the
-/// thing timing out on a slow Toolpath tessellation.
+/// Fills its parent (use a square [SizedBox]). Light studio background and
+/// 3 part-color swatches. Fetches GLB via Dart/http first for real errors.
 class CadGlbViewer extends StatefulWidget {
   final String meshUrl;
-  final double height;
 
   const CadGlbViewer({
     super.key,
     required this.meshUrl,
-    this.height = 260,
   });
 
   @override
@@ -30,12 +43,16 @@ class CadGlbViewer extends StatefulWidget {
 }
 
 class _CadGlbViewerState extends State<CadGlbViewer> {
+  static const _studioBg = Color(0xFFF4F4F4);
+
   late final String _viewType;
   html.DivElement? _host;
+  html.Element? _viewer;
   String? _blobUrl;
   String? _loadError;
   bool _loading = true;
   int _loadGen = 0;
+  String _colorId = kCadPartColors.first.id;
 
   @override
   void initState() {
@@ -45,11 +62,11 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
       final host = html.DivElement()
         ..style.width = '100%'
         ..style.height = '100%'
-        ..style.position = 'relative';
+        ..style.position = 'relative'
+        ..style.backgroundColor = '#f4f4f4';
       _host = host;
       return host;
     });
-    // Defer until the platform view host exists.
     scheduleMicrotask(_reloadMesh);
   }
 
@@ -74,6 +91,10 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
       html.Url.revokeObjectUrl(url);
     }
   }
+
+  CadPartColor get _selectedColor =>
+      kCadPartColors.firstWhere((c) => c.id == _colorId,
+          orElse: () => kCadPartColors.first);
 
   Future<void> _reloadMesh() async {
     final gen = ++_loadGen;
@@ -100,11 +121,10 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
 
       final bytes = resp.bodyBytes;
       if (bytes.length < 12 ||
-          bytes[0] != 0x67 || // g
-          bytes[1] != 0x6c || // l
-          bytes[2] != 0x54 || // T
+          bytes[0] != 0x67 ||
+          bytes[1] != 0x6c ||
+          bytes[2] != 0x54 ||
           bytes[3] != 0x46) {
-        // F
         setState(() {
           _loading = false;
           _loadError =
@@ -145,7 +165,8 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
     try {
       final decoded = json.decode(text);
       if (decoded is Map) {
-        final detail = decoded['detail'] ?? decoded['error'] ?? decoded['message'];
+        final detail =
+            decoded['detail'] ?? decoded['error'] ?? decoded['message'];
         if (detail != null && '$detail'.trim().isNotEmpty) {
           return 'Mesh HTTP $status: $detail';
         }
@@ -159,9 +180,9 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
     try {
       final custom = html.window.customElements;
       if (custom != null) {
-        await custom.whenDefined('model-viewer').timeout(
-              const Duration(seconds: 20),
-            );
+        await custom
+            .whenDefined('model-viewer')
+            .timeout(const Duration(seconds: 20));
       }
     } catch (_) {
       if (!mounted) return;
@@ -173,7 +194,6 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
       return;
     }
 
-    // Wait briefly for the platform view host if factory hasn't run yet.
     for (var i = 0; i < 40 && _host == null; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 25));
     }
@@ -185,15 +205,17 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
       ..setAttribute('camera-controls', '')
       ..setAttribute('touch-action', 'pan-y')
       ..setAttribute('interaction-prompt', 'none')
-      ..setAttribute('shadow-intensity', '0.6')
-      ..setAttribute('exposure', '1')
+      ..setAttribute('shadow-intensity', '0.85')
+      ..setAttribute('exposure', '1.1')
+      ..setAttribute('environment-image', 'neutral')
       ..style.width = '100%'
       ..style.height = '100%'
       ..style.display = 'block'
-      ..style.backgroundColor = '#2a2a2a';
+      ..style.backgroundColor = '#f4f4f4';
 
     final completer = Completer<void>();
     el.on['load'].listen((_) {
+      _applyPartColor(el, _selectedColor.color);
       if (!completer.isCompleted) completer.complete();
     });
     el.on['error'].listen((_) {
@@ -204,11 +226,51 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
 
     host.children.clear();
     host.append(el);
+    _viewer = el;
 
     try {
       await completer.future.timeout(const Duration(seconds: 30));
     } on TimeoutException {
-      // Still show the viewer; some builds never fire load.
+      _applyPartColor(el, _selectedColor.color);
+    }
+  }
+
+  void _applyPartColor(html.Element el, Color color) {
+    try {
+      final model = js_util.getProperty(el, 'model');
+      if (model == null) return;
+      final materials = js_util.getProperty(model, 'materials');
+      if (materials == null) return;
+      final len = js_util.getProperty(materials, 'length');
+      if (len is! int) return;
+      final rgba = <double>[
+        color.r,
+        color.g,
+        color.b,
+        1.0,
+      ];
+      for (var i = 0; i < len; i++) {
+        final mat = js_util.getProperty(materials, i);
+        if (mat == null) continue;
+        final pbr = js_util.getProperty(mat, 'pbrMetallicRoughness');
+        if (pbr == null) continue;
+        js_util.callMethod(pbr, 'setBaseColorFactor', [rgba]);
+        // Slight metal look so edges catch light on a light bg.
+        try {
+          js_util.callMethod(pbr, 'setMetallicFactor', [0.15]);
+          js_util.callMethod(pbr, 'setRoughnessFactor', [0.45]);
+        } catch (_) {}
+      }
+    } catch (_) {
+      // Older model-viewer / mesh without editable materials — ignore.
+    }
+  }
+
+  void _selectColor(CadPartColor c) {
+    setState(() => _colorId = c.id);
+    final viewer = _viewer;
+    if (viewer != null) {
+      _applyPartColor(viewer, c.color);
     }
   }
 
@@ -216,10 +278,9 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Container(
-      height: widget.height,
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest,
+        color: _studioBg,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: scheme.outlineVariant),
       ),
@@ -229,7 +290,7 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
           HtmlElementView(viewType: _viewType),
           if (_loading)
             ColoredBox(
-              color: scheme.surfaceContainerHighest.withValues(alpha: 0.7),
+              color: _studioBg.withValues(alpha: 0.85),
               child: const Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -247,7 +308,7 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
             ),
           if (_loadError != null)
             ColoredBox(
-              color: scheme.surfaceContainerHighest,
+              color: _studioBg,
               child: Center(
                 child: Padding(
                   padding: const EdgeInsets.all(12),
@@ -269,7 +330,79 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
                 ),
               ),
             ),
+          if (_loadError == null)
+            Positioned(
+              left: 8,
+              right: 8,
+              bottom: 8,
+              child: Row(
+                children: [
+                  for (final c in kCadPartColors) ...[
+                    _ColorSwatch(
+                      color: c.color,
+                      selected: c.id == _colorId,
+                      tooltip: c.label,
+                      onTap: () => _selectColor(c),
+                    ),
+                    const SizedBox(width: 6),
+                  ],
+                  const Spacer(),
+                  if (_loading)
+                    Text(
+                      'Loading…',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                ],
+              ),
+            ),
         ],
+      ),
+    );
+  }
+}
+
+class _ColorSwatch extends StatelessWidget {
+  final Color color;
+  final bool selected;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  const _ColorSwatch({
+    required this.color,
+    required this.selected,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: onTap,
+        customBorder: const CircleBorder(),
+        child: Container(
+          width: 22,
+          height: 22,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: selected ? Colors.black87 : Colors.black26,
+              width: selected ? 2.5 : 1,
+            ),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x33000000),
+                blurRadius: 2,
+                offset: Offset(0, 1),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

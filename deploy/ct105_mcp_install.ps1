@@ -50,8 +50,8 @@ if ($LASTEXITCODE -ne 0) { throw 'nginx mcp fix failed' }
 ssh $ct 'nginx -t; systemctl reload nginx'
 if ($LASTEXITCODE -ne 0) { throw 'nginx reload failed' }
 
-Write-Host "Enable + start dharmacore-mcp..." -ForegroundColor Cyan
-ssh $ct 'systemctl daemon-reload; systemctl enable --now dharmacore-mcp; sleep 2; systemctl is-active dharmacore-mcp'
+Write-Host "Enable + restart dharmacore-mcp (always restart so new code loads)..." -ForegroundColor Cyan
+ssh $ct 'systemctl daemon-reload; systemctl enable dharmacore-mcp; systemctl restart dharmacore-mcp; sleep 2; systemctl is-active dharmacore-mcp'
 if ($LASTEXITCODE -ne 0) {
   Write-Host 'Service not active - recent logs:' -ForegroundColor Yellow
   ssh $ct 'journalctl -u dharmacore-mcp -n 40 --no-pager'
