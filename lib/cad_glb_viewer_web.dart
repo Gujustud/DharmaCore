@@ -3,11 +3,14 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:html' as html;
 import 'dart:js_util' as js_util;
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui_web' as ui_web;
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+
+import 'quote_cad_analysis.dart';
 
 var _cadViewerCounter = 0;
 
@@ -28,14 +31,19 @@ const kCadPartColors = <CadPartColor>[
 
 /// Web 3D CAD preview via `<model-viewer>`.
 ///
-/// Fills its parent (use a square [SizedBox]). Light studio background and
-/// 3 part-color swatches. Fetches GLB via Dart/http first for real errors.
+/// When [fixtureDown] is set, the model is rotated so that direction points
+/// toward world −Y (table down), then the camera resets to a three-quarter
+/// view from above.
 class CadGlbViewer extends StatefulWidget {
   final String meshUrl;
+
+  /// Unit vector in model space pointing toward the fixture (table).
+  final CadVec3? fixtureDown;
 
   const CadGlbViewer({
     super.key,
     required this.meshUrl,
+    this.fixtureDown,
   });
 
   @override
@@ -44,6 +52,7 @@ class CadGlbViewer extends StatefulWidget {
 
 class _CadGlbViewerState extends State<CadGlbViewer> {
   static const _studioBg = Color(0xFFF4F4F4);
+  static const _worldDown = CadVec3(0, -1, 0);
 
   late final String _viewType;
   html.DivElement? _host;
@@ -81,6 +90,16 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.meshUrl != widget.meshUrl) {
       _reloadMesh();
+      return;
+    }
+    final oldDown = oldWidget.fixtureDown;
+    final newDown = widget.fixtureDown;
+    final changed = (oldDown == null) != (newDown == null) ||
+        (oldDown != null &&
+            newDown != null &&
+            !oldDown.nearlyEquals(newDown));
+    if (changed) {
+      _applyFixtureOrientation(_viewer);
     }
   }
 
@@ -216,6 +235,7 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
     final completer = Completer<void>();
     el.on['load'].listen((_) {
       _applyPartColor(el, _selectedColor.color);
+      _applyFixtureOrientation(el);
       if (!completer.isCompleted) completer.complete();
     });
     el.on['error'].listen((_) {
@@ -227,12 +247,89 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
     host.children.clear();
     host.append(el);
     _viewer = el;
+    _applyFixtureOrientation(el);
 
     try {
       await completer.future.timeout(const Duration(seconds: 30));
     } on TimeoutException {
       _applyPartColor(el, _selectedColor.color);
+      _applyFixtureOrientation(el);
     }
+  }
+
+  /// Rotate model so [fixtureDown] maps to world −Y, then reset orbit.
+  void _applyFixtureOrientation(html.Element? el) {
+    if (el == null) return;
+    final down = widget.fixtureDown;
+    final orient = down == null
+        ? '0deg 0deg 0deg'
+        : _orientationAttrAligning(down.normalized(), _worldDown);
+    el.setAttribute('orientation', orient);
+    // Three-quarter from above after reorient (phi from +Y).
+    el.setAttribute('camera-orbit', '35deg 65deg 105%');
+    el.setAttribute('camera-target', 'auto auto auto');
+    try {
+      js_util.callMethod(el, 'jumpCameraToGoal', []);
+    } catch (_) {
+      // Older model-viewer — attribute change still interpolates.
+    }
+  }
+
+  /// Euler XYZ string for model-viewer that maps [from] → [to].
+  String _orientationAttrAligning(CadVec3 from, CadVec3 to) {
+    final euler = _rotationEulerXyzAligning(from, to);
+    String deg(double rad) => '${(rad * 180 / math.pi).toStringAsFixed(2)}deg';
+    return '${deg(euler[0])} ${deg(euler[1])} ${deg(euler[2])}';
+  }
+
+  /// Roll/pitch/yaw (radians) for intrinsic XYZ rotation mapping [from]→[to].
+  List<double> _rotationEulerXyzAligning(CadVec3 from, CadVec3 to) {
+    final a = from.normalized();
+    final b = to.normalized();
+    final c = a.dot(b).clamp(-1.0, 1.0);
+    if (c > 0.999999) return const [0, 0, 0];
+    late CadVec3 axis;
+    late double angle;
+    if (c < -0.999999) {
+      axis = (a.x.abs() < 0.9
+              ? const CadVec3(1, 0, 0)
+              : const CadVec3(0, 1, 0))
+          .cross(a)
+          .normalized();
+      angle = math.pi;
+    } else {
+      axis = a.cross(b).normalized();
+      angle = math.acos(c);
+    }
+    return _axisAngleToEulerXyz(axis, angle);
+  }
+
+  List<double> _axisAngleToEulerXyz(CadVec3 axis, double angle) {
+    final x = axis.x;
+    final y = axis.y;
+    final z = axis.z;
+    final cosA = math.cos(angle);
+    final sinA = math.sin(angle);
+    final t = 1 - cosA;
+    final r00 = t * x * x + cosA;
+    final r10 = t * x * y + sinA * z;
+    final r11 = t * y * y + cosA;
+    final r12 = t * y * z - sinA * x;
+    final r20 = t * x * z - sinA * y;
+    final r21 = t * y * z + sinA * x;
+    final r22 = t * z * z + cosA;
+
+    final pitch = math.asin((-r20).clamp(-1.0, 1.0));
+    double roll;
+    double yaw;
+    if (r20.abs() < 0.999999) {
+      roll = math.atan2(r21, r22);
+      yaw = math.atan2(r10, r00);
+    } else {
+      roll = math.atan2(-r12, r11);
+      yaw = 0;
+    }
+    return [roll, pitch, yaw];
   }
 
   void _applyPartColor(html.Element el, Color color) {
@@ -255,15 +352,12 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
         final pbr = js_util.getProperty(mat, 'pbrMetallicRoughness');
         if (pbr == null) continue;
         js_util.callMethod(pbr, 'setBaseColorFactor', [rgba]);
-        // Slight metal look so edges catch light on a light bg.
         try {
           js_util.callMethod(pbr, 'setMetallicFactor', [0.15]);
           js_util.callMethod(pbr, 'setRoughnessFactor', [0.45]);
         } catch (_) {}
       }
-    } catch (_) {
-      // Older model-viewer / mesh without editable materials — ignore.
-    }
+    } catch (_) {}
   }
 
   void _selectColor(CadPartColor c) {
@@ -347,12 +441,20 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
                     const SizedBox(width: 6),
                   ],
                   const Spacer(),
-                  if (_loading)
-                    Text(
-                      'Loading…',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: scheme.onSurfaceVariant,
+                  if (widget.fixtureDown != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.55),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        'Down ${cadDirectionLabel(widget.fixtureDown!)}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                        ),
                       ),
                     ),
                 ],

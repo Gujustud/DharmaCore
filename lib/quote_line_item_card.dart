@@ -1350,6 +1350,7 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                       final viewer = CadGlbViewer(
                         key: ValueKey('cad-glb-$partId'),
                         meshUrl: cadToolpathMeshGlbUrl(partId),
+                        fixtureDown: selectedBottom,
                       );
 
                       if (sideBySide) {
