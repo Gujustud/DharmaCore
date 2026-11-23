@@ -197,8 +197,10 @@ String cadDirectionLabel(CadVec3 v) {
 
 /// Oriented stock with [bottom] as fixture-down normal.
 ///
-/// Thickness is along [bottom]; the other two plane extents are sorted
-/// ascending → `T × W × L` (last = cut length for Find on shelf).
+/// Extents are measured in the fixture frame (thickness along [bottom], plus
+/// the two table-plane spans), then each is padded/ceiled and **all three are
+/// sorted ascending** → thickness × width × length (small → large) for Find
+/// on shelf. Same order as AABB stock so a face pick never yields `5 x 1 x 7.5`.
 String? cadStockSuggestFromBottom(
   Map<String, dynamic>? analysis,
   CadVec3 bottom, {
@@ -254,14 +256,23 @@ String? cadStockSuggestFromBottom(
   final bIn = (maxY - minY).abs() / mmPerIn;
   if (thicknessIn <= 0 && aIn <= 0 && bIn <= 0) return null;
 
-  final t = cadCeilToStepInches(thicknessIn + pad, step);
-  final plane = [
+  final dims = [
+    cadCeilToStepInches(thicknessIn + pad, step),
     cadCeilToStepInches(aIn + pad, step),
     cadCeilToStepInches(bIn + pad, step),
   ]..sort();
-  final dims = [t, plane[0], plane[1]].where((d) => d > 0).toList();
-  if (dims.isEmpty) return null;
-  return dims.map(formatInchesValue).join(' x ');
+  final positive = dims.where((d) => d > 0).toList();
+  if (positive.isEmpty) return null;
+  return positive.map(formatInchesValue).join(' x ');
+}
+
+/// Normalize stock size strings for equality (`5 x 1 x 7.5` vs `5 × 1 × 7.5`).
+String cadStockSizeKey(String raw) {
+  return raw
+      .trim()
+      .toLowerCase()
+      .replaceAll('×', 'x')
+      .replaceAll(RegExp(r'\s+'), '');
 }
 
 String? cadStockSuggestOf(Map<String, dynamic>? analysis) {

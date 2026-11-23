@@ -2,7 +2,7 @@ import 'package:cribhub/quote_cad_analysis.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('stock from fixture-down uses thickness along bottom first', () {
+  test('fixture-down stock sorts ascending like AABB', () {
     final analysis = <String, dynamic>{
       'bbox_in': {'x': 2.0, 'y': 4.0, 'z': 1.0},
       'bbox_lower_mm': {'x': 0.0, 'y': 0.0, 'z': 0.0},
@@ -14,16 +14,19 @@ void main() {
       },
     };
 
-    // Bottom = −Y → thickness along Y = 4"
+    // Bottom = −Y → thickness along Y = 4", but output is still small→large.
     final withBottom = Map<String, dynamic>.from(analysis)
       ..['bottom_direction'] = {'x': 0.0, 'y': -1.0, 'z': 0.0};
     final oriented = cadStockSuggestOf(withBottom)!;
-    // pad 0.1 → ceil 0.5: T=4.5, plane 1.5×2.5 → "4.5 x 1.5 x 2.5"
-    expect(oriented, '4.5 x 1.5 x 2.5');
+    // pad 0.1 → ceil 0.5: 1.5, 2.5, 4.5 → "1.5 x 2.5 x 4.5" (not 4.5 x 1.5 x 2.5)
+    expect(oriented, '1.5 x 2.5 x 4.5');
 
     final aabb = cadStockSuggestOf(analysis)!;
-    // AABB sorts ascending: 1.5 x 2.5 x 4.5
     expect(aabb, '1.5 x 2.5 x 4.5');
+  });
+
+  test('stock size key ignores spaces and × glyph', () {
+    expect(cadStockSizeKey('5 × 1 × 7.5'), cadStockSizeKey('5 x 1 x 7.5'));
   });
 
   test('direction labels snap to cardinal axes', () {

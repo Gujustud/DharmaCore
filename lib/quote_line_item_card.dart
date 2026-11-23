@@ -923,15 +923,28 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
   Future<void> _setCadBottomDirection(CadVec3? down) async {
     final current = parseCadAnalysis(widget.lineItem['cad_analysis']);
     if (current == null || cadAnalysisStatusOf(current) != 'ok') return;
+    final prevSuggest = cadStockSuggestOf(current);
     final next = Map<String, dynamic>.from(current);
     if (down == null) {
       next.remove('bottom_direction');
     } else {
       next['bottom_direction'] = down.normalized().toJson();
     }
-    next['stock_suggest_in'] = cadStockSuggestOf(next);
+    final newSuggest = cadStockSuggestOf(next);
+    next['stock_suggest_in'] = newSuggest;
     await _persistCadAnalysis(next);
     if (!mounted) return;
+
+    // Keep the stock blank in sync when it was empty or matched the previous
+    // suggest (so face picks don't leave a stale "5 x 1 x 7.5" applied).
+    final currentStock = _str(widget.lineItem['stock_size_per_part']).trim();
+    final wasApplied = prevSuggest != null &&
+        cadStockSizeKey(currentStock) == cadStockSizeKey(prevSuggest);
+    if (newSuggest != null && (currentStock.isEmpty || wasApplied)) {
+      _stockSize.text = newSuggest;
+      _patch({'stock_size_per_part': newSuggest});
+    }
+
     final label = down == null ? 'Default' : cadDirectionLabel(down);
     _cadSnack('Fixture bottom: $label', success: true);
   }
@@ -1079,8 +1092,7 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
     final currentStock =
         _str(widget.lineItem['stock_size_per_part']).trim();
     final stockApplied = stockSuggest != null &&
-        currentStock.replaceAll(' ', '') ==
-            stockSuggest.replaceAll(' ', '');
+        cadStockSizeKey(currentStock) == cadStockSizeKey(stockSuggest);
     final busy = _cadUploading || _cadAnalyzing;
     final scheme = Theme.of(context).colorScheme;
 
