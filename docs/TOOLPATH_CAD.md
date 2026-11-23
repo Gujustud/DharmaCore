@@ -9,6 +9,7 @@ Quote lines can upload CAD (Phase A) and optionally run **Toolpath** analysis fo
 - Results stored on `quote_line_items.cad_analysis` (JSON text)
 - **Stock suggest:** bounding box (inches) + `0.1"` pad, each axis rounded **up** to the next `0.5"`, then ordered **thickness × width × length** (small → large) so Find on shelf treats the last number as cut length (override with `TOOLPATH_STOCK_PAD_IN` / `TOOLPATH_STOCK_STEP_IN` on the MCP host)
 - **3D preview (Phase 3):** Flutter `<model-viewer>` loads `GET {MCP_URL}/api/toolpath/parts/{toolpath_part_id}/mesh.glb`. MCP proxies Toolpath (analysis GLB when still hot, else `POST/GET /v1/parts/{id}/mesh` tessellation) and caches bytes briefly (`TOOLPATH_MESH_CACHE_TTL_S`, default 600). Toolpath parts expire (~retention window) — Re-analyze if the viewer 410s.
+- **Fixture bottom:** Analysis stores `candidate_directions` + bbox corners. The CAD rail offers **Bottom (fixture)** chips (tool-approach dirs flipped to table-down). Choosing one sets `bottom_direction` and recomputes stock as thickness-along-down × plane dims (pad/0.5" step). **Default** = unsorted AABB. Click-a-face picking is not in yet.
 
 ## CT 105 setup
 

@@ -1114,6 +1114,51 @@ def _summarize_part(part: Dict[str, Any]) -> Dict[str, Any]:
         kind = str(feat.get("featureType") or "unknown").strip() or "unknown"
         feature_types[kind] = feature_types.get(kind, 0) + 1
 
+    def _vec3(v: Any) -> Optional[Dict[str, float]]:
+        if not isinstance(v, dict):
+            return None
+        try:
+            return {
+                "x": float(v.get("x", 0)),
+                "y": float(v.get("y", 0)),
+                "z": float(v.get("z", 0)),
+            }
+        except (TypeError, ValueError):
+            return None
+
+    candidates: List[Dict[str, float]] = []
+    for d in part.get("candidateDirections") or []:
+        vec = _vec3(d)
+        if vec is not None:
+            candidates.append(vec)
+
+    z_bounds: List[Dict[str, Any]] = []
+    for row in part.get("directionZBounds") or []:
+        if not isinstance(row, dict):
+            continue
+        direction = _vec3(row.get("direction"))
+        if direction is None:
+            continue
+        try:
+            z_min = float(row.get("zMin"))
+            z_max = float(row.get("zMax"))
+        except (TypeError, ValueError):
+            continue
+        z_bounds.append(
+            {
+                "direction": direction,
+                "z_min_mm": z_min,
+                "z_max_mm": z_max,
+            }
+        )
+
+    lower_v = _vec3(lower) or {"x": 0.0, "y": 0.0, "z": 0.0}
+    upper_v = _vec3(upper) or {
+        "x": float(bbox_mm["x"]),
+        "y": float(bbox_mm["y"]),
+        "z": float(bbox_mm["z"]),
+    }
+
     return {
         "status": "ok",
         "error": None,
@@ -1121,6 +1166,11 @@ def _summarize_part(part: Dict[str, Any]) -> Dict[str, Any]:
         "units": part.get("units") or "millimetres",
         "bbox_mm": bbox_mm,
         "bbox_in": bbox_in,
+        # Corners for fixture-down / oriented stock (mm, model space).
+        "bbox_lower_mm": lower_v,
+        "bbox_upper_mm": upper_v,
+        "candidate_directions": candidates,
+        "direction_z_bounds": z_bounds,
         "stock_suggest_in": _stock_suggest_from_bbox_in(
             bbox_in["x"], bbox_in["y"], bbox_in["z"], STOCK_PAD_IN
         ),
@@ -1128,7 +1178,7 @@ def _summarize_part(part: Dict[str, Any]) -> Dict[str, Any]:
         "stock_step_in": STOCK_STEP_IN,
         "feature_count": len(part.get("features") or []),
         "feature_types": feature_types,
-        "setup_count": len(part.get("candidateDirections") or []),
+        "setup_count": len(candidates),
         "kernel_version": part.get("kernelVersion"),
     }
 

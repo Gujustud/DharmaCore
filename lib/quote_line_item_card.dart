@@ -844,6 +844,14 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
         final data = Map<String, dynamic>.from(result['data'] as Map);
         data['status'] = 'ok';
         data['analyzed_at'] = DateTime.now().toUtc().toIso8601String();
+        // Keep fixture-down choice across re-analyze when still meaningful.
+        final prevBottom = cadBottomDirectionOf(
+          parseCadAnalysis(widget.lineItem['cad_analysis']),
+        );
+        if (prevBottom != null) {
+          data['bottom_direction'] = prevBottom.toJson();
+        }
+        data['stock_suggest_in'] = cadStockSuggestOf(data);
         await _persistCadAnalysis(data);
         final stockEmpty =
             _str(widget.lineItem['stock_size_per_part']).trim().isEmpty;
@@ -910,6 +918,22 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
     if (suggest == null) return;
     _stockSize.text = suggest;
     _patch({'stock_size_per_part': suggest});
+  }
+
+  Future<void> _setCadBottomDirection(CadVec3? down) async {
+    final current = parseCadAnalysis(widget.lineItem['cad_analysis']);
+    if (current == null || cadAnalysisStatusOf(current) != 'ok') return;
+    final next = Map<String, dynamic>.from(current);
+    if (down == null) {
+      next.remove('bottom_direction');
+    } else {
+      next['bottom_direction'] = down.normalized().toJson();
+    }
+    next['stock_suggest_in'] = cadStockSuggestOf(next);
+    await _persistCadAnalysis(next);
+    if (!mounted) return;
+    final label = down == null ? 'Default' : cadDirectionLabel(down);
+    _cadSnack('Fixture bottom: $label', success: true);
   }
 
   String _safeCadFilename(String? name) {
@@ -1167,6 +1191,18 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                       final sideBySide = constraints.maxWidth >= 560;
                       const railW = 220.0;
                       const gap = 12.0;
+                      // Toolpath candidates are tool-approach dirs; fixture
+                      // down is the opposite (face on the table).
+                      final fixtureDowns = <CadVec3>[];
+                      for (final toolDir
+                          in cadCandidateDirectionsOf(analysis)) {
+                        final down = -toolDir.normalized();
+                        if (!fixtureDowns
+                            .any((e) => e.nearlyEquals(down))) {
+                          fixtureDowns.add(down);
+                        }
+                      }
+                      final selectedBottom = cadBottomDirectionOf(analysis);
 
                       final railChildren = <Widget>[
                         if (partSizeLabel.isNotEmpty)
@@ -1187,6 +1223,47 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                             label: 'Features',
                             value: featureCounts,
                             expandWidth: true,
+                          ),
+                        if (fixtureDowns.isNotEmpty) ...[
+                          Text(
+                            'Bottom (fixture)',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            alignment: WrapAlignment.end,
+                            children: [
+                              ChoiceChip(
+                                label: const Text('Default'),
+                                selected: selectedBottom == null,
+                                onSelected: busy
+                                    ? null
+                                    : (_) => _setCadBottomDirection(null),
+                              ),
+                              for (final down in fixtureDowns)
+                                ChoiceChip(
+                                  label: Text(cadDirectionLabel(down)),
+                                  selected: selectedBottom != null &&
+                                      selectedBottom.nearlyEquals(down),
+                                  onSelected: busy
+                                      ? null
+                                      : (_) =>
+                                          _setCadBottomDirection(down),
+                                ),
+                            ],
+                          ),
+                        ] else
+                          Text(
+                            'Re-analyze to pick fixture bottom',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: scheme.onSurfaceVariant,
+                            ),
                           ),
                         if (stockSuggest != null)
                           SizedBox(
