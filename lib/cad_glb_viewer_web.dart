@@ -3,7 +3,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:html' as html;
 import 'dart:js_util' as js_util;
-import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui_web' as ui_web;
 
@@ -13,6 +12,7 @@ import 'package:http/http.dart' as http;
 import 'quote_cad_analysis.dart';
 
 var _cadViewerCounter = 0;
+var _hotspotCssInjected = false;
 
 /// Preset part tints for the Toolpath GLB (baseColorFactor).
 class CadPartColor {
@@ -29,21 +29,71 @@ const kCadPartColors = <CadPartColor>[
   CadPartColor('charcoal', 'Charcoal', Color(0xFF3A3A3A)),
 ];
 
+void _ensureHotspotCss() {
+  if (_hotspotCssInjected) return;
+  _hotspotCssInjected = true;
+  html.document.head!.append(html.StyleElement()
+    ..text = '''
+.cad-fixture-hotspot {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: #e65100;
+  box-shadow: 0 0 0 2px rgba(230,81,0,0.45), 0 1px 4px rgba(0,0,0,0.35);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.cad-fixture-hotspot::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 28px;
+  margin-left: -1.5px;
+  margin-top: -2px;
+  background: #e65100;
+  border-radius: 1px;
+  box-shadow: 0 0 0 1px #fff;
+  transform-origin: top center;
+  /* Point along +data-normal (out of face / toward table when bottom). */
+  transform: rotateX(90deg);
+}
+.cad-pick-hint {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: rgba(0,0,0,0.55);
+  color: #fff;
+  font: 11px/1.3 system-ui, sans-serif;
+  pointer-events: none;
+  z-index: 2;
+}
+''');
+}
+
 /// Web 3D CAD preview via `<model-viewer>`.
 ///
-/// When [fixtureDown] is set, the model is rotated so that direction points
-/// toward world −Y (table down), then the camera resets to a three-quarter
-/// view from above.
+/// Click a face (without dragging) to set fixture-down from the surface
+/// normal. A hotspot marks the pick; the model is not reoriented.
 class CadGlbViewer extends StatefulWidget {
   final String meshUrl;
 
-  /// Unit vector in model space pointing toward the fixture (table).
+  /// Current fixture-down (for the Down badge); picking calls [onFixtureFacePicked].
   final CadVec3? fixtureDown;
+
+  /// Called with the outward face normal (table-down when that face is bottom).
+  final ValueChanged<CadVec3>? onFixtureFacePicked;
 
   const CadGlbViewer({
     super.key,
     required this.meshUrl,
     this.fixtureDown,
+    this.onFixtureFacePicked,
   });
 
   @override
@@ -52,20 +102,26 @@ class CadGlbViewer extends StatefulWidget {
 
 class _CadGlbViewerState extends State<CadGlbViewer> {
   static const _studioBg = Color(0xFFF4F4F4);
-  static const _worldDown = CadVec3(0, -1, 0);
 
   late final String _viewType;
   html.DivElement? _host;
   html.Element? _viewer;
+  html.Element? _hotspot;
+  html.Element? _hint;
   String? _blobUrl;
   String? _loadError;
   bool _loading = true;
   int _loadGen = 0;
   String _colorId = kCadPartColors.first.id;
+  num? _ptrDownX;
+  num? _ptrDownY;
+  StreamSubscription<html.MouseEvent>? _downSub;
+  StreamSubscription<html.MouseEvent>? _clickSub;
 
   @override
   void initState() {
     super.initState();
+    _ensureHotspotCss();
     _viewType = 'cad-glb-viewer-${_cadViewerCounter++}';
     ui_web.platformViewRegistry.registerViewFactory(_viewType, (int viewId) {
       final host = html.DivElement()
@@ -81,6 +137,8 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
 
   @override
   void dispose() {
+    _downSub?.cancel();
+    _clickSub?.cancel();
     _revokeBlob();
     super.dispose();
   }
@@ -92,14 +150,11 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
       _reloadMesh();
       return;
     }
-    final oldDown = oldWidget.fixtureDown;
-    final newDown = widget.fixtureDown;
-    final changed = (oldDown == null) != (newDown == null) ||
-        (oldDown != null &&
-            newDown != null &&
-            !oldDown.nearlyEquals(newDown));
-    if (changed) {
-      _applyFixtureOrientation(_viewer);
+    // Clear pick marker when bottom is cleared from the rail.
+    if (oldWidget.fixtureDown != null && widget.fixtureDown == null) {
+      _hotspot?.remove();
+      _hotspot = null;
+      _hint?.text = 'Click a face for fixture bottom (drag to orbit)';
     }
   }
 
@@ -219,6 +274,10 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
     final host = _host;
     if (host == null || !mounted) return;
 
+    _downSub?.cancel();
+    _clickSub?.cancel();
+    _hotspot = null;
+
     final el = html.Element.tag('model-viewer')
       ..setAttribute('src', blobUrl)
       ..setAttribute('camera-controls', '')
@@ -227,15 +286,22 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
       ..setAttribute('shadow-intensity', '0.85')
       ..setAttribute('exposure', '1.1')
       ..setAttribute('environment-image', 'neutral')
+      ..setAttribute('orientation', '0deg 0deg 0deg')
+      ..setAttribute('camera-orbit', '35deg 65deg 105%')
       ..style.width = '100%'
       ..style.height = '100%'
       ..style.display = 'block'
-      ..style.backgroundColor = '#f4f4f4';
+      ..style.backgroundColor = '#f4f4f4'
+      ..style.cursor = 'crosshair';
+
+    final hint = html.DivElement()
+      ..className = 'cad-pick-hint'
+      ..text = 'Click a face for fixture bottom (drag to orbit)';
+    _hint = hint;
 
     final completer = Completer<void>();
     el.on['load'].listen((_) {
       _applyPartColor(el, _selectedColor.color);
-      _applyFixtureOrientation(el);
       if (!completer.isCompleted) completer.complete();
     });
     el.on['error'].listen((_) {
@@ -244,92 +310,108 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
       }
     });
 
+    _downSub = el.onMouseDown.listen((e) {
+      _ptrDownX = e.client.x;
+      _ptrDownY = e.client.y;
+    });
+    _clickSub = el.onClick.listen(_onViewerClick);
+
     host.children.clear();
     host.append(el);
+    host.append(hint);
     _viewer = el;
-    _applyFixtureOrientation(el);
 
     try {
       await completer.future.timeout(const Duration(seconds: 30));
     } on TimeoutException {
       _applyPartColor(el, _selectedColor.color);
-      _applyFixtureOrientation(el);
     }
   }
 
-  /// Rotate model so [fixtureDown] maps to world −Y, then reset orbit.
-  void _applyFixtureOrientation(html.Element? el) {
-    if (el == null) return;
-    final down = widget.fixtureDown;
-    final orient = down == null
-        ? '0deg 0deg 0deg'
-        : _orientationAttrAligning(down.normalized(), _worldDown);
-    el.setAttribute('orientation', orient);
-    // Three-quarter from above after reorient (phi from +Y).
-    el.setAttribute('camera-orbit', '35deg 65deg 105%');
-    el.setAttribute('camera-target', 'auto auto auto');
+  void _onViewerClick(html.MouseEvent e) {
+    final el = _viewer;
+    if (el == null || widget.onFixtureFacePicked == null) return;
+
+    // Ignore orbit drags.
+    if (_ptrDownX != null && _ptrDownY != null) {
+      final dx = e.client.x - _ptrDownX!;
+      final dy = e.client.y - _ptrDownY!;
+      if (dx * dx + dy * dy > 36) return;
+    }
+
+    final rect = el.getBoundingClientRect();
+    final x = e.client.x - rect.left;
+    final y = e.client.y - rect.top;
+
+    dynamic hit;
     try {
-      js_util.callMethod(el, 'jumpCameraToGoal', []);
+      hit = js_util.callMethod(el, 'positionAndNormalFromPoint', [x, y]);
     } catch (_) {
-      // Older model-viewer — attribute change still interpolates.
+      return;
+    }
+    if (hit == null) return;
+
+    final normalObj = js_util.getProperty(hit, 'normal');
+    final positionObj = js_util.getProperty(hit, 'position');
+    if (normalObj == null) return;
+
+    final nx = _numProp(normalObj, 'x');
+    final ny = _numProp(normalObj, 'y');
+    final nz = _numProp(normalObj, 'z');
+    if (nx == null || ny == null || nz == null) return;
+
+    final normal = CadVec3(nx, ny, nz).normalized();
+    if (normal.length < 1e-6) return;
+
+    if (positionObj != null) {
+      final px = _numProp(positionObj, 'x');
+      final py = _numProp(positionObj, 'y');
+      final pz = _numProp(positionObj, 'z');
+      if (px != null && py != null && pz != null) {
+        _setHotspot(
+          el,
+          position: CadVec3(px, py, pz),
+          normal: normal,
+        );
+      }
+    }
+
+    _hint?.text =
+        'Bottom face set (${cadDirectionLabel(normal)}) — Apply stock when ready';
+
+    if (mounted) setState(() {});
+    widget.onFixtureFacePicked!(normal);
+  }
+
+  double? _numProp(dynamic obj, String name) {
+    try {
+      final v = js_util.getProperty(obj, name);
+      if (v is num) return v.toDouble();
+      return double.tryParse('$v');
+    } catch (_) {
+      return null;
     }
   }
 
-  /// Euler XYZ string for model-viewer that maps [from] → [to].
-  String _orientationAttrAligning(CadVec3 from, CadVec3 to) {
-    final euler = _rotationEulerXyzAligning(from, to);
-    String deg(double rad) => '${(rad * 180 / math.pi).toStringAsFixed(2)}deg';
-    return '${deg(euler[0])} ${deg(euler[1])} ${deg(euler[2])}';
-  }
-
-  /// Roll/pitch/yaw (radians) for intrinsic XYZ rotation mapping [from]→[to].
-  List<double> _rotationEulerXyzAligning(CadVec3 from, CadVec3 to) {
-    final a = from.normalized();
-    final b = to.normalized();
-    final c = a.dot(b).clamp(-1.0, 1.0);
-    if (c > 0.999999) return const [0, 0, 0];
-    late CadVec3 axis;
-    late double angle;
-    if (c < -0.999999) {
-      axis = (a.x.abs() < 0.9
-              ? const CadVec3(1, 0, 0)
-              : const CadVec3(0, 1, 0))
-          .cross(a)
-          .normalized();
-      angle = math.pi;
-    } else {
-      axis = a.cross(b).normalized();
-      angle = math.acos(c);
-    }
-    return _axisAngleToEulerXyz(axis, angle);
-  }
-
-  List<double> _axisAngleToEulerXyz(CadVec3 axis, double angle) {
-    final x = axis.x;
-    final y = axis.y;
-    final z = axis.z;
-    final cosA = math.cos(angle);
-    final sinA = math.sin(angle);
-    final t = 1 - cosA;
-    final r00 = t * x * x + cosA;
-    final r10 = t * x * y + sinA * z;
-    final r11 = t * y * y + cosA;
-    final r12 = t * y * z - sinA * x;
-    final r20 = t * x * z - sinA * y;
-    final r21 = t * y * z + sinA * x;
-    final r22 = t * z * z + cosA;
-
-    final pitch = math.asin((-r20).clamp(-1.0, 1.0));
-    double roll;
-    double yaw;
-    if (r20.abs() < 0.999999) {
-      roll = math.atan2(r21, r22);
-      yaw = math.atan2(r10, r00);
-    } else {
-      roll = math.atan2(-r12, r11);
-      yaw = 0;
-    }
-    return [roll, pitch, yaw];
+  void _setHotspot(
+    html.Element viewer, {
+    required CadVec3 position,
+    required CadVec3 normal,
+  }) {
+    _hotspot?.remove();
+    final spot = html.DivElement()
+      ..className = 'cad-fixture-hotspot'
+      ..slot = 'hotspot-fixture-bottom';
+    spot.setAttribute(
+      'data-position',
+      '${position.x}m ${position.y}m ${position.z}m',
+    );
+    spot.setAttribute(
+      'data-normal',
+      '${normal.x}m ${normal.y}m ${normal.z}m',
+    );
+    viewer.append(spot);
+    _hotspot = spot;
   }
 
   void _applyPartColor(html.Element el, Color color) {
@@ -340,12 +422,7 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
       if (materials == null) return;
       final len = js_util.getProperty(materials, 'length');
       if (len is! int) return;
-      final rgba = <double>[
-        color.r,
-        color.g,
-        color.b,
-        1.0,
-      ];
+      final rgba = <double>[color.r, color.g, color.b, 1.0];
       for (var i = 0; i < len; i++) {
         final mat = js_util.getProperty(materials, i);
         if (mat == null) continue;
@@ -438,7 +515,7 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
                       tooltip: c.label,
                       onTap: () => _selectColor(c),
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 8),
                   ],
                   const Spacer(),
                   if (widget.fixtureDown != null)

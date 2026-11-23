@@ -1224,46 +1224,47 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                             value: featureCounts,
                             expandWidth: true,
                           ),
-                        if (fixtureDowns.isNotEmpty) ...[
-                          Text(
-                            'Bottom (fixture)',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: scheme.onSurfaceVariant,
-                            ),
+                        Text(
+                          'Bottom (fixture)',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: scheme.onSurfaceVariant,
                           ),
+                        ),
+                        Text(
+                          selectedBottom == null
+                              ? 'Click a face on the model'
+                              : 'Selected ${cadDirectionLabel(selectedBottom)}',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                          textAlign: TextAlign.right,
+                        ),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: TextButton(
+                            onPressed: busy || selectedBottom == null
+                                ? null
+                                : () => _setCadBottomDirection(null),
+                            child: const Text('Clear bottom'),
+                          ),
+                        ),
+                        if (fixtureDowns.isNotEmpty)
                           Wrap(
                             spacing: 6,
                             runSpacing: 6,
                             alignment: WrapAlignment.end,
                             children: [
-                              ChoiceChip(
-                                label: const Text('Default'),
-                                selected: selectedBottom == null,
-                                onSelected: busy
-                                    ? null
-                                    : (_) => _setCadBottomDirection(null),
-                              ),
                               for (final down in fixtureDowns)
-                                ChoiceChip(
+                                ActionChip(
                                   label: Text(cadDirectionLabel(down)),
-                                  selected: selectedBottom != null &&
-                                      selectedBottom.nearlyEquals(down),
-                                  onSelected: busy
+                                  onPressed: busy
                                       ? null
-                                      : (_) =>
-                                          _setCadBottomDirection(down),
+                                      : () => _setCadBottomDirection(down),
                                 ),
                             ],
-                          ),
-                        ] else
-                          Text(
-                            'Re-analyze to pick fixture bottom',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: scheme.onSurfaceVariant,
-                            ),
                           ),
                         if (stockSuggest != null)
                           SizedBox(
@@ -1351,6 +1352,9 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                         key: ValueKey('cad-glb-$partId'),
                         meshUrl: cadToolpathMeshGlbUrl(partId),
                         fixtureDown: selectedBottom,
+                        onFixtureFacePicked: busy
+                            ? null
+                            : (n) => _setCadBottomDirection(n),
                       );
 
                       if (sideBySide) {

@@ -21,11 +21,13 @@ const kCadPartColors = <CadPartColor>[
 class CadGlbViewer extends StatelessWidget {
   final String meshUrl;
   final CadVec3? fixtureDown;
+  final ValueChanged<CadVec3>? onFixtureFacePicked;
 
   const CadGlbViewer({
     super.key,
     required this.meshUrl,
     this.fixtureDown,
+    this.onFixtureFacePicked,
   });
 
   @override
@@ -39,9 +41,7 @@ class CadGlbViewer extends StatelessWidget {
         border: Border.all(color: scheme.outlineVariant),
       ),
       child: Text(
-        fixtureDown == null
-            ? '3D preview is available in the web app'
-            : '3D preview (fixture ${cadDirectionLabel(fixtureDown!)})',
+        '3D face pick is available in the web app',
         style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
       ),
     );
