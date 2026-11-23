@@ -24,9 +24,9 @@ class CadPartColor {
 }
 
 const kCadPartColors = <CadPartColor>[
+  CadPartColor('charcoal', 'Charcoal', Color(0xFF3A3A3A)),
   CadPartColor('aluminum', 'Aluminum', Color(0xFF8B96A3)),
   CadPartColor('blue', 'Shop blue', Color(0xFF3D6FA8)),
-  CadPartColor('charcoal', 'Charcoal', Color(0xFF3A3A3A)),
 ];
 
 void _ensureHotspotCss() {
@@ -281,6 +281,8 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
     final el = html.Element.tag('model-viewer')
       ..setAttribute('src', blobUrl)
       ..setAttribute('camera-controls', '')
+      // Keep orbit/pan; turn off click-to-recenter so face pick wins.
+      ..setAttribute('disable-tap', '')
       ..setAttribute('touch-action', 'pan-y')
       ..setAttribute('interaction-prompt', 'none')
       ..setAttribute('shadow-intensity', '0.85')
@@ -339,21 +341,34 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
       if (dx * dx + dy * dy > 36) return;
     }
 
-    final rect = el.getBoundingClientRect();
-    final x = e.client.x - rect.left;
-    final y = e.client.y - rect.top;
+    // model-viewer 4.x getNDC expects viewport clientX/clientY (it subtracts
+    // getBoundingClientRect itself). Passing element-local coords double-
+    // offsets and every pick misses.
+    final clientX = e.client.x.toDouble();
+    final clientY = e.client.y.toDouble();
 
     dynamic hit;
     try {
-      hit = js_util.callMethod(el, 'positionAndNormalFromPoint', [x, y]);
-    } catch (_) {
+      hit = js_util.callMethod(
+        el,
+        'positionAndNormalFromPoint',
+        [clientX, clientY],
+      );
+    } catch (err) {
+      _hint?.text = 'Face pick failed — try again';
       return;
     }
-    if (hit == null) return;
+    if (hit == null) {
+      _hint?.text = 'Missed the part — click a face (drag to orbit)';
+      return;
+    }
 
     final normalObj = js_util.getProperty(hit, 'normal');
     final positionObj = js_util.getProperty(hit, 'position');
-    if (normalObj == null) return;
+    if (normalObj == null) {
+      _hint?.text = 'No face normal at that point — try again';
+      return;
+    }
 
     final nx = _numProp(normalObj, 'x');
     final ny = _numProp(normalObj, 'y');
@@ -364,16 +379,7 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
     if (normal.length < 1e-6) return;
 
     if (positionObj != null) {
-      final px = _numProp(positionObj, 'x');
-      final py = _numProp(positionObj, 'y');
-      final pz = _numProp(positionObj, 'z');
-      if (px != null && py != null && pz != null) {
-        _setHotspot(
-          el,
-          position: CadVec3(px, py, pz),
-          normal: normal,
-        );
-      }
+      _setHotspotFromHit(el, positionObj, normalObj, normal);
     }
 
     _hint?.text =
@@ -393,23 +399,40 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
     }
   }
 
-  void _setHotspot(
-    html.Element viewer, {
-    required CadVec3 position,
-    required CadVec3 normal,
-  }) {
+  void _setHotspotFromHit(
+    html.Element viewer,
+    dynamic positionObj,
+    dynamic normalObj,
+    CadVec3 normalFallback,
+  ) {
     _hotspot?.remove();
     final spot = html.DivElement()
       ..className = 'cad-fixture-hotspot'
       ..slot = 'hotspot-fixture-bottom';
-    spot.setAttribute(
-      'data-position',
-      '${position.x}m ${position.y}m ${position.z}m',
-    );
-    spot.setAttribute(
-      'data-normal',
-      '${normal.x}m ${normal.y}m ${normal.z}m',
-    );
+
+    String? posStr;
+    String? nrmStr;
+    try {
+      posStr = js_util.callMethod(positionObj, 'toString', [])?.toString();
+    } catch (_) {}
+    try {
+      nrmStr = js_util.callMethod(normalObj, 'toString', [])?.toString();
+    } catch (_) {}
+
+    if (posStr == null || posStr.isEmpty) {
+      final px = _numProp(positionObj, 'x');
+      final py = _numProp(positionObj, 'y');
+      final pz = _numProp(positionObj, 'z');
+      if (px == null || py == null || pz == null) return;
+      posStr = '${px}m ${py}m ${pz}m';
+    }
+    if (nrmStr == null || nrmStr.isEmpty) {
+      nrmStr =
+          '${normalFallback.x}m ${normalFallback.y}m ${normalFallback.z}m';
+    }
+
+    spot.setAttribute('data-position', posStr);
+    spot.setAttribute('data-normal', nrmStr);
     viewer.append(spot);
     _hotspot = spot;
   }
@@ -501,40 +524,46 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
                 ),
               ),
             ),
+          // Keep Flutter chrome off the mesh so DOM clicks reach model-viewer.
           if (_loadError == null)
             Positioned(
               left: 8,
-              right: 8,
               bottom: 8,
               child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  for (final c in kCadPartColors) ...[
+                  for (var i = 0; i < kCadPartColors.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 8),
                     _ColorSwatch(
-                      color: c.color,
-                      selected: c.id == _colorId,
-                      tooltip: c.label,
-                      onTap: () => _selectColor(c),
+                      color: kCadPartColors[i].color,
+                      selected: kCadPartColors[i].id == _colorId,
+                      tooltip: kCadPartColors[i].label,
+                      onTap: () => _selectColor(kCadPartColors[i]),
                     ),
-                    const SizedBox(width: 8),
                   ],
-                  const Spacer(),
-                  if (widget.fixtureDown != null)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.55),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        'Down ${cadDirectionLabel(widget.fixtureDown!)}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                        ),
-                      ),
-                    ),
                 ],
+              ),
+            ),
+          if (_loadError == null && widget.fixtureDown != null)
+            Positioned(
+              right: 8,
+              bottom: 8,
+              child: IgnorePointer(
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    'Down ${cadDirectionLabel(widget.fixtureDown!)}',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
               ),
             ),
         ],
