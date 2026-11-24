@@ -68,6 +68,15 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
     if (record == null) return {};
     final d = Map<String, dynamic>.from(record.data as Map<String, dynamic>? ?? {});
     if (record.id != null) d['id'] = record.id;
+    // System timestamps live on the record, not in data — keep for display/backfill.
+    try {
+      final created = '${record.created ?? ''}'.trim();
+      if (created.isNotEmpty) d.putIfAbsent('created', () => created);
+    } catch (_) {}
+    try {
+      final updated = '${record.updated ?? ''}'.trim();
+      if (updated.isNotEmpty) d.putIfAbsent('updated', () => updated);
+    } catch (_) {}
     return d;
   }
 
@@ -370,16 +379,32 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
 
       String quoteId;
       if (_isNew) {
-        toSave['quote_created_date'] = DateTime.now().toIso8601String();
+        // createQuote() stamps quote_created_date if missing.
         if ('${toSave['engineer'] ?? ''}'.trim().isEmpty) {
           toSave['engineer'] = '—';
         }
         final created = await pb.createQuote(toSave);
         quoteId = created.id as String;
-        setState(() => _quote = {...quote, 'id': quoteId});
+        setState(() => _quote = {
+              ...quote,
+              'id': quoteId,
+              'quote_created_date':
+                  created.data['quote_created_date'] ?? DateTime.now().toIso8601String(),
+            });
       } else {
         quoteId = quote['id'] as String;
-        toSave.remove('quote_created_date');
+        final existing =
+            '${quote['quote_created_date'] ?? ''}'.trim();
+        if (existing.isEmpty) {
+          // Repair empties (older creates / copy-quote bug) from system created.
+          final fallback = '${quote['created'] ?? ''}'.trim();
+          toSave['quote_created_date'] = fallback.isNotEmpty
+              ? fallback
+              : DateTime.now().toIso8601String();
+        } else {
+          // Keep original create date immutable on later edits.
+          toSave.remove('quote_created_date');
+        }
         await pb.updateQuote(quoteId, toSave);
       }
 
@@ -600,6 +625,7 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
     setState(() => _saving = true);
     try {
       final pb = PocketBaseService();
+      // createQuote stamps quote_created_date to now (copy date).
       final copy = {
         'job_number': generateJobNumber(),
         'wave_quote_number': '',

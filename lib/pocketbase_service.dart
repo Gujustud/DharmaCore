@@ -1083,7 +1083,12 @@ class PocketBaseService {
 
   Future<dynamic> createQuote(Map<String, dynamic> body) async {
     try {
-      return await pb.collection('quotes').create(body: body);
+      final payload = Map<String, dynamic>.from(body);
+      // Every create path (new quote, copy quote, etc.) must stamp this.
+      if ('${payload['quote_created_date'] ?? ''}'.trim().isEmpty) {
+        payload['quote_created_date'] = DateTime.now().toIso8601String();
+      }
+      return await pb.collection('quotes').create(body: payload);
     } catch (e) {
       print('Error creating quote: $e');
       rethrow;
@@ -1095,6 +1100,28 @@ class PocketBaseService {
       await pb.collection('quotes').update(id, body: body);
     } catch (e) {
       print('Error updating quote: $e');
+      rethrow;
+    }
+  }
+
+  /// Fill empty [quote_created_date] from PocketBase system created (one-shot / repair).
+  Future<int> backfillEmptyQuoteCreatedDates() async {
+    try {
+      final records = await pb.collection('quotes').getFullList();
+      var updated = 0;
+      for (final r in records) {
+        final data = r.data as Map<String, dynamic>? ?? {};
+        if ('${data['quote_created_date'] ?? ''}'.trim().isNotEmpty) continue;
+        final created = '${r.created}'.trim();
+        if (created.isEmpty) continue;
+        await pb.collection('quotes').update(r.id as String, body: {
+          'quote_created_date': created,
+        });
+        updated++;
+      }
+      return updated;
+    } catch (e) {
+      print('Error backfilling quote_created_date: $e');
       rethrow;
     }
   }

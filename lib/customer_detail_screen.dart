@@ -153,7 +153,13 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
 
   DateTime? _quoteActivityDate(dynamic quote) {
     final data = quote.data as Map<String, dynamic>? ?? {};
-    return _parseDate(data['created'] ?? data['updated']);
+    final stamped = _parseDate(data['quote_created_date']);
+    if (stamped != null) return stamped;
+    try {
+      final created = _parseDate(quote.created);
+      if (created != null) return created;
+    } catch (_) {}
+    return _parseDate(data['updated']);
   }
 
   List<dynamic> get _visibleJobs {

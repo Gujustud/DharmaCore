@@ -286,6 +286,7 @@ class _QuotesScreenState extends State<QuotesScreen> with AutoOpenDrawerMixin {
       if (c is String) customerId = c;
       if (c is Map && c['id'] != null) customerId = c['id'].toString();
 
+      // quote_created_date stamped inside createQuote (copy date = now).
       final created = await pb.createQuote({
         'job_number': generateJobNumber(),
         'wave_quote_number': '',

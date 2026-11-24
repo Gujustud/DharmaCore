@@ -59,10 +59,16 @@ class _CustomerInsightPanelState extends State<CustomerInsightPanel> {
     return s.isEmpty ? 'draft' : s;
   }
 
-  /// Won-quote date for revenue bucketing (matches previous customer summary).
+  /// Shop create date first; fall back to PocketBase system created/updated.
   static DateTime? _quoteDate(dynamic q) {
     final data = q.data as Map<String, dynamic>? ?? {};
-    return _parseDate(data['created'] ?? data['updated']);
+    final stamped = _parseDate(data['quote_created_date']);
+    if (stamped != null) return stamped;
+    try {
+      final created = _parseDate(q.created);
+      if (created != null) return created;
+    } catch (_) {}
+    return _parseDate(data['updated']);
   }
 
   static DateTime? _jobDate(dynamic job) {
@@ -98,7 +104,7 @@ class _CustomerInsightPanelState extends State<CustomerInsightPanel> {
         ),
         const SizedBox(height: 4),
         Text(
-          'Won revenue is from quotes marked Won (CAD). Jobs use ship / created date.',
+          'Won revenue uses quote created date (CAD). Jobs use ship / created date.',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
