@@ -4,31 +4,8 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import 'insight_period.dart';
 import 'models.dart';
-
-/// A calendar month (`month` set) or whole year (`month` null) of spend.
-@immutable
-class SpendPeriod {
-  final int year;
-  final int? month;
-
-  const SpendPeriod.year(this.year) : month = null;
-  const SpendPeriod.month(this.year, int this.month);
-
-  bool contains(DateTime d) =>
-      d.year == year && (month == null || d.month == month);
-
-  String get label => month == null
-      ? '$year'
-      : DateFormat.yMMM().format(DateTime(year, month!));
-
-  @override
-  bool operator ==(Object other) =>
-      other is SpendPeriod && other.year == year && other.month == month;
-
-  @override
-  int get hashCode => Object.hash(year, month);
-}
 
 enum _ChartRange { months12, months24, years }
 
@@ -40,8 +17,8 @@ class SupplierSpendPanel extends StatefulWidget {
 
   /// Line items for [purchases]; null while loading.
   final List<PurchaseItem>? items;
-  final SpendPeriod? selectedPeriod;
-  final ValueChanged<SpendPeriod?> onPeriodSelected;
+  final InsightPeriod? selectedPeriod;
+  final ValueChanged<InsightPeriod?> onPeriodSelected;
 
   const SupplierSpendPanel({
     super.key,
@@ -56,7 +33,7 @@ class SupplierSpendPanel extends StatefulWidget {
 }
 
 class _Bucket {
-  final SpendPeriod period;
+  final InsightPeriod period;
   double total = 0;
   int orders = 0;
   _Bucket(this.period);
@@ -258,13 +235,13 @@ class _SupplierSpendPanelState extends State<SupplierSpendPanel> {
       final years = list.map((p) => p.purchaseDate.year);
       final firstYear = years.isEmpty ? now.year : years.reduce(math.min);
       for (var y = math.min(firstYear, now.year - 1); y <= now.year; y++) {
-        buckets.add(_Bucket(SpendPeriod.year(y)));
+        buckets.add(_Bucket(InsightPeriod.year(y)));
       }
     } else {
       final n = _range == _ChartRange.months12 ? 12 : 24;
       for (var i = n - 1; i >= 0; i--) {
         final d = DateTime(now.year, now.month - i);
-        buckets.add(_Bucket(SpendPeriod.month(d.year, d.month)));
+        buckets.add(_Bucket(InsightPeriod.month(d.year, d.month)));
       }
     }
     for (final p in list) {
@@ -526,8 +503,8 @@ class _SupplierSpendPanelState extends State<SupplierSpendPanel> {
 
   Color _barColor(
     ColorScheme scheme,
-    SpendPeriod period,
-    SpendPeriod? selected, {
+    InsightPeriod period,
+    InsightPeriod? selected, {
     required bool isCurrent,
   }) {
     if (selected != null) {

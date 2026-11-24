@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'pocketbase_service.dart';
 import 'models.dart';
 import 'add_purchase_screen.dart';
+import 'insight_period.dart';
 import 'supplier_spend_panel.dart';
 import 'drawer_behavior.dart';
 import 'ui_breakpoints.dart';
@@ -44,7 +45,7 @@ class _SupplierDetailScreenState extends State<SupplierDetailScreen> with AutoOp
 
   List<Purchase> _purchases = [];
   List<PurchaseItem>? _purchaseItems;
-  SpendPeriod? _spendPeriod;
+  InsightPeriod? _spendPeriod;
   bool _isLoadingPurchases = true;
   bool _isSaving = false;
 

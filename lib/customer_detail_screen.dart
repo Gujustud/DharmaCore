@@ -3,8 +3,10 @@ import 'package:intl/intl.dart';
 
 import 'workspace_layout.dart';
 import 'workspace_scaffold.dart';
+import 'customer_insight_panel.dart';
 import 'customer_labels.dart';
 import 'drawer_behavior.dart';
+import 'insight_period.dart';
 import 'job_detail_screen.dart';
 import 'pocketbase_service.dart';
 import 'quote_detail_screen.dart';
@@ -45,7 +47,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
   List<dynamic> _jobs = [];
   List<dynamic> _quotes = [];
   List<dynamic> _shipTos = [];
-  _CustomerRevenuePeriod _revenuePeriod = _CustomerRevenuePeriod.last12Months;
+  InsightPeriod? _insightPeriod;
 
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   static final _dateDisplay = DateFormat.yMMMd();
@@ -139,68 +141,37 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
     return customerDisplayLabel(data, fallback: 'Customer');
   }
 
-  DateTime get _periodStart {
-    final now = DateTime.now();
-    switch (_revenuePeriod) {
-      case _CustomerRevenuePeriod.last6Months:
-        return DateTime(now.year, now.month - 5, 1);
-      case _CustomerRevenuePeriod.last12Months:
-        return DateTime(now.year, now.month - 11, 1);
-      case _CustomerRevenuePeriod.ytd:
-        return DateTime(now.year, 1, 1);
-      case _CustomerRevenuePeriod.all:
-        return DateTime(2000);
-    }
+  DateTime? _jobActivityDate(dynamic job) {
+    final data = job.data as Map<String, dynamic>? ?? {};
+    return _parseDate(
+      data['ship_date'] ??
+          data['delivered_date'] ??
+          data['created'] ??
+          data['updated'],
+    );
   }
 
-  bool _inRevenuePeriod(DateTime? d) {
-    if (_revenuePeriod == _CustomerRevenuePeriod.all) return true;
-    if (d == null) return false;
-    final local = d.toLocal();
-    return !local.isBefore(_periodStart);
+  DateTime? _quoteActivityDate(dynamic quote) {
+    final data = quote.data as Map<String, dynamic>? ?? {};
+    return _parseDate(data['created'] ?? data['updated']);
   }
 
-  double get _wonRevenue {
-    var sum = 0.0;
-    for (final q in _quotes) {
-      final data = q.data as Map<String, dynamic>? ?? {};
-      if ('${data['status'] ?? ''}'.toLowerCase() != 'won') continue;
-      final when = _parseDate(data['created'] ?? data['updated']);
-      if (!_inRevenuePeriod(when)) continue;
-      sum += (data['final_total_cad'] as num?)?.toDouble() ?? 0;
-    }
-    return sum;
+  List<dynamic> get _visibleJobs {
+    final period = _insightPeriod;
+    if (period == null) return _jobs;
+    return _jobs.where((job) {
+      final when = _jobActivityDate(job);
+      return when != null && period.contains(when);
+    }).toList();
   }
 
-  /// Job activity by calendar month (shop load). Follows 6/12 mo; else last 12.
-  List<({DateTime month, int count})> get _jobActivityMonths {
-    final now = DateTime.now();
-    final monthCount = switch (_revenuePeriod) {
-      _CustomerRevenuePeriod.last6Months => 6,
-      _ => 12,
-    };
-    final start = DateTime(now.year, now.month - (monthCount - 1), 1);
-    final counts = <DateTime, int>{
-      for (var i = 0; i < monthCount; i++)
-        DateTime(start.year, start.month + i): 0,
-    };
-    for (final job in _jobs) {
-      final data = job.data as Map<String, dynamic>? ?? {};
-      final when = _parseDate(
-            data['ship_date'] ??
-                data['delivered_date'] ??
-                data['created'] ??
-                data['updated'],
-          )
-          ?.toLocal();
-      if (when == null) continue;
-      final key = DateTime(when.year, when.month);
-      if (!counts.containsKey(key)) continue;
-      counts[key] = counts[key]! + 1;
-    }
-    return [
-      for (final e in counts.entries) (month: e.key, count: e.value),
-    ];
+  List<dynamic> get _visibleQuotes {
+    final period = _insightPeriod;
+    if (period == null) return _quotes;
+    return _quotes.where((quote) {
+      final when = _quoteActivityDate(quote);
+      return when != null && period.contains(when);
+    }).toList();
   }
 
   void _close({required bool saved}) {
@@ -544,103 +515,45 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
     );
   }
 
-  Widget _revenueSummaryBlock() {
-    final muted = Theme.of(context).brightness == Brightness.dark
-        ? const Color(0xFFD1D5DB)
-        : const Color(0xFF4B5563);
-    final activity = _jobActivityMonths;
-    final maxCount = activity.fold<int>(0, (m, e) => e.count > m ? e.count : m);
-    final chartLabel = switch (_revenuePeriod) {
-      _CustomerRevenuePeriod.last6Months => 'Jobs by month · last 6 mo',
-      _ => 'Jobs by month · last 12 mo',
-    };
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+  Widget _sectionHeading(String title, {required int shown, required int total}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 8,
+      runSpacing: 4,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                'Revenue (won quotes)',
-                style: TextStyle(fontSize: 13, color: muted),
-              ),
-            ),
-            PopupMenuButton<_CustomerRevenuePeriod>(
-              tooltip: 'Revenue period',
-              initialValue: _revenuePeriod,
-              onSelected: (v) => setState(() => _revenuePeriod = v),
-              itemBuilder: (_) => [
-                for (final p in _CustomerRevenuePeriod.values)
-                  PopupMenuItem(
-                    value: p,
-                    child: Text(p.menuLabel),
-                  ),
-              ],
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _revenuePeriod.shortLabel,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: QuoteSidebarTheme.primary(context),
-                      ),
-                    ),
-                    Icon(
-                      Icons.arrow_drop_down,
-                      size: 18,
-                      color: QuoteSidebarTheme.primary(context),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 2),
         Text(
-          _formatCurrency(_wonRevenue),
-          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          title,
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
         ),
-        const SizedBox(height: 16),
         Text(
-          chartLabel,
-          style: TextStyle(fontSize: 13, color: muted),
+          _insightPeriod == null ? '($total)' : '($shown of $total)',
+          style: TextStyle(fontSize: 14, color: Colors.grey[600]),
         ),
-        const SizedBox(height: 8),
-        SizedBox(
-          height: 72,
-          child: _JobActivityBars(
-            months: activity,
-            maxCount: maxCount,
+        if (_insightPeriod != null)
+          InputChip(
+            label: Text(_insightPeriod!.label),
+            avatar: const Icon(Icons.filter_alt, size: 16),
+            visualDensity: VisualDensity.compact,
+            onDeleted: () => setState(() => _insightPeriod = null),
           ),
-        ),
       ],
-    );
-  }
-
-  Widget _summaryStat(String label, String value) {
-    final muted = Theme.of(context).brightness == Brightness.dark
-        ? const Color(0xFFD1D5DB)
-        : const Color(0xFF4B5563);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: TextStyle(fontSize: 13, color: muted)),
-        const SizedBox(height: 2),
-        Text(value, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-      ],
+      ),
     );
   }
 
   Widget _jobsTable() {
+    final jobs = _visibleJobs;
     if (_jobs.isEmpty) {
       return Text(
         'No jobs for this customer.',
+        style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+      );
+    }
+    if (jobs.isEmpty) {
+      return Text(
+        'No jobs in ${_insightPeriod!.label}.',
         style: TextStyle(fontSize: 14, color: Colors.grey[600]),
       );
     }
@@ -668,7 +581,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
                 _tableHeader('Delivered date'),
               ],
             ),
-            ..._jobs.map((job) {
+            ...jobs.map((job) {
               final data = job.data as Map<String, dynamic>? ?? {};
               final jobNumber = '${data['job_number'] ?? ''}'.trim();
               final status = '${data['status'] ?? ''}'.trim();
@@ -700,9 +613,16 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
   }
 
   Widget _quotesTable() {
+    final quotes = _visibleQuotes;
     if (_quotes.isEmpty) {
       return Text(
         'No quotes for this customer.',
+        style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+      );
+    }
+    if (quotes.isEmpty) {
+      return Text(
+        'No quotes in ${_insightPeriod!.label}.',
         style: TextStyle(fontSize: 14, color: Colors.grey[600]),
       );
     }
@@ -730,7 +650,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
                 _tableHeader('Updated'),
               ],
             ),
-            ..._quotes.map((quote) {
+            ...quotes.map((quote) {
               final data = quote.data as Map<String, dynamic>? ?? {};
               final jobNumber = '${data['job_number'] ?? ''}'.trim();
               final status = '${data['status'] ?? ''}'.trim();
@@ -1178,16 +1098,32 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
       return const Center(child: CircularProgressIndicator());
     }
 
-    final mainColumn = Column(
+    final visibleJobs = _visibleJobs;
+    final visibleQuotes = _visibleQuotes;
+
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _detailsCard(),
+        if (_jobs.isNotEmpty || _quotes.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          CustomerInsightPanel(
+            jobs: _jobs,
+            quotes: _quotes,
+            selectedPeriod: _insightPeriod,
+            onPeriodSelected: (p) => setState(() => _insightPeriod = p),
+          ),
+        ],
         const SizedBox(height: 16),
         QuoteSidebarCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _sectionTitle('Jobs'),
+              _sectionHeading(
+                'Jobs',
+                shown: visibleJobs.length,
+                total: _jobs.length,
+              ),
               _jobsTable(),
             ],
           ),
@@ -1197,45 +1133,15 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _sectionTitle('Quotes'),
+              _sectionHeading(
+                'Quotes',
+                shown: visibleQuotes.length,
+                total: _quotes.length,
+              ),
               _quotesTable(),
             ],
           ),
         ),
-      ],
-    );
-
-    final summary = QuoteSidebarCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _sectionTitle('Summary'),
-          _revenueSummaryBlock(),
-          const SizedBox(height: 20),
-          _summaryStat('Jobs', '${_jobs.length}'),
-          const SizedBox(height: 16),
-          _summaryStat('Quotes', '${_quotes.length}'),
-        ],
-      ),
-    );
-
-    if (wide) {
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(flex: 2, child: mainColumn),
-          const SizedBox(width: 16),
-          SizedBox(width: 280, child: summary),
-        ],
-      );
-    }
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        mainColumn,
-        const SizedBox(height: 16),
-        summary,
       ],
     );
   }
@@ -1361,100 +1267,6 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> with AutoOp
         leading: workspaceMenuLeading(context),
       ),
       body: form,
-    );
-  }
-}
-
-enum _CustomerRevenuePeriod { last6Months, last12Months, ytd, all }
-
-extension on _CustomerRevenuePeriod {
-  String get shortLabel {
-    switch (this) {
-      case _CustomerRevenuePeriod.last6Months:
-        return '6 mo';
-      case _CustomerRevenuePeriod.last12Months:
-        return '12 mo';
-      case _CustomerRevenuePeriod.ytd:
-        return 'YTD';
-      case _CustomerRevenuePeriod.all:
-        return 'All';
-    }
-  }
-
-  String get menuLabel {
-    switch (this) {
-      case _CustomerRevenuePeriod.last6Months:
-        return 'Last 6 months';
-      case _CustomerRevenuePeriod.last12Months:
-        return 'Last 12 months';
-      case _CustomerRevenuePeriod.ytd:
-        return 'Year to date';
-      case _CustomerRevenuePeriod.all:
-        return 'All time';
-    }
-  }
-}
-
-class _JobActivityBars extends StatelessWidget {
-  const _JobActivityBars({required this.months, required this.maxCount});
-
-  final List<({DateTime month, int count})> months;
-  final int maxCount;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final barColor = QuoteSidebarTheme.primary(context);
-    final track = scheme.brightness == Brightness.dark
-        ? const Color(0xFF374151)
-        : const Color(0xFFE5E7EB);
-    final labelStyle = TextStyle(
-      fontSize: 9,
-      color: scheme.onSurfaceVariant,
-    );
-    final monthFmt = DateFormat('MMM');
-
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        for (var i = 0; i < months.length; i++) ...[
-          if (i > 0) const SizedBox(width: 3),
-          Expanded(
-            child: Tooltip(
-              message:
-                  '${monthFmt.format(months[i].month)} ${months[i].month.year}: '
-                  '${months[i].count} job${months[i].count == 1 ? '' : 's'}',
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.bottomCenter,
-                      child: FractionallySizedBox(
-                        heightFactor: maxCount <= 0
-                            ? 0.08
-                            : (0.08 + 0.92 * (months[i].count / maxCount)),
-                        widthFactor: 1,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: months[i].count == 0 ? track : barColor,
-                            borderRadius: BorderRadius.circular(3),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    monthFmt.format(months[i].month)[0],
-                    style: labelStyle,
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ],
     );
   }
 }
