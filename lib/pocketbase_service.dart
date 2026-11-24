@@ -2913,6 +2913,18 @@ class PocketBaseService {
     }
   }
 
+  Future<List<dynamic>> getPurchaseItemsBySupplier(String supplierId) async {
+    try {
+      return await pb.collection('purchase_items').getFullList(
+        filter: 'purchase.supplier = "$supplierId"',
+        expand: 'tool,material',
+      );
+    } catch (e) {
+      print('Error getting purchase items by supplier: $e');
+      rethrow;
+    }
+  }
+
   Future<List<dynamic>> getPurchaseItemsByTool(String toolId) async {
     try {
       return await pb.collection('purchase_items').getFullList(

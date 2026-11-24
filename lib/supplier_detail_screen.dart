@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'pocketbase_service.dart';
 import 'models.dart';
 import 'add_purchase_screen.dart';
+import 'supplier_spend_panel.dart';
 import 'drawer_behavior.dart';
 import 'ui_breakpoints.dart';
 import 'workspace_layout.dart';
@@ -42,6 +43,8 @@ class _SupplierDetailScreenState extends State<SupplierDetailScreen> with AutoOp
   final Set<String> _selectedCategoryIds = {};
 
   List<Purchase> _purchases = [];
+  List<PurchaseItem>? _purchaseItems;
+  SpendPeriod? _spendPeriod;
   bool _isLoadingPurchases = true;
   bool _isSaving = false;
 
@@ -126,6 +129,7 @@ class _SupplierDetailScreenState extends State<SupplierDetailScreen> with AutoOp
         _purchases = records.map((r) => Purchase.fromRecord(r)).toList();
         _isLoadingPurchases = false;
       });
+      _loadPurchaseItems();
     } catch (e) {
       setState(() => _isLoadingPurchases = false);
       if (mounted) {
@@ -135,6 +139,26 @@ class _SupplierDetailScreenState extends State<SupplierDetailScreen> with AutoOp
       }
     }
   }
+
+  Future<void> _loadPurchaseItems() async {
+    try {
+      final records = await PocketBaseService()
+          .getPurchaseItemsBySupplier(widget.supplier.id);
+      if (!mounted) return;
+      setState(() {
+        _purchaseItems = records.map((r) => PurchaseItem.fromRecord(r)).toList();
+      });
+    } catch (_) {
+      // Breakdown is optional; stats and chart only need purchase totals.
+      if (mounted) setState(() => _purchaseItems = const []);
+    }
+  }
+
+  List<Purchase> get _visiblePurchases => _spendPeriod == null
+      ? _purchases
+      : _purchases
+          .where((p) => _spendPeriod!.contains(p.purchaseDate))
+          .toList();
 
   void _close({required bool saved}) {
     if (widget.embedded) {
@@ -363,6 +387,7 @@ class _SupplierDetailScreenState extends State<SupplierDetailScreen> with AutoOp
   }
 
   Widget _buildFormBody() {
+    final visiblePurchases = _visiblePurchases;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Center(
@@ -427,8 +452,21 @@ class _SupplierDetailScreenState extends State<SupplierDetailScreen> with AutoOp
                     ],
                   ),
                   if (!_isNew) ...[
+                    if (!_isLoadingPurchases && _purchases.isNotEmpty) ...[
+                      const SizedBox(height: 28),
+                      SupplierSpendPanel(
+                        purchases: _purchases,
+                        items: _purchaseItems,
+                        selectedPeriod: _spendPeriod,
+                        onPeriodSelected: (p) =>
+                            setState(() => _spendPeriod = p),
+                      ),
+                    ],
                     const SizedBox(height: 28),
-                    Row(
+                    Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 8,
+                      runSpacing: 4,
                       children: [
                         const Text(
                           'Purchase History',
@@ -437,14 +475,23 @@ class _SupplierDetailScreenState extends State<SupplierDetailScreen> with AutoOp
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        const SizedBox(width: 8),
                         if (!_isLoadingPurchases)
                           Text(
-                            '(${_purchases.length})',
+                            _spendPeriod == null
+                                ? '(${_purchases.length})'
+                                : '(${visiblePurchases.length} of ${_purchases.length})',
                             style: TextStyle(
                               fontSize: 16,
                               color: Colors.grey[600],
                             ),
+                          ),
+                        if (_spendPeriod != null)
+                          InputChip(
+                            label: Text(_spendPeriod!.label),
+                            avatar: const Icon(Icons.filter_alt, size: 16),
+                            visualDensity: VisualDensity.compact,
+                            onDeleted: () =>
+                                setState(() => _spendPeriod = null),
                           ),
                       ],
                     ),
@@ -478,9 +525,9 @@ class _SupplierDetailScreenState extends State<SupplierDetailScreen> with AutoOp
                       ListView.builder(
                         shrinkWrap: true,
                         physics: const NeverScrollableScrollPhysics(),
-                        itemCount: _purchases.length,
+                        itemCount: visiblePurchases.length,
                         itemBuilder: (context, index) {
-                          final p = _purchases[index];
+                          final p = visiblePurchases[index];
                           return Card(
                             child: ListTile(
                               leading: const Icon(
@@ -504,7 +551,7 @@ class _SupplierDetailScreenState extends State<SupplierDetailScreen> with AutoOp
                                     Text('Invoice: ${p.invoice}'),
                                   if (p.total != null)
                                     Text(
-                                      '\$${p.total!.toStringAsFixed(2)}',
+                                      '${NumberFormat.currency(symbol: '\$').format(p.total)} ${p.currency}',
                                       style: const TextStyle(
                                         fontWeight: FontWeight.w600,
                                         color: Colors.green,
