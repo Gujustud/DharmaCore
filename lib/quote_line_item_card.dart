@@ -1320,37 +1320,35 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                             value: partSizeLabel,
                             expandWidth: true,
                           ),
-                        if (stockSuggest != null)
+                        if (stockSuggest != null) ...[
                           _cadFactChip(
                             label:
                                 stockApplied ? 'Stock (applied)' : 'Stock',
                             value: stockSuggest,
                             expandWidth: true,
                           ),
+                          if (!stockApplied)
+                            SizedBox(
+                              width: double.infinity,
+                              height: _fieldControlHeight,
+                              child: OutlinedButton.icon(
+                                onPressed:
+                                    busy ? null : _applySuggestedStock,
+                                style: _fieldHeightOutlinedStyle,
+                                icon: const Icon(
+                                  Icons.inventory_2_outlined,
+                                  size: 18,
+                                ),
+                                label: const Text('Apply stock'),
+                              ),
+                            ),
+                        ],
                         if (featureCounts.isNotEmpty)
                           _cadFeaturesPanel(
                             summary: featureCounts,
                             types: featureTypes,
                             scheme: scheme,
                           ),
-                        Text(
-                          'Bottom (fixture)',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                        Text(
-                          selectedBottom == null
-                              ? 'Click a face on the model'
-                              : 'Fixture face set',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: scheme.onSurfaceVariant,
-                          ),
-                          textAlign: TextAlign.right,
-                        ),
                         if (selectedBottom != null)
                           Align(
                             alignment: Alignment.centerRight,
@@ -1358,65 +1356,39 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                               onPressed: busy
                                   ? null
                                   : () => _setCadBottomDirection(null),
-                              child: const Text('Clear bottom'),
+                              child: const Text('Clear fixture'),
                             ),
                           ),
-                        if (stockSuggest != null)
-                          SizedBox(
-                            width: double.infinity,
-                            height: _fieldControlHeight,
-                            child: OutlinedButton.icon(
-                              onPressed: busy || stockApplied
+                        Row(
+                          children: [
+                            TextButton(
+                              onPressed: busy ? null : _reanalyzeCad,
+                              child: const Text('Re-analyze'),
+                            ),
+                            const Spacer(),
+                            IconButton(
+                              onPressed: busy
                                   ? null
-                                  : _applySuggestedStock,
-                              style: _fieldHeightOutlinedStyle,
-                              icon: Icon(
-                                stockApplied
-                                    ? Icons.check
-                                    : Icons.inventory_2_outlined,
-                                size: 18,
+                                  : () =>
+                                      _pickAndUploadCad(replace: true),
+                              tooltip: 'Replace CAD',
+                              icon: const Icon(
+                                Icons.upload_file_outlined,
+                                size: 20,
                               ),
-                              label: Text(
-                                stockApplied ? 'Applied' : 'Apply stock',
-                              ),
+                              visualDensity: VisualDensity.compact,
                             ),
-                          ),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: TextButton(
-                            onPressed: busy ? null : _reanalyzeCad,
-                            child: const Text('Re-analyze'),
-                          ),
-                        ),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                onPressed: busy
-                                    ? null
-                                    : () =>
-                                        _pickAndUploadCad(replace: true),
-                                tooltip: 'Replace CAD',
-                                icon: const Icon(
-                                  Icons.upload_file_outlined,
-                                  size: 20,
-                                ),
-                                visualDensity: VisualDensity.compact,
+                            IconButton(
+                              onPressed: busy ? null : _deleteCad,
+                              tooltip: 'Remove CAD',
+                              icon: Icon(
+                                Icons.delete_outline,
+                                size: 20,
+                                color: scheme.error,
                               ),
-                              IconButton(
-                                onPressed: busy ? null : _deleteCad,
-                                tooltip: 'Remove CAD',
-                                icon: Icon(
-                                  Icons.delete_outline,
-                                  size: 20,
-                                  color: scheme.error,
-                                ),
-                                visualDensity: VisualDensity.compact,
-                              ),
-                            ],
-                          ),
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ],
                         ),
                       ];
 

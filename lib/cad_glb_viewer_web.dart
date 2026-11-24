@@ -32,8 +32,8 @@ const kCadPartColors = <CadPartColor>[
   CadPartColor('blue', 'Shop blue', Color(0xFF2E5685)),
 ];
 
-/// Yellow stock blank outline (shop accent).
-const _kStockStroke = '#F9A825';
+/// Muted amber stock blank outline (less bright than pure A400).
+const _kStockStroke = '#B08920';
 
 const _kStockEdges = <(int, int)>[
   (0, 1),
@@ -66,18 +66,6 @@ void _ensureHotspotCss() {
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
-.cad-pick-hint {
-  position: absolute;
-  left: 8px;
-  top: 8px;
-  padding: 4px 8px;
-  border-radius: 4px;
-  background: rgba(0,0,0,0.55);
-  color: #fff;
-  font: 11px/1.3 system-ui, sans-serif;
-  pointer-events: none;
-  z-index: 2;
-}
 .cad-stock-corner {
   width: 0;
   height: 0;
@@ -98,7 +86,8 @@ void _ensureHotspotCss() {
 }
 .cad-stock-svg line {
   stroke: $_kStockStroke;
-  stroke-width: 2;
+  stroke-width: 1.5;
+  stroke-opacity: 0.65;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
 }
@@ -144,7 +133,6 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
   html.DivElement? _host;
   html.Element? _viewer;
   html.Element? _hotspot;
-  html.Element? _hint;
   svg.SvgSvgElement? _stockSvg;
   final List<html.Element> _stockCorners = [];
   final List<svg.LineElement> _stockLines = [];
@@ -199,7 +187,6 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
     if (oldWidget.fixtureDown != null && widget.fixtureDown == null) {
       _hotspot?.remove();
       _hotspot = null;
-      _hint?.text = 'Click a face for fixture bottom (drag to orbit)';
     }
     final stockChanged =
         oldWidget.stockSizeLabel != widget.stockSizeLabel ||
@@ -352,11 +339,6 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
       ..style.backgroundColor = '#f4f4f4'
       ..style.cursor = 'crosshair';
 
-    final hint = html.DivElement()
-      ..className = 'cad-pick-hint'
-      ..text = 'Click a face for fixture bottom (drag to orbit)';
-    _hint = hint;
-
     final stockSvg = svg.SvgSvgElement()..classes.add('cad-stock-svg');
     _stockSvg = stockSvg;
 
@@ -382,7 +364,6 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
     host.children.clear();
     host.append(el);
     host.append(stockSvg);
-    host.append(hint);
     _viewer = el;
 
     try {
@@ -414,20 +395,13 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
         [clientX, clientY],
       );
     } catch (_) {
-      _hint?.text = 'Face pick failed — try again';
       return;
     }
-    if (hit == null) {
-      _hint?.text = 'Missed the part — click a face (drag to orbit)';
-      return;
-    }
+    if (hit == null) return;
 
     final normalObj = js_util.getProperty(hit, 'normal');
     final positionObj = js_util.getProperty(hit, 'position');
-    if (normalObj == null) {
-      _hint?.text = 'No face normal at that point — try again';
-      return;
-    }
+    if (normalObj == null) return;
 
     final nx = _numProp(normalObj, 'x');
     final ny = _numProp(normalObj, 'y');
@@ -440,8 +414,6 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
     if (positionObj != null) {
       _setHotspotFromHit(el, positionObj, normalObj, normal);
     }
-
-    _hint?.text = 'Fixture face set — Apply stock when ready';
 
     if (mounted) setState(() {});
     widget.onFixtureFacePicked!(normal);
@@ -811,7 +783,7 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
                         : 'Show stock outline',
                     icon: Icons.crop_square_outlined,
                     selected: _showStockOutline,
-                    accent: const Color(0xFFF9A825),
+                    accent: const Color(0xFFB08920),
                     onTap: _toggleStockOutline,
                   ),
                 ],

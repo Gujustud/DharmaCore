@@ -9,10 +9,10 @@ Quote lines can upload CAD (Phase A) and optionally run **Toolpath** analysis fo
 - Results stored on `quote_line_items.cad_analysis` (JSON text)
 - **Stock suggest:** bounding box (inches) + `0.1"` pad, each axis rounded **up** to the next `0.5"`, then ordered **thickness × width × length** (small → large) so Find on shelf treats the last number as cut length (override with `TOOLPATH_STOCK_PAD_IN` / `TOOLPATH_STOCK_STEP_IN` on the MCP host)
 - **3D preview (Phase 3):** Flutter `<model-viewer>` loads `GET {MCP_URL}/api/toolpath/parts/{toolpath_part_id}/mesh.glb`. MCP proxies Toolpath (analysis GLB when still hot, else `POST/GET /v1/parts/{id}/mesh` tessellation) and caches bytes briefly (`TOOLPATH_MESH_CACHE_TTL_S`, default 600). Toolpath parts expire (~retention window) — Re-analyze if the viewer 410s.
-- **Fixture bottom:** Click a face in the 3D preview to set `bottom_direction` (hotspot marks the pick; no ±XYZ chips). Stock extents use the fixture frame, then pad/ceil and sort **small → large**. Clear bottom restores AABB stock; changing bottom refreshes applied stock when it matched the previous suggest. Default part tint is charcoal.
-- **Stock outline:** Yellow wire box in the viewer, sized from `stock_size_per_part` (typed or Apply stock). Corners are placed in the **loaded mesh’s unit system** via `getDimensions` / `getBoundingBoxCenter` (Toolpath GLBs are often mm — absolute meters collapsed to a speck). Toggle on the viewer chrome; updates live when the stock field changes.
+- **Fixture bottom:** Click a face in the 3D preview to set `bottom_direction` (hotspot only; no axis chips / status copy). Stock extents use the fixture frame, then pad/ceil and sort **small → large**. **Clear fixture** appears only when set. Changing bottom refreshes applied stock when it matched the previous suggest. Default part tint is charcoal.
+- **Stock outline:** Muted amber wire box from `stock_size_per_part`, sized in the loaded mesh’s units via `getDimensions` / `getBoundingBoxCenter`. Toggle on the viewer chrome; updates live when the stock field changes.
+- **CAD rail:** Part size → Stock (+ Apply stock only when not applied) → Features (expandable) → Clear fixture (if set) → Re-analyze / replace / delete footer. No overlay pick hints in the viewer.
 - **X-ray:** Viewer toggle sets material alpha/BLEND so internal holes read through the part.
-- **Features panel:** Rail Features chip expands to list `feature_types` counts (holes, pockets, …).
 
 ## CT 105 setup
 
