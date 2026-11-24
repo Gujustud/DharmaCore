@@ -2228,24 +2228,49 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
               children: [
                 if (calc != null)
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Total (CAD): \$${formatQuoteMoney(_num(calc['line_total_cad']))}',
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                        Text(
-                          'Per part (CAD): \$${formatQuoteMoney(_num(calc['price_per_part_cad']))} | '
-                          'Per part (USD): \$${formatQuoteMoney(_num(calc['price_per_part_usd']))}',
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                        Text(
-                          'Quoted per part (CAD): \$${formatQuoteMoney(_num(calc['quoted_price_per_part_cad']))} | '
-                          'Quoted per part (USD): \$${formatQuoteMoney(_num(calc['quoted_price_per_part_usd']))}',
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                      ],
+                    child: Builder(
+                      builder: (context) {
+                        // Final markup % is a quote-level sell nudge: show it on
+                        // Total / Per part so it can be rounded into QPP. QPP
+                        // itself stays the typed final sell price (no 2nd %).
+                        final finalPct = _num(
+                          widget.quoteSettings['final_markup_percent'],
+                        );
+                        final factor =
+                            finalPct > 0 ? (1 + finalPct / 100) : 1.0;
+                        final totalCad =
+                            _num(calc['line_total_cad']) * factor;
+                        final perCad =
+                            _num(calc['price_per_part_cad']) * factor;
+                        final perUsd =
+                            _num(calc['price_per_part_usd']) * factor;
+                        final pctLabel = finalPct > 0
+                            ? ' (incl. ${finalPct.toStringAsFixed(0)}%)'
+                            : '';
+                        final hasQpp = _str(
+                          widget.lineItem['quote_part_price_cad'],
+                        ).isNotEmpty;
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Total (CAD)$pctLabel: \$${formatQuoteMoney(totalCad)}',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                            Text(
+                              'Per part (CAD)$pctLabel: \$${formatQuoteMoney(perCad)} | '
+                              'Per part (USD): \$${formatQuoteMoney(perUsd)}',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                            if (hasQpp)
+                              Text(
+                                'QPP / Quoted (CAD): \$${formatQuoteMoney(_num(calc['quoted_price_per_part_cad']))} | '
+                                'Quoted (USD): \$${formatQuoteMoney(_num(calc['quoted_price_per_part_usd']))}',
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                          ],
+                        );
+                      },
                     ),
                   )
                 else
