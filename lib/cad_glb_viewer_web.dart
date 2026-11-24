@@ -26,9 +26,10 @@ class CadPartColor {
 }
 
 const kCadPartColors = <CadPartColor>[
-  CadPartColor('charcoal', 'Charcoal', Color(0xFF3A3A3A)),
-  CadPartColor('aluminum', 'Aluminum', Color(0xFF8B96A3)),
-  CadPartColor('blue', 'Shop blue', Color(0xFF3D6FA8)),
+  // Darker bases so lit faces vs creases read more like CAD shading.
+  CadPartColor('charcoal', 'Charcoal', Color(0xFF2A2A2A)),
+  CadPartColor('aluminum', 'Aluminum', Color(0xFF6B7580)),
+  CadPartColor('blue', 'Shop blue', Color(0xFF2E5685)),
 ];
 
 /// Yellow stock blank outline (shop accent).
@@ -339,8 +340,9 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
       ..setAttribute('disable-tap', '')
       ..setAttribute('touch-action', 'pan-y')
       ..setAttribute('interaction-prompt', 'none')
-      ..setAttribute('shadow-intensity', '0.85')
-      ..setAttribute('exposure', '1.1')
+      ..setAttribute('shadow-intensity', '1.35')
+      ..setAttribute('shadow-softness', '0.4')
+      ..setAttribute('exposure', '0.88')
       ..setAttribute('environment-image', 'neutral')
       ..setAttribute('orientation', '0deg 0deg 0deg')
       ..setAttribute('camera-orbit', '35deg 65deg 105%')
@@ -686,8 +688,9 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
         if (pbr == null) continue;
         js_util.callMethod(pbr, 'setBaseColorFactor', [rgba]);
         try {
-          js_util.callMethod(pbr, 'setMetallicFactor', [0.15]);
-          js_util.callMethod(pbr, 'setRoughnessFactor', [0.45]);
+          // Slightly metal + mid roughness: sharper lit/crease contrast.
+          js_util.callMethod(pbr, 'setMetallicFactor', [0.22]);
+          js_util.callMethod(pbr, 'setRoughnessFactor', [0.38]);
         } catch (_) {}
       }
     } catch (_) {}

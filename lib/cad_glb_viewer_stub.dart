@@ -12,9 +12,9 @@ class CadPartColor {
 }
 
 const kCadPartColors = <CadPartColor>[
-  CadPartColor('charcoal', 'Charcoal', Color(0xFF3A3A3A)),
-  CadPartColor('aluminum', 'Aluminum', Color(0xFF8B96A3)),
-  CadPartColor('blue', 'Shop blue', Color(0xFF3D6FA8)),
+  CadPartColor('charcoal', 'Charcoal', Color(0xFF2A2A2A)),
+  CadPartColor('aluminum', 'Aluminum', Color(0xFF6B7580)),
+  CadPartColor('blue', 'Shop blue', Color(0xFF2E5685)),
 ];
 
 /// Non-web placeholder — 3D CAD preview is web-only (model-viewer).
