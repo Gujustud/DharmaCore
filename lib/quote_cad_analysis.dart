@@ -348,7 +348,11 @@ List<double> cadParseSizeNumbers(String sizeLabel) {
   ].whereType<double>().where((n) => n > 0).toList();
 }
 
-/// Build a stock outline box from analysis bbox + stock size label, or null.
+/// Build a stock outline box in **mesh/model units** (whatever the GLB uses).
+///
+/// Prefer [cadStockBoxFromMesh] with live `getDimensions` / `getBoundingBoxCenter`
+/// — Toolpath meshes are often in mm, not glTF meters, so absolute mm→m boxes
+/// collapse to a speck at the origin.
 CadStockBoxM? cadStockBoxMeters({
   required Map<String, dynamic>? analysis,
   required String stockSizeLabel,
@@ -362,30 +366,93 @@ CadStockBoxM? cadStockBoxMeters({
 
   final lo = CadVec3.fromJson(lower);
   final hi = CadVec3.fromJson(upper);
-  // mm → m (glTF / model-viewer units)
-  const mmToM = 0.001;
+  // Keep mm (Toolpath / STEP display meshes are typically mm).
   final center = CadVec3(
-    (lo.x + hi.x) * 0.5 * mmToM,
-    (lo.y + hi.y) * 0.5 * mmToM,
-    (lo.z + hi.z) * 0.5 * mmToM,
+    (lo.x + hi.x) * 0.5,
+    (lo.y + hi.y) * 0.5,
+    (lo.z + hi.z) * 0.5,
   );
-  final partExt = [
-    (hi.x - lo.x).abs() * mmToM,
-    (hi.y - lo.y).abs() * mmToM,
-    (hi.z - lo.z).abs() * mmToM,
+  final partExtMm = [
+    (hi.x - lo.x).abs(),
+    (hi.y - lo.y).abs(),
+    (hi.z - lo.z).abs(),
   ];
-  final stockM = [
-    for (final d in dimsIn.take(3)) d * 0.0254,
+  final stockMm = [
+    for (final d in dimsIn.take(3)) d * 25.4,
   ]..sort();
 
-  final axisOrder = [0, 1, 2]..sort((a, b) => partExt[a].compareTo(partExt[b]));
+  final axisOrder = [0, 1, 2]
+    ..sort((a, b) => partExtMm[a].compareTo(partExtMm[b]));
   final half = [0.0, 0.0, 0.0];
   for (var i = 0; i < 3; i++) {
-    half[axisOrder[i]] = stockM[i] * 0.5;
+    half[axisOrder[i]] = stockMm[i] * 0.5;
   }
   return CadStockBoxM(
     centerM: center,
     halfExtentsM: CadVec3(half[0], half[1], half[2]),
   );
 }
+
+/// Stock box sized from the loaded mesh AABB + shop stock label.
+///
+/// [meshCenter] / [meshSize] come from model-viewer `getBoundingBoxCenter` /
+/// `getDimensions` (same unit system as hotspot positions).
+CadStockBoxM? cadStockBoxFromMesh({
+  required CadVec3 meshCenter,
+  required CadVec3 meshSize,
+  required Map<String, dynamic>? analysis,
+  required String stockSizeLabel,
+}) {
+  final dimsIn = cadParseSizeNumbers(stockSizeLabel);
+  if (dimsIn.length < 3) return null;
+  if (meshSize.x <= 1e-12 || meshSize.y <= 1e-12 || meshSize.z <= 1e-12) {
+    return null;
+  }
+
+  // Part extents in inches along model X/Y/Z.
+  var partIn = <double>[0, 0, 0];
+  final box = analysis?['bbox_in'];
+  if (box is Map) {
+    partIn = [
+      double.tryParse('${box['x']}') ?? 0,
+      double.tryParse('${box['y']}') ?? 0,
+      double.tryParse('${box['z']}') ?? 0,
+    ];
+  }
+  if (partIn[0] <= 0 || partIn[1] <= 0 || partIn[2] <= 0) {
+    final lower = analysis?['bbox_lower_mm'];
+    final upper = analysis?['bbox_upper_mm'];
+    if (lower is Map && upper is Map) {
+      final lo = CadVec3.fromJson(lower);
+      final hi = CadVec3.fromJson(upper);
+      partIn = [
+        (hi.x - lo.x).abs() / 25.4,
+        (hi.y - lo.y).abs() / 25.4,
+        (hi.z - lo.z).abs() / 25.4,
+      ];
+    }
+  }
+  if (partIn[0] <= 0 || partIn[1] <= 0 || partIn[2] <= 0) return null;
+
+  final stockSorted = dimsIn.take(3).toList()..sort();
+  final axisOrder = [0, 1, 2]..sort((a, b) => partIn[a].compareTo(partIn[b]));
+  final stockOnAxis = [0.0, 0.0, 0.0];
+  for (var i = 0; i < 3; i++) {
+    stockOnAxis[axisOrder[i]] = stockSorted[i];
+  }
+
+  final meshExt = [meshSize.x, meshSize.y, meshSize.z];
+  final half = [0.0, 0.0, 0.0];
+  for (var i = 0; i < 3; i++) {
+    final p = partIn[i];
+    if (p <= 1e-12) return null;
+    // Scale each mesh axis by stock/part so units match the GLB.
+    half[i] = meshExt[i] * 0.5 * (stockOnAxis[i] / p);
+  }
+  return CadStockBoxM(
+    centerM: meshCenter,
+    halfExtentsM: CadVec3(half[0], half[1], half[2]),
+  );
+}
+
 

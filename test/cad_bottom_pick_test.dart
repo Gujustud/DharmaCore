@@ -48,8 +48,9 @@ void main() {
     expect(cadStockSuggestOf(analysis), isNotNull);
   });
 
-  test('stock box maps smallest dim onto smallest part axis', () {
+  test('stock box maps smallest dim onto smallest part axis (mm mesh)', () {
     final analysis = <String, dynamic>{
+      'bbox_in': {'x': 7.244, 'y': 4.606, 'z': 0.492},
       'bbox_lower_mm': {'x': 0.0, 'y': 0.0, 'z': 0.0},
       'bbox_upper_mm': {
         'x': 7.244 * 25.4,
@@ -57,14 +58,35 @@ void main() {
         'z': 0.492 * 25.4,
       },
     };
-    final box = cadStockBoxMeters(
+    final fromMm = cadStockBoxMeters(
       analysis: analysis,
       stockSizeLabel: '1 x 5 x 7.5',
     )!;
-    expect(box.halfExtentsM.z, closeTo(0.5 * 0.0254, 1e-9));
-    expect(box.halfExtentsM.y, closeTo(2.5 * 0.0254, 1e-9));
-    expect(box.halfExtentsM.x, closeTo(3.75 * 0.0254, 1e-9));
-    expect(box.corners, hasLength(8));
+    // Absolute mm path: Z=0.5", Y=2.5", X=3.75" in mm halves
+    expect(fromMm.halfExtentsM.z, closeTo(0.5 * 25.4 * 0.5, 1e-6));
+    expect(fromMm.halfExtentsM.y, closeTo(2.5 * 25.4 * 0.5, 1e-6));
+    expect(fromMm.halfExtentsM.x, closeTo(3.75 * 25.4 * 0.5, 1e-6));
+
+    // Live mesh path: scale from getDimensions-style size (mm).
+    final meshSize = CadVec3(
+      7.244 * 25.4,
+      4.606 * 25.4,
+      0.492 * 25.4,
+    );
+    final fromMesh = cadStockBoxFromMesh(
+      meshCenter: CadVec3(
+        meshSize.x * 0.5,
+        meshSize.y * 0.5,
+        meshSize.z * 0.5,
+      ),
+      meshSize: meshSize,
+      analysis: analysis,
+      stockSizeLabel: '1 x 5 x 7.5',
+    )!;
+    expect(fromMesh.halfExtentsM.z, closeTo(0.5 * 25.4 * 0.5, 1e-6));
+    expect(fromMesh.halfExtentsM.y, closeTo(2.5 * 25.4 * 0.5, 1e-6));
+    expect(fromMesh.halfExtentsM.x, closeTo(3.75 * 25.4 * 0.5, 1e-6));
+    expect(fromMesh.corners, hasLength(8));
   });
 
   test('feature type entries sort by count', () {

@@ -97,8 +97,9 @@ void _ensureHotspotCss() {
 }
 .cad-stock-svg line {
   stroke: $_kStockStroke;
-  stroke-width: 1.75;
+  stroke-width: 2;
   stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
 }
 ''');
 }
@@ -504,6 +505,15 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
     _stockSvg?.style.display = 'none';
   }
 
+  CadVec3? _meshVec3(dynamic obj) {
+    if (obj == null) return null;
+    final x = _numProp(obj, 'x');
+    final y = _numProp(obj, 'y');
+    final z = _numProp(obj, 'z');
+    if (x == null || y == null || z == null) return null;
+    return CadVec3(x, y, z);
+  }
+
   void _syncStockOutline() {
     final el = _viewer;
     final stockSvg = _stockSvg;
@@ -514,7 +524,22 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
       return;
     }
 
-    final box = cadStockBoxMeters(
+    // Size in the GLB's own units via model-viewer (mm for Toolpath meshes).
+    CadStockBoxM? box;
+    try {
+      final size = _meshVec3(js_util.callMethod(el, 'getDimensions', []));
+      final center =
+          _meshVec3(js_util.callMethod(el, 'getBoundingBoxCenter', []));
+      if (size != null && center != null) {
+        box = cadStockBoxFromMesh(
+          meshCenter: center,
+          meshSize: size,
+          analysis: widget.analysis,
+          stockSizeLabel: widget.stockSizeLabel ?? '',
+        );
+      }
+    } catch (_) {}
+    box ??= cadStockBoxMeters(
       analysis: widget.analysis,
       stockSizeLabel: widget.stockSizeLabel ?? '',
     );
@@ -546,18 +571,25 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
     final corners = box.corners;
     for (var i = 0; i < 8; i++) {
       final p = corners[i];
-      _stockCorners[i].setAttribute(
-        'data-position',
-        '${p.x}m ${p.y}m ${p.z}m',
-      );
-      // Face outward-ish so hotspots stay queryable.
-      _stockCorners[i].setAttribute('data-normal', '0m 1m 0m');
+      final pos = '${p.x}m ${p.y}m ${p.z}m';
+      final nrm = '0m 1m 0m';
+      _stockCorners[i].setAttribute('data-position', pos);
+      _stockCorners[i].setAttribute('data-normal', nrm);
+      try {
+        js_util.callMethod(el, 'updateHotspot', [
+          js_util.jsify({
+            'name': 'hotspot-stock-$i',
+            'position': pos,
+            'normal': nrm,
+          }),
+        ]);
+      } catch (_) {}
     }
 
     stockSvg.style.display = '';
-    // Let model-viewer place hotspots, then project to SVG.
     scheduleMicrotask(_redrawStockSvg);
-    Future<void>.delayed(const Duration(milliseconds: 50), _redrawStockSvg);
+    Future<void>.delayed(const Duration(milliseconds: 32), _redrawStockSvg);
+    Future<void>.delayed(const Duration(milliseconds: 120), _redrawStockSvg);
   }
 
   void _redrawStockSvg() {
