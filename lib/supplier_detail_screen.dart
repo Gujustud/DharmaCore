@@ -110,8 +110,11 @@ class _SupplierDetailScreenState extends State<SupplierDetailScreen> with AutoOp
 
   Future<void> _loadCategories() async {
     try {
-      final cats = await PocketBaseService().getCategories();
-      setState(() => _categories = cats);
+      final pb = PocketBaseService();
+      // Ensure Materials exists so quote Buy vendors can be tagged here.
+      await pb.ensureMaterialsCategoryId();
+      final cats = await pb.getCategories();
+      if (mounted) setState(() => _categories = cats);
     } catch (_) {}
   }
 

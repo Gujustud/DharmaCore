@@ -34,6 +34,7 @@ class _CategoriesScreenState extends State<CategoriesScreen> with AutoOpenDrawer
 
     try {
       final pbService = PocketBaseService();
+      await pbService.ensureMaterialsCategoryId();
       final categories = await pbService.getCategories();
       setState(() {
         _categories = categories;

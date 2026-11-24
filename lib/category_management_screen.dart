@@ -67,6 +67,7 @@ class _CategoryManagementScreenState extends State<CategoryManagementScreen> wit
     setState(() => _isLoading = true);
     
     try {
+      await _pbService.ensureMaterialsCategoryId();
       final categories = await _pbService.getCategories();
       final subcategories = await _pbService.getSubcategories();
       final attributeLists = await _pbService.getAttributeLists();
