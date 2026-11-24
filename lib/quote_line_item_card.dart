@@ -1601,9 +1601,20 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
       );
     }
 
-    final markup = calc?['material_with_markup'];
-    final markupText =
-        markup != null ? formatQuoteMoney(_num(markup)) : '';
+    // Label hint: marked-up material (cost×markup%, incl. testing) + shipping.
+    // e.g. CAD 20 @ 30% + ship 10 → "Markup 26.00 + 10"
+    final materialTotal = calc?['material_with_markup'];
+    final shipCad = _num(item['material_shipping_cost']);
+    String markupHint = '';
+    if (materialTotal != null) {
+      final marked = quoteRound2(_num(materialTotal) - shipCad) ?? 0;
+      final markedText = formatQuoteMoney(marked);
+      if (shipCad > 0) {
+        markupHint = 'Markup $markedText + ${formatQuoteMoney(shipCad)}';
+      } else if (marked > 0) {
+        markupHint = 'Markup $markedText';
+      }
+    }
     final cadFilename = quoteCadFilenameOf(item);
     final cadDisplayName = quoteCadDisplayNameOf(item);
     final hasCad = cadFilename != null;
@@ -1881,9 +1892,9 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                             controller: _materialCad,
                             focusNode: _materialCadFocus,
                             decoration: _dec(
-                              markupText.isEmpty
+                              markupHint.isEmpty
                                   ? 'Actual cost (CAD)'
-                                  : 'Actual cost (CAD)  $markupText',
+                                  : 'Actual cost (CAD)  $markupHint',
                             ),
                             keyboardType:
                                 const TextInputType.numberWithOptions(
