@@ -52,15 +52,25 @@ String cadFeatureCountsLabel(Map<String, dynamic>? analysis) {
   return parts.join(' · ');
 }
 
-String cadFeatureTypesLabel(Map<String, dynamic>? analysis) {
+/// Feature-type counts sorted by frequency (highest first).
+List<MapEntry<String, int>> cadFeatureTypeEntries(
+  Map<String, dynamic>? analysis,
+) {
   final types = analysis?['feature_types'];
-  if (types is! Map || types.isEmpty) return '';
-  final entries = types.entries.toList()
-    ..sort((a, b) {
-      final an = a.value is num ? (a.value as num).toInt() : 0;
-      final bn = b.value is num ? (b.value as num).toInt() : 0;
-      return bn.compareTo(an);
-    });
+  if (types is! Map || types.isEmpty) return const [];
+  final entries = <MapEntry<String, int>>[
+    for (final e in types.entries)
+      MapEntry(
+        '${e.key}',
+        e.value is num ? (e.value as num).toInt() : int.tryParse('${e.value}') ?? 0,
+      ),
+  ]..sort((a, b) => b.value.compareTo(a.value));
+  return entries.where((e) => e.value > 0 && e.key.trim().isNotEmpty).toList();
+}
+
+String cadFeatureTypesLabel(Map<String, dynamic>? analysis) {
+  final entries = cadFeatureTypeEntries(analysis);
+  if (entries.isEmpty) return '';
   return entries.take(4).map((e) => '${e.key}×${e.value}').join(', ');
 }
 
@@ -300,5 +310,82 @@ String? cadToolpathPartIdOf(Map<String, dynamic>? analysis) {
 String cadToolpathMeshGlbUrl(String partId) {
   final base = AppConfig.mcpUrl.replaceAll(RegExp(r'/+$'), '');
   return '$base/api/toolpath/parts/$partId/mesh.glb';
+}
+
+/// Axis-aligned stock blank in model meters, centered on the part bbox.
+///
+/// [stockSizeLabel] is the shop blank (`1 x 5 x 7.5`). The three sizes are
+/// mapped onto X/Y/Z by sorting against the part AABB extents (smallest stock
+/// dim → smallest part axis) so the outline grows each axis fairly.
+class CadStockBoxM {
+  final CadVec3 centerM;
+  final CadVec3 halfExtentsM;
+
+  const CadStockBoxM({required this.centerM, required this.halfExtentsM});
+
+  /// Eight corners in meters (model space).
+  List<CadVec3> get corners {
+    final c = centerM;
+    final h = halfExtentsM;
+    return [
+      CadVec3(c.x - h.x, c.y - h.y, c.z - h.z),
+      CadVec3(c.x + h.x, c.y - h.y, c.z - h.z),
+      CadVec3(c.x + h.x, c.y + h.y, c.z - h.z),
+      CadVec3(c.x - h.x, c.y + h.y, c.z - h.z),
+      CadVec3(c.x - h.x, c.y - h.y, c.z + h.z),
+      CadVec3(c.x + h.x, c.y - h.y, c.z + h.z),
+      CadVec3(c.x + h.x, c.y + h.y, c.z + h.z),
+      CadVec3(c.x - h.x, c.y + h.y, c.z + h.z),
+    ];
+  }
+}
+
+/// Parse `1 x 5 x 7.5` / `1 × 5 × 7.5` into positive numbers.
+List<double> cadParseSizeNumbers(String sizeLabel) {
+  final matches = RegExp(r'\d+\.?\d*').allMatches(sizeLabel.trim());
+  return [
+    for (final m in matches) double.tryParse(m.group(0) ?? ''),
+  ].whereType<double>().where((n) => n > 0).toList();
+}
+
+/// Build a stock outline box from analysis bbox + stock size label, or null.
+CadStockBoxM? cadStockBoxMeters({
+  required Map<String, dynamic>? analysis,
+  required String stockSizeLabel,
+}) {
+  final lower = analysis?['bbox_lower_mm'];
+  final upper = analysis?['bbox_upper_mm'];
+  if (lower is! Map || upper is! Map) return null;
+
+  final dimsIn = cadParseSizeNumbers(stockSizeLabel);
+  if (dimsIn.length < 3) return null;
+
+  final lo = CadVec3.fromJson(lower);
+  final hi = CadVec3.fromJson(upper);
+  // mm → m (glTF / model-viewer units)
+  const mmToM = 0.001;
+  final center = CadVec3(
+    (lo.x + hi.x) * 0.5 * mmToM,
+    (lo.y + hi.y) * 0.5 * mmToM,
+    (lo.z + hi.z) * 0.5 * mmToM,
+  );
+  final partExt = [
+    (hi.x - lo.x).abs() * mmToM,
+    (hi.y - lo.y).abs() * mmToM,
+    (hi.z - lo.z).abs() * mmToM,
+  ];
+  final stockM = [
+    for (final d in dimsIn.take(3)) d * 0.0254,
+  ]..sort();
+
+  final axisOrder = [0, 1, 2]..sort((a, b) => partExt[a].compareTo(partExt[b]));
+  final half = [0.0, 0.0, 0.0];
+  for (var i = 0; i < 3; i++) {
+    half[axisOrder[i]] = stockM[i] * 0.5;
+  }
+  return CadStockBoxM(
+    centerM: center,
+    halfExtentsM: CadVec3(half[0], half[1], half[2]),
+  );
 }
 

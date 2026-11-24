@@ -3,6 +3,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:html' as html;
 import 'dart:js_util' as js_util;
+import 'dart:math' as math;
+import 'dart:svg' as svg;
 import 'dart:typed_data';
 import 'dart:ui_web' as ui_web;
 
@@ -29,6 +31,24 @@ const kCadPartColors = <CadPartColor>[
   CadPartColor('blue', 'Shop blue', Color(0xFF3D6FA8)),
 ];
 
+/// Yellow stock blank outline (shop accent).
+const _kStockStroke = '#F9A825';
+
+const _kStockEdges = <(int, int)>[
+  (0, 1),
+  (1, 2),
+  (2, 3),
+  (3, 0),
+  (4, 5),
+  (5, 6),
+  (6, 7),
+  (7, 4),
+  (0, 4),
+  (1, 5),
+  (2, 6),
+  (3, 7),
+];
+
 void _ensureHotspotCss() {
   if (_hotspotCssInjected) return;
   _hotspotCssInjected = true;
@@ -36,30 +56,14 @@ void _ensureHotspotCss() {
     ..text = '''
 .cad-fixture-hotspot {
   display: block;
-  width: 18px;
-  height: 18px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
   border: 2px solid #fff;
   background: #e65100;
   box-shadow: 0 0 0 2px rgba(230,81,0,0.45), 0 1px 4px rgba(0,0,0,0.35);
   transform: translate(-50%, -50%);
   pointer-events: none;
-}
-.cad-fixture-hotspot::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 3px;
-  height: 28px;
-  margin-left: -1.5px;
-  margin-top: -2px;
-  background: #e65100;
-  border-radius: 1px;
-  box-shadow: 0 0 0 1px #fff;
-  transform-origin: top center;
-  /* Point along +data-normal (out of face / toward table when bottom). */
-  transform: rotateX(90deg);
 }
 .cad-pick-hint {
   position: absolute;
@@ -73,27 +77,58 @@ void _ensureHotspotCss() {
   pointer-events: none;
   z-index: 2;
 }
+.cad-stock-corner {
+  width: 0;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.cad-stock-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+  overflow: visible;
+}
+.cad-stock-svg line {
+  stroke: $_kStockStroke;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+}
 ''');
 }
 
 /// Web 3D CAD preview via `<model-viewer>`.
 ///
 /// Click a face (without dragging) to set fixture-down from the surface
-/// normal. A hotspot marks the pick; the model is not reoriented.
+/// normal. Optional yellow stock wire box follows [stockSizeLabel].
 class CadGlbViewer extends StatefulWidget {
   final String meshUrl;
 
-  /// Current fixture-down (for the Down badge); picking calls [onFixtureFacePicked].
+  /// When set, face pick marker stays; picking calls [onFixtureFacePicked].
   final CadVec3? fixtureDown;
 
   /// Called with the outward face normal (table-down when that face is bottom).
   final ValueChanged<CadVec3>? onFixtureFacePicked;
+
+  /// Live stock blank label (`1 x 5 x 7.5`) — drives the yellow outline.
+  final String? stockSizeLabel;
+
+  /// Analysis JSON (bbox corners) for centering the stock box.
+  final Map<String, dynamic>? analysis;
 
   const CadGlbViewer({
     super.key,
     required this.meshUrl,
     this.fixtureDown,
     this.onFixtureFacePicked,
+    this.stockSizeLabel,
+    this.analysis,
   });
 
   @override
@@ -108,15 +143,22 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
   html.Element? _viewer;
   html.Element? _hotspot;
   html.Element? _hint;
+  svg.SvgSvgElement? _stockSvg;
+  final List<html.Element> _stockCorners = [];
+  final List<svg.LineElement> _stockLines = [];
   String? _blobUrl;
   String? _loadError;
   bool _loading = true;
   int _loadGen = 0;
   String _colorId = kCadPartColors.first.id;
+  bool _xray = false;
+  bool _showStockOutline = true;
   num? _ptrDownX;
   num? _ptrDownY;
   StreamSubscription<html.MouseEvent>? _downSub;
   StreamSubscription<html.MouseEvent>? _clickSub;
+  StreamSubscription<html.Event>? _cameraSub;
+  StreamSubscription<html.Event>? _loadSub;
 
   @override
   void initState() {
@@ -139,6 +181,8 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
   void dispose() {
     _downSub?.cancel();
     _clickSub?.cancel();
+    _cameraSub?.cancel();
+    _loadSub?.cancel();
     _revokeBlob();
     super.dispose();
   }
@@ -150,11 +194,16 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
       _reloadMesh();
       return;
     }
-    // Clear pick marker when bottom is cleared from the rail.
     if (oldWidget.fixtureDown != null && widget.fixtureDown == null) {
       _hotspot?.remove();
       _hotspot = null;
       _hint?.text = 'Click a face for fixture bottom (drag to orbit)';
+    }
+    final stockChanged =
+        oldWidget.stockSizeLabel != widget.stockSizeLabel ||
+            oldWidget.analysis != widget.analysis;
+    if (stockChanged) {
+      _syncStockOutline();
     }
   }
 
@@ -276,12 +325,16 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
 
     _downSub?.cancel();
     _clickSub?.cancel();
+    _cameraSub?.cancel();
+    _loadSub?.cancel();
     _hotspot = null;
+    _stockCorners.clear();
+    _stockLines.clear();
+    _stockSvg = null;
 
     final el = html.Element.tag('model-viewer')
       ..setAttribute('src', blobUrl)
       ..setAttribute('camera-controls', '')
-      // Keep orbit/pan; turn off click-to-recenter so face pick wins.
       ..setAttribute('disable-tap', '')
       ..setAttribute('touch-action', 'pan-y')
       ..setAttribute('interaction-prompt', 'none')
@@ -301,9 +354,13 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
       ..text = 'Click a face for fixture bottom (drag to orbit)';
     _hint = hint;
 
+    final stockSvg = svg.SvgSvgElement()..classes.add('cad-stock-svg');
+    _stockSvg = stockSvg;
+
     final completer = Completer<void>();
-    el.on['load'].listen((_) {
-      _applyPartColor(el, _selectedColor.color);
+    _loadSub = el.on['load'].listen((_) {
+      _applyPartAppearance(el);
+      _syncStockOutline();
       if (!completer.isCompleted) completer.complete();
     });
     el.on['error'].listen((_) {
@@ -317,16 +374,19 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
       _ptrDownY = e.client.y;
     });
     _clickSub = el.onClick.listen(_onViewerClick);
+    _cameraSub = el.on['camera-change'].listen((_) => _redrawStockSvg());
 
     host.children.clear();
     host.append(el);
+    host.append(stockSvg);
     host.append(hint);
     _viewer = el;
 
     try {
       await completer.future.timeout(const Duration(seconds: 30));
     } on TimeoutException {
-      _applyPartColor(el, _selectedColor.color);
+      _applyPartAppearance(el);
+      _syncStockOutline();
     }
   }
 
@@ -334,16 +394,12 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
     final el = _viewer;
     if (el == null || widget.onFixtureFacePicked == null) return;
 
-    // Ignore orbit drags.
     if (_ptrDownX != null && _ptrDownY != null) {
       final dx = e.client.x - _ptrDownX!;
       final dy = e.client.y - _ptrDownY!;
       if (dx * dx + dy * dy > 36) return;
     }
 
-    // model-viewer 4.x getNDC expects viewport clientX/clientY (it subtracts
-    // getBoundingClientRect itself). Passing element-local coords double-
-    // offsets and every pick misses.
     final clientX = e.client.x.toDouble();
     final clientY = e.client.y.toDouble();
 
@@ -354,7 +410,7 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
         'positionAndNormalFromPoint',
         [clientX, clientY],
       );
-    } catch (err) {
+    } catch (_) {
       _hint?.text = 'Face pick failed — try again';
       return;
     }
@@ -382,8 +438,7 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
       _setHotspotFromHit(el, positionObj, normalObj, normal);
     }
 
-    _hint?.text =
-        'Bottom face set (${cadDirectionLabel(normal)}) — Apply stock when ready';
+    _hint?.text = 'Fixture face set — Apply stock when ready';
 
     if (mounted) setState(() {});
     widget.onFixtureFacePicked!(normal);
@@ -437,7 +492,141 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
     _hotspot = spot;
   }
 
-  void _applyPartColor(html.Element el, Color color) {
+  void _clearStockOutlineDom() {
+    for (final c in _stockCorners) {
+      c.remove();
+    }
+    _stockCorners.clear();
+    for (final line in _stockLines) {
+      line.remove();
+    }
+    _stockLines.clear();
+    _stockSvg?.style.display = 'none';
+  }
+
+  void _syncStockOutline() {
+    final el = _viewer;
+    final stockSvg = _stockSvg;
+    if (el == null || stockSvg == null) return;
+
+    if (!_showStockOutline) {
+      _clearStockOutlineDom();
+      return;
+    }
+
+    final box = cadStockBoxMeters(
+      analysis: widget.analysis,
+      stockSizeLabel: widget.stockSizeLabel ?? '',
+    );
+    if (box == null) {
+      _clearStockOutlineDom();
+      return;
+    }
+
+    if (_stockCorners.length != 8) {
+      _clearStockOutlineDom();
+      for (var i = 0; i < 8; i++) {
+        final corner = html.DivElement()
+          ..className = 'cad-stock-corner'
+          ..slot = 'hotspot-stock-$i';
+        el.append(corner);
+        _stockCorners.add(corner);
+      }
+      for (final _ in _kStockEdges) {
+        final line = svg.LineElement()
+          ..setAttribute('x1', '0')
+          ..setAttribute('y1', '0')
+          ..setAttribute('x2', '0')
+          ..setAttribute('y2', '0');
+        stockSvg.append(line);
+        _stockLines.add(line);
+      }
+    }
+
+    final corners = box.corners;
+    for (var i = 0; i < 8; i++) {
+      final p = corners[i];
+      _stockCorners[i].setAttribute(
+        'data-position',
+        '${p.x}m ${p.y}m ${p.z}m',
+      );
+      // Face outward-ish so hotspots stay queryable.
+      _stockCorners[i].setAttribute('data-normal', '0m 1m 0m');
+    }
+
+    stockSvg.style.display = '';
+    // Let model-viewer place hotspots, then project to SVG.
+    scheduleMicrotask(_redrawStockSvg);
+    Future<void>.delayed(const Duration(milliseconds: 50), _redrawStockSvg);
+  }
+
+  void _redrawStockSvg() {
+    final el = _viewer;
+    final stockSvg = _stockSvg;
+    if (el == null ||
+        stockSvg == null ||
+        !_showStockOutline ||
+        _stockCorners.length != 8 ||
+        _stockLines.length != _kStockEdges.length) {
+      return;
+    }
+
+    final rect = el.getBoundingClientRect();
+    final w = rect.width;
+    final h = rect.height;
+    if (w <= 0 || h <= 0) return;
+    stockSvg.setAttribute('viewBox', '0 0 $w $h');
+    stockSvg.style.width = '${w}px';
+    stockSvg.style.height = '${h}px';
+
+    final pts = <math.Point<double>?>[];
+    for (var i = 0; i < 8; i++) {
+      pts.add(_hotspotCanvasPoint(el, 'hotspot-stock-$i', w, h));
+    }
+
+    for (var e = 0; e < _kStockEdges.length; e++) {
+      final (a, b) = _kStockEdges[e];
+      final pa = pts[a];
+      final pb = pts[b];
+      final line = _stockLines[e];
+      if (pa == null || pb == null) {
+        line.style.display = 'none';
+        continue;
+      }
+      line.style.display = '';
+      line.setAttribute('x1', pa.x.toStringAsFixed(1));
+      line.setAttribute('y1', pa.y.toStringAsFixed(1));
+      line.setAttribute('x2', pb.x.toStringAsFixed(1));
+      line.setAttribute('y2', pb.y.toStringAsFixed(1));
+    }
+  }
+
+  math.Point<double>? _hotspotCanvasPoint(
+    html.Element viewer,
+    String name,
+    num viewW,
+    num viewH,
+  ) {
+    try {
+      final data = js_util.callMethod(viewer, 'queryHotspot', [name]);
+      if (data == null) return null;
+      final canvas = js_util.getProperty(data, 'canvasPosition');
+      if (canvas == null) return null;
+      final x = _numProp(canvas, 'x');
+      final y = _numProp(canvas, 'y');
+      if (x == null || y == null) return null;
+      if (!x.isFinite || !y.isFinite) return null;
+      // Hide edges that project far off-canvas (behind camera, etc.).
+      if (x < -80 || y < -80 || x > viewW + 80 || y > viewH + 80) {
+        return null;
+      }
+      return math.Point(x, y);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _applyPartAppearance(html.Element el) {
     try {
       final model = js_util.getProperty(el, 'model');
       if (model == null) return;
@@ -445,10 +634,22 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
       if (materials == null) return;
       final len = js_util.getProperty(materials, 'length');
       if (len is! int) return;
-      final rgba = <double>[color.r, color.g, color.b, 1.0];
+      final color = _selectedColor.color;
+      final alpha = _xray ? 0.38 : 1.0;
+      final rgba = <double>[color.r, color.g, color.b, alpha];
       for (var i = 0; i < len; i++) {
         final mat = js_util.getProperty(materials, i);
         if (mat == null) continue;
+        try {
+          js_util.callMethod(
+            mat,
+            'setAlphaMode',
+            [_xray ? 'BLEND' : 'OPAQUE'],
+          );
+        } catch (_) {}
+        try {
+          js_util.setProperty(mat, 'doubleSided', _xray);
+        } catch (_) {}
         final pbr = js_util.getProperty(mat, 'pbrMetallicRoughness');
         if (pbr == null) continue;
         js_util.callMethod(pbr, 'setBaseColorFactor', [rgba]);
@@ -464,8 +665,21 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
     setState(() => _colorId = c.id);
     final viewer = _viewer;
     if (viewer != null) {
-      _applyPartColor(viewer, c.color);
+      _applyPartAppearance(viewer);
     }
+  }
+
+  void _toggleXray() {
+    setState(() => _xray = !_xray);
+    final viewer = _viewer;
+    if (viewer != null) {
+      _applyPartAppearance(viewer);
+    }
+  }
+
+  void _toggleStockOutline() {
+    setState(() => _showStockOutline = !_showStockOutline);
+    _syncStockOutline();
   }
 
   @override
@@ -524,7 +738,6 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
                 ),
               ),
             ),
-          // Keep Flutter chrome off the mesh so DOM clicks reach model-viewer.
           if (_loadError == null)
             Positioned(
               left: 8,
@@ -544,29 +757,70 @@ class _CadGlbViewerState extends State<CadGlbViewer> {
                 ],
               ),
             ),
-          if (_loadError == null && widget.fixtureDown != null)
+          if (_loadError == null)
             Positioned(
-              right: 8,
-              bottom: 8,
-              child: IgnorePointer(
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.55),
-                    borderRadius: BorderRadius.circular(4),
+              right: 4,
+              bottom: 4,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _ViewerToggle(
+                    tooltip: _xray ? 'Solid part' : 'X-ray part',
+                    icon: Icons.opacity,
+                    selected: _xray,
+                    onTap: _toggleXray,
                   ),
-                  child: Text(
-                    'Down ${cadDirectionLabel(widget.fixtureDown!)}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                    ),
+                  _ViewerToggle(
+                    tooltip: _showStockOutline
+                        ? 'Hide stock outline'
+                        : 'Show stock outline',
+                    icon: Icons.crop_square_outlined,
+                    selected: _showStockOutline,
+                    accent: const Color(0xFFF9A825),
+                    onTap: _toggleStockOutline,
                   ),
-                ),
+                ],
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _ViewerToggle extends StatelessWidget {
+  final String tooltip;
+  final IconData icon;
+  final bool selected;
+  final Color? accent;
+  final VoidCallback onTap;
+
+  const _ViewerToggle({
+    required this.tooltip,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+    this.accent,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = selected
+        ? (accent ?? Colors.white)
+        : Colors.white70;
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.black.withValues(alpha: selected ? 0.62 : 0.42),
+        borderRadius: BorderRadius.circular(6),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(6),
+          child: Padding(
+            padding: const EdgeInsets.all(6),
+            child: Icon(icon, size: 18, color: fg),
+          ),
+        ),
       ),
     );
   }

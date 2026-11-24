@@ -217,6 +217,7 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
   bool _cadUploading = false;
   bool _cadAnalyzing = false;
   bool _cadSectionOpen = true;
+  bool _cadFeaturesOpen = false;
 
   static const _cadMaxBytes = 52428800; // 50 MB
   static const _cadExtensions = ['step', 'stp', 'x_t', 'x_b'];
@@ -273,6 +274,9 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
     _testingCost = TextEditingController(text: _numText(item['testing_cost']));
     _alloy = TextEditingController(text: _str(item['alloy']));
     _stockSize = TextEditingController(text: _str(item['stock_size_per_part']));
+    _stockSize.addListener(() {
+      if (mounted) setState(() {});
+    });
     _pieces = TextEditingController(text: _numText(item['pieces']));
     _orderedLength = TextEditingController(text: _str(item['ordered_length']));
     _materialNote = TextEditingController(
@@ -1082,6 +1086,109 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
     );
   }
 
+  /// Expandable Features summary + type breakdown (holes, pockets, …).
+  Widget _cadFeaturesPanel({
+    required String summary,
+    required List<MapEntry<String, int>> types,
+    required ColorScheme scheme,
+  }) {
+    return Material(
+      color: scheme.surfaceContainerHighest,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: scheme.outlineVariant),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: types.isEmpty
+                ? null
+                : () => setState(() => _cadFeaturesOpen = !_cadFeaturesOpen),
+            child: SizedBox(
+              height: _fieldControlHeight,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Features',
+                            style: TextStyle(
+                              fontSize: 11,
+                              height: 1.1,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                          Text(
+                            summary,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              height: 1.2,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (types.isNotEmpty)
+                      Icon(
+                        _cadFeaturesOpen
+                            ? Icons.expand_less
+                            : Icons.expand_more,
+                        size: 20,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (_cadFeaturesOpen && types.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final e in types)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              e.key,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            '${e.value}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _cadAttachedSection(String displayName) {
     final sizeLabel = formatCadFileBytes(widget.lineItem['cad_file_bytes']);
     final analysis = parseCadAnalysis(widget.lineItem['cad_analysis']);
@@ -1203,18 +1310,8 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                       final sideBySide = constraints.maxWidth >= 560;
                       const railW = 220.0;
                       const gap = 12.0;
-                      // Toolpath candidates are tool-approach dirs; fixture
-                      // down is the opposite (face on the table).
-                      final fixtureDowns = <CadVec3>[];
-                      for (final toolDir
-                          in cadCandidateDirectionsOf(analysis)) {
-                        final down = -toolDir.normalized();
-                        if (!fixtureDowns
-                            .any((e) => e.nearlyEquals(down))) {
-                          fixtureDowns.add(down);
-                        }
-                      }
                       final selectedBottom = cadBottomDirectionOf(analysis);
+                      final featureTypes = cadFeatureTypeEntries(analysis);
 
                       final railChildren = <Widget>[
                         if (partSizeLabel.isNotEmpty)
@@ -1231,10 +1328,10 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                             expandWidth: true,
                           ),
                         if (featureCounts.isNotEmpty)
-                          _cadFactChip(
-                            label: 'Features',
-                            value: featureCounts,
-                            expandWidth: true,
+                          _cadFeaturesPanel(
+                            summary: featureCounts,
+                            types: featureTypes,
+                            scheme: scheme,
                           ),
                         Text(
                           'Bottom (fixture)',
@@ -1247,36 +1344,22 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                         Text(
                           selectedBottom == null
                               ? 'Click a face on the model'
-                              : 'Selected ${cadDirectionLabel(selectedBottom)}',
+                              : 'Fixture face set',
                           style: TextStyle(
                             fontSize: 11,
                             color: scheme.onSurfaceVariant,
                           ),
                           textAlign: TextAlign.right,
                         ),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: TextButton(
-                            onPressed: busy || selectedBottom == null
-                                ? null
-                                : () => _setCadBottomDirection(null),
-                            child: const Text('Clear bottom'),
-                          ),
-                        ),
-                        if (fixtureDowns.isNotEmpty)
-                          Wrap(
-                            spacing: 6,
-                            runSpacing: 6,
-                            alignment: WrapAlignment.end,
-                            children: [
-                              for (final down in fixtureDowns)
-                                ActionChip(
-                                  label: Text(cadDirectionLabel(down)),
-                                  onPressed: busy
-                                      ? null
-                                      : () => _setCadBottomDirection(down),
-                                ),
-                            ],
+                        if (selectedBottom != null)
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton(
+                              onPressed: busy
+                                  ? null
+                                  : () => _setCadBottomDirection(null),
+                              child: const Text('Clear bottom'),
+                            ),
                           ),
                         if (stockSuggest != null)
                           SizedBox(
@@ -1367,6 +1450,10 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                         onFixtureFacePicked: busy
                             ? null
                             : (n) => _setCadBottomDirection(n),
+                        stockSizeLabel: _stockSize.text.trim().isNotEmpty
+                            ? _stockSize.text.trim()
+                            : stockSuggest,
+                        analysis: analysis,
                       );
 
                       if (sideBySide) {

@@ -22,12 +22,16 @@ class CadGlbViewer extends StatelessWidget {
   final String meshUrl;
   final CadVec3? fixtureDown;
   final ValueChanged<CadVec3>? onFixtureFacePicked;
+  final String? stockSizeLabel;
+  final Map<String, dynamic>? analysis;
 
   const CadGlbViewer({
     super.key,
     required this.meshUrl,
     this.fixtureDown,
     this.onFixtureFacePicked,
+    this.stockSizeLabel,
+    this.analysis,
   });
 
   @override
@@ -41,7 +45,8 @@ class CadGlbViewer extends StatelessWidget {
         border: Border.all(color: scheme.outlineVariant),
       ),
       child: Text(
-        '3D face pick is available in the web app',
+        '3D face pick / stock outline is available in the web app',
+        textAlign: TextAlign.center,
         style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
       ),
     );

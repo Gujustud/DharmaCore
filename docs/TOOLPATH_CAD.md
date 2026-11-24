@@ -9,7 +9,10 @@ Quote lines can upload CAD (Phase A) and optionally run **Toolpath** analysis fo
 - Results stored on `quote_line_items.cad_analysis` (JSON text)
 - **Stock suggest:** bounding box (inches) + `0.1"` pad, each axis rounded **up** to the next `0.5"`, then ordered **thickness × width × length** (small → large) so Find on shelf treats the last number as cut length (override with `TOOLPATH_STOCK_PAD_IN` / `TOOLPATH_STOCK_STEP_IN` on the MCP host)
 - **3D preview (Phase 3):** Flutter `<model-viewer>` loads `GET {MCP_URL}/api/toolpath/parts/{toolpath_part_id}/mesh.glb`. MCP proxies Toolpath (analysis GLB when still hot, else `POST/GET /v1/parts/{id}/mesh` tessellation) and caches bytes briefly (`TOOLPATH_MESH_CACHE_TTL_S`, default 600). Toolpath parts expire (~retention window) — Re-analyze if the viewer 410s.
-- **Fixture bottom:** Click a face in the 3D preview (`positionAndNormalFromPoint` with viewport `clientX/Y` — model-viewer 4.x subtracts the element rect itself) to set `bottom_direction` from the surface normal (hotspot marks the pick). Optional setup chips remain as shortcuts. Stock extents are measured in the fixture frame, then padded/ceiled and sorted **small → large** (same as AABB). Clear bottom restores AABB stock. Changing bottom refreshes applied stock when it matched the previous suggest. The model is not reoriented on pick. Default part tint is charcoal.
+- **Fixture bottom:** Click a face in the 3D preview to set `bottom_direction` (hotspot marks the pick; no ±XYZ chips). Stock extents use the fixture frame, then pad/ceil and sort **small → large**. Clear bottom restores AABB stock; changing bottom refreshes applied stock when it matched the previous suggest. Default part tint is charcoal.
+- **Stock outline:** Yellow wire box in the viewer, sized from `stock_size_per_part` (typed or Apply stock), centered on the part bbox. Toggle on the viewer chrome; updates live when the stock field changes.
+- **X-ray:** Viewer toggle sets material alpha/BLEND so internal holes read through the part.
+- **Features panel:** Rail Features chip expands to list `feature_types` counts (holes, pockets, …).
 
 ## CT 105 setup
 

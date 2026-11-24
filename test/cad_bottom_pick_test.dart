@@ -47,4 +47,31 @@ void main() {
     expect(got.nearlyEquals(n), isTrue);
     expect(cadStockSuggestOf(analysis), isNotNull);
   });
+
+  test('stock box maps smallest dim onto smallest part axis', () {
+    final analysis = <String, dynamic>{
+      'bbox_lower_mm': {'x': 0.0, 'y': 0.0, 'z': 0.0},
+      'bbox_upper_mm': {
+        'x': 7.244 * 25.4,
+        'y': 4.606 * 25.4,
+        'z': 0.492 * 25.4,
+      },
+    };
+    final box = cadStockBoxMeters(
+      analysis: analysis,
+      stockSizeLabel: '1 x 5 x 7.5',
+    )!;
+    expect(box.halfExtentsM.z, closeTo(0.5 * 0.0254, 1e-9));
+    expect(box.halfExtentsM.y, closeTo(2.5 * 0.0254, 1e-9));
+    expect(box.halfExtentsM.x, closeTo(3.75 * 0.0254, 1e-9));
+    expect(box.corners, hasLength(8));
+  });
+
+  test('feature type entries sort by count', () {
+    final entries = cadFeatureTypeEntries({
+      'feature_types': {'pocket': 2, 'hole': 40, 'chamfer': 5},
+    });
+    expect(entries.map((e) => e.key).toList(), ['hole', 'chamfer', 'pocket']);
+    expect(entries.first.value, 40);
+  });
 }
