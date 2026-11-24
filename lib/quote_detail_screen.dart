@@ -39,6 +39,7 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
   List<Map<String, dynamic>> _lineItems = [];
   List<dynamic> _customers = [];
   List<dynamic> _suppliers = [];
+  List<dynamic> _materialSuppliers = [];
   List<ShopMaterial> _materials = [];
   bool _loading = true;
   bool _saving = false;
@@ -117,6 +118,16 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
       final pb = PocketBaseService();
       final customers = await pb.getCustomers();
       final suppliers = await pb.getSuppliers();
+      List<dynamic> materialSuppliers = suppliers;
+      try {
+        final materialsCatId = await pb.ensureMaterialsCategoryId();
+        if (materialsCatId != null && materialsCatId.isNotEmpty) {
+          materialSuppliers =
+              await pb.getSuppliers(categoryId: materialsCatId);
+        }
+      } catch (_) {
+        materialSuppliers = suppliers;
+      }
       List<ShopMaterial> materials = [];
       try {
         final matRecords = await pb.getMaterials();
@@ -175,6 +186,7 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
         setState(() {
           _customers = customers;
           _suppliers = suppliers;
+          _materialSuppliers = materialSuppliers;
           _materials = materials;
           _quote = quote;
           _lineItems = lines;
@@ -1099,6 +1111,7 @@ class _QuoteDetailScreenState extends State<QuoteDetailScreen> with AutoOpenDraw
               quoteSettings: getQuoteSettings(_quote),
               calculated: calcLines[index],
               suppliers: _suppliers,
+              materialSuppliers: _materialSuppliers,
               materials: _materials,
               alloySuggestions: _alloySuggestions,
               lineIndex: index,

@@ -12,6 +12,7 @@ import 'cad_glb_viewer.dart';
 import 'quote_cad_analysis.dart';
 import 'quote_calculations.dart';
 import 'shelf_stock_match.dart';
+import 'supplier_search_field.dart';
 
 /// PocketBase stored `cad_files` name on a quote line (max 1; may include PB suffix).
 String? quoteCadFilenameOf(Map<String, dynamic> item) {
@@ -183,6 +184,8 @@ class QuoteLineItemCard extends StatefulWidget {
   final Map<String, dynamic> quoteSettings;
   final Map<String, dynamic>? calculated;
   final List<dynamic> suppliers;
+  /// Filtered for quote Buy (Materials category); falls back to [suppliers].
+  final List<dynamic> materialSuppliers;
   final List<ShopMaterial> materials;
   final List<String> alloySuggestions;
   final int lineIndex;
@@ -198,6 +201,7 @@ class QuoteLineItemCard extends StatefulWidget {
     required this.quoteSettings,
     required this.calculated,
     required this.suppliers,
+    this.materialSuppliers = const [],
     this.materials = const [],
     required this.alloySuggestions,
     required this.lineIndex,
@@ -1601,6 +1605,31 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
       );
     }
 
+    /// Type-to-search material vendors (Materials-category filtered list).
+    Widget materialSupplierSearch() {
+      const field = 'material_vendor';
+      final current = _relationId(item[field]);
+      final base = widget.materialSuppliers.isNotEmpty
+          ? widget.materialSuppliers
+          : widget.suppliers;
+      final options = <dynamic>[...base];
+      if (current != null && !options.any((s) => s.id == current)) {
+        for (final s in widget.suppliers) {
+          if (s.id == current) {
+            options.add(s);
+            break;
+          }
+        }
+      }
+      return SupplierSearchField(
+        suppliers: options,
+        selectedSupplierId: current,
+        noneOptionLabel: '— Select —',
+        decoration: _dec('Material supplier'),
+        onSupplierSelected: (id) => _patch({field: id}),
+      );
+    }
+
     // Label hint: marked-up material (cost×markup%, incl. testing) + shipping.
     // e.g. CAD 20 @ 30% + ship 10 → "Markup 26.00 + 10"
     final materialTotal = calc?['material_with_markup'];
@@ -1869,10 +1898,7 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                     ],
                     if (quoteMaterialSourceOf(item) == 'buy') ...[
                       const SizedBox(height: 8),
-                      supplierDropdown(
-                        'material_vendor',
-                        'Material supplier',
-                      ),
+                      materialSupplierSearch(),
                     ],
                     const SizedBox(height: 12),
                     Text(

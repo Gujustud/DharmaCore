@@ -1302,6 +1302,46 @@ class PocketBaseService {
     }
   }
 
+  /// Category name used to tag material vendors (quote Buy supplier list).
+  static const materialsCategoryName = 'Materials';
+
+  /// Find or create the **Materials** supplier category; returns its id.
+  ///
+  /// Quote Buy material-supplier pickers call [getSuppliers] with this id.
+  /// Untagged suppliers still show for all (backward compatible).
+  Future<String?> ensureMaterialsCategoryId() async {
+    try {
+      final cats = await getCategories();
+      for (final c in cats) {
+        final name = '${c.data['name'] ?? ''}'.trim();
+        if (name.toLowerCase() == materialsCategoryName.toLowerCase()) {
+          return c.id as String;
+        }
+      }
+      var maxOrder = 0;
+      for (final c in cats) {
+        final o = c.data['sort_order'];
+        final n = o is num ? o.toInt() : int.tryParse('$o') ?? 0;
+        if (n > maxOrder) maxOrder = n;
+      }
+      await createCategory(
+        name: materialsCategoryName,
+        sortOrder: maxOrder + 1,
+      );
+      final again = await getCategories();
+      for (final c in again) {
+        final name = '${c.data['name'] ?? ''}'.trim();
+        if (name.toLowerCase() == materialsCategoryName.toLowerCase()) {
+          return c.id as String;
+        }
+      }
+      return null;
+    } catch (e) {
+      print('Error ensureMaterialsCategoryId: $e');
+      return null;
+    }
+  }
+
   // Create a new category
   Future<void> createCategory({
     required String name,
