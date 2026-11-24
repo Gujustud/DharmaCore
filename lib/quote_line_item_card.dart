@@ -2245,7 +2245,7 @@ class _QuoteLineItemCardState extends State<QuoteLineItemCard> {
                         final perUsd =
                             _num(calc['price_per_part_usd']) * factor;
                         final pctLabel = finalPct > 0
-                            ? ' (incl. ${finalPct.toStringAsFixed(0)}%)'
+                            ? ' (+${finalPct.toStringAsFixed(0)}%)'
                             : '';
                         final hasQpp = _str(
                           widget.lineItem['quote_part_price_cad'],
