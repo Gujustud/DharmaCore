@@ -3285,7 +3285,7 @@ class PocketBaseService {
       // Preserve trailing length on survivor purchases before dropping it
       // from the catalog size (e.g. 3×6×23 → Length 23, size 3×6).
       if (survivorLen != null && survivorLen > 0) {
-        lengthsFilled += await _fillMissingPurchaseLengths(
+        lengthsFilled += await fillMissingPurchaseLengths(
           survivorId,
           survivorLen,
         );
@@ -3316,7 +3316,7 @@ class PocketBaseService {
   }
 
   /// Set [lengthIn] on material purchase lines that have no `length_in` yet.
-  Future<int> _fillMissingPurchaseLengths(
+  Future<int> fillMissingPurchaseLengths(
     String materialId,
     double lengthIn,
   ) async {

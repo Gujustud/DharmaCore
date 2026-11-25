@@ -841,8 +841,8 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
       child: Center(
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            // Embedded panel uses the full detail column; standalone form stays readable.
-            maxWidth: widget.embedded ? kWorkspaceContentMaxWidth : 900,
+            // Same width whether opened from Purchases (embedded) or Material push.
+            maxWidth: kWorkspaceContentMaxWidth,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,

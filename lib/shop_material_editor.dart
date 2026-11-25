@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 
 import 'material_form_icons.dart';
+import 'material_size_parse.dart';
 import 'models.dart';
 import 'pocketbase_service.dart';
 
 /// Result of [showShopMaterialEditor].
 ///
-/// [purchaseLengthIn] is set when [capturePurchaseLength] was true (purchase
-/// create flow). It is never written into catalog [ShopMaterial.sizeLabel].
+/// [purchaseLengthIn] is bar length in inches when the Length field was set.
+/// It is never written into catalog [ShopMaterial.sizeLabel].
 class ShopMaterialEditorResult {
   final ShopMaterial material;
   final double? purchaseLengthIn;
@@ -20,30 +21,25 @@ class ShopMaterialEditorResult {
 
 /// Shared create/edit dialog for [ShopMaterial].
 ///
-/// When [capturePurchaseLength] is true (purchase `+` flow), shows a Length
-/// field beside Size. Size is cross-section only; length seeds the purchase line.
+/// Always shows Size (cross-section) + Length. Catalog stores Size only.
+/// Length seeds a purchase line when creating from purchases, and on edit
+/// backfills purchase lines that still lack `length_in`.
 Future<ShopMaterialEditorResult?> showShopMaterialEditor(
   BuildContext context, {
   ShopMaterial? existing,
-  bool capturePurchaseLength = false,
+  /// Kept for call-site compatibility; Length is always shown.
+  bool capturePurchaseLength = true,
 }) {
   return showDialog<ShopMaterialEditorResult>(
     context: context,
-    builder: (ctx) => _ShopMaterialEditorDialog(
-      existing: existing,
-      capturePurchaseLength: capturePurchaseLength,
-    ),
+    builder: (ctx) => _ShopMaterialEditorDialog(existing: existing),
   );
 }
 
 class _ShopMaterialEditorDialog extends StatefulWidget {
-  const _ShopMaterialEditorDialog({
-    this.existing,
-    this.capturePurchaseLength = false,
-  });
+  const _ShopMaterialEditorDialog({this.existing});
 
   final ShopMaterial? existing;
-  final bool capturePurchaseLength;
 
   @override
   State<_ShopMaterialEditorDialog> createState() =>
@@ -70,8 +66,15 @@ class _ShopMaterialEditorDialogState extends State<_ShopMaterialEditorDialog> {
     super.initState();
     final existing = widget.existing;
     _gradeCtrl = TextEditingController(text: existing?.grade ?? '');
-    _sizeCtrl = TextEditingController(text: existing?.sizeLabel ?? '');
-    _lengthCtrl = TextEditingController();
+    final rawSize = existing?.sizeLabel ?? '';
+    final stripped = stripTrailingLengthFromSizeLabel(rawSize);
+    final embeddedLen = barLengthFromSizeLabel(rawSize);
+    _sizeCtrl = TextEditingController(text: stripped ?? rawSize);
+    _lengthCtrl = TextEditingController(
+      text: embeddedLen != null && embeddedLen > 0
+          ? formatInchesValue(embeddedLen)
+          : '',
+    );
     _notesCtrl = TextEditingController(text: existing?.notes ?? '');
     _form = canonicalMaterialForm(existing?.form ?? 'flat');
     _unit = existing?.unit ?? 'ea';
@@ -103,6 +106,26 @@ class _ShopMaterialEditorDialogState extends State<_ShopMaterialEditorDialog> {
     return matches.take(_gradeSuggestionsMax);
   }
 
+  double? _parseLengthField() {
+    final raw = _lengthCtrl.text.trim().replaceAll(RegExp(r'[^0-9.]'), '');
+    final v = double.tryParse(raw);
+    if (v == null || v <= 0) return null;
+    return v;
+  }
+
+  /// Size field → catalog cross-section; Length field (or trailing in Size).
+  ({String sizeLabel, double? lengthIn}) _normalizedSizeAndLength() {
+    var size = _sizeCtrl.text.trim();
+    var lengthIn = _parseLengthField();
+    final fromSize = barLengthFromSizeLabel(size);
+    final stripped = stripTrailingLengthFromSizeLabel(size);
+    if (stripped != null) {
+      size = stripped;
+      lengthIn ??= fromSize;
+    }
+    return (sizeLabel: size, lengthIn: lengthIn);
+  }
+
   @override
   void dispose() {
     _gradeCtrl.dispose();
@@ -114,18 +137,14 @@ class _ShopMaterialEditorDialogState extends State<_ShopMaterialEditorDialog> {
 
   Future<void> _save() async {
     final grade = _gradeCtrl.text.trim();
-    final size = _sizeCtrl.text.trim();
+    final normalized = _normalizedSizeAndLength();
+    final size = normalized.sizeLabel;
+    final purchaseLen = normalized.lengthIn;
     if (grade.isEmpty || size.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Grade and size are required')),
       );
       return;
-    }
-    double? purchaseLen;
-    if (widget.capturePurchaseLength) {
-      final raw = _lengthCtrl.text.trim().replaceAll(RegExp(r'[^0-9.]'), '');
-      purchaseLen = double.tryParse(raw);
-      if (purchaseLen != null && purchaseLen <= 0) purchaseLen = null;
     }
     setState(() => _saving = true);
     try {
@@ -148,11 +167,18 @@ class _ShopMaterialEditorDialogState extends State<_ShopMaterialEditorDialog> {
               unit: _unit,
               notes: _notesCtrl.text,
             );
+      final material = ShopMaterial.fromRecord(rec);
+      // Editing a length-in-size catalog row: keep Length on purchase lines.
+      if (isEdit && purchaseLen != null && purchaseLen > 0) {
+        try {
+          await pb.fillMissingPurchaseLengths(material.id, purchaseLen);
+        } catch (_) {}
+      }
       if (!mounted) return;
       Navigator.pop(
         context,
         ShopMaterialEditorResult(
-          material: ShopMaterial.fromRecord(rec),
+          material: material,
           purchaseLengthIn: purchaseLen,
         ),
       );
@@ -214,52 +240,41 @@ class _ShopMaterialEditorDialogState extends State<_ShopMaterialEditorDialog> {
                 onChanged: (v) => setState(() => _form = v),
               ),
               const SizedBox(height: 12),
-              if (widget.capturePurchaseLength)
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      flex: 3,
-                      child: TextField(
-                        controller: _sizeCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Size',
-                          hintText: 'Cross-section, e.g. 3×6',
-                          helperText: 'No bar length here',
-                          border: OutlineInputBorder(),
-                        ),
-                        enabled: !_saving,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: TextField(
+                      controller: _sizeCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Size',
+                        hintText: 'Cross-section, e.g. 3×6',
+                        helperText: 'No bar length here',
+                        border: OutlineInputBorder(),
                       ),
+                      enabled: !_saving,
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      flex: 2,
-                      child: TextField(
-                        controller: _lengthCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Length',
-                          hintText: 'in',
-                          helperText: 'Per bar',
-                          border: OutlineInputBorder(),
-                        ),
-                        keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true,
-                        ),
-                        enabled: !_saving,
-                      ),
-                    ),
-                  ],
-                )
-              else
-                TextField(
-                  controller: _sizeCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Size',
-                    hintText: 'Cross-section, e.g. 3×6 or 1.5" OD',
-                    border: OutlineInputBorder(),
                   ),
-                  enabled: !_saving,
-                ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 2,
+                    child: TextField(
+                      controller: _lengthCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Length',
+                        hintText: 'in',
+                        helperText: 'Per bar',
+                        border: OutlineInputBorder(),
+                      ),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      enabled: !_saving,
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 // ignore: deprecated_member_use
