@@ -2,9 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import 'material_form_icons.dart';
+import 'material_size_parse.dart';
 import 'material_stock_dialogs.dart';
 import 'models.dart';
 import 'pocketbase_service.dart';
+
+export 'material_size_parse.dart';
 
 /// On-shelf piece + its catalog material for quote matching.
 class ShelfStockCandidate {
@@ -51,27 +54,6 @@ class ShelfStockCandidate {
       if (lot.isNotEmpty) 'Lot $lot',
     ].join(' · ');
   }
-}
-
-List<double> parseSizeNumbers(String sizeLabel) {
-  final matches = RegExp(r'\d+\.?\d*').allMatches(sizeLabel.trim());
-  return [
-    for (final m in matches)
-      double.tryParse(m.group(0) ?? '')
-  ].whereType<double>().where((n) => n > 0).toList();
-}
-
-/// Cross-section dims only. Catalog labels like `1 × 4 × 144` treat the last
-/// number as bar length when there are 3+ dims (same for a cut size like `2×4×6`).
-List<double> crossSectionDims(List<double> dims) {
-  if (dims.length >= 3) return dims.sublist(0, dims.length - 1);
-  return List<double>.from(dims);
-}
-
-/// Cut length from a stock-size query when 3+ numbers (e.g. `1×4×20` → 20).
-double? neededLengthFromSize(List<double> dims) {
-  if (dims.length < 3) return null;
-  return dims.last;
 }
 
 /// True when on-shelf REM is long enough for the needed cut (if any).

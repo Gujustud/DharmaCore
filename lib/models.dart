@@ -558,6 +558,51 @@ class ShopMaterial {
   }
 }
 
+/// Link counts before merging a catalog material into another.
+class MaterialMergePreview {
+  final int purchaseLines;
+  final int pieces;
+  final int quoteLines;
+  final int draftLines;
+  final int proposals;
+
+  const MaterialMergePreview({
+    this.purchaseLines = 0,
+    this.pieces = 0,
+    this.quoteLines = 0,
+    this.draftLines = 0,
+    this.proposals = 0,
+  });
+
+  int get totalLinks =>
+      purchaseLines + pieces + quoteLines + draftLines + proposals;
+}
+
+/// Outcome of [PocketBaseService.mergeMaterials].
+class MaterialMergeResult {
+  final String survivorId;
+  final int purchaseLines;
+  final int lengthsFilled;
+  final int pieces;
+  final int quoteLines;
+  final int draftLines;
+  final int proposals;
+  final bool survivorSizeUpdated;
+  final double? inferredLengthIn;
+
+  const MaterialMergeResult({
+    required this.survivorId,
+    this.purchaseLines = 0,
+    this.lengthsFilled = 0,
+    this.pieces = 0,
+    this.quoteLines = 0,
+    this.draftLines = 0,
+    this.proposals = 0,
+    this.survivorSizeUpdated = false,
+    this.inferredLengthIn,
+  });
+}
+
 /// Inches without rounding away real precision: `18.25`, `3.125`, `12`.
 /// Machinists cut to these numbers, so never round 18.25 to 18.3.
 String formatInchesValue(double v) {

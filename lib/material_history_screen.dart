@@ -6,6 +6,7 @@ import 'add_purchase_screen.dart';
 import 'drawer_behavior.dart';
 import 'list_toolbar_widgets.dart';
 import 'material_form_icons.dart';
+import 'material_merge_dialog.dart';
 import 'material_stock_dialogs.dart';
 import 'models.dart';
 import 'pocketbase_service.dart';
@@ -290,6 +291,24 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     );
   }
 
+  Future<void> _mergeMaterial(ShopMaterial material) async {
+    final survivor = await showMaterialMergeDialog(
+      context,
+      source: material,
+      catalog: _materials,
+    );
+    if (survivor == null) return;
+    await _loadMaterials();
+    if (!mounted) return;
+    await _selectMaterial(survivor);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Merged into ${survivor.displayLabel}'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
   Future<void> _deleteMaterial(ShopMaterial material) async {
     // Refresh link count so we don't delete something in use.
     List<dynamic> linked = [];
@@ -569,6 +588,8 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                                         );
                                       } else if (value == 'edit') {
                                         _editMaterial(m);
+                                      } else if (value == 'merge') {
+                                        _mergeMaterial(m);
                                       } else if (value == 'delete') {
                                         _deleteMaterial(m);
                                       }
@@ -581,6 +602,10 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                                       PopupMenuItem(
                                         value: 'edit',
                                         child: Text('Edit'),
+                                      ),
+                                      PopupMenuItem(
+                                        value: 'merge',
+                                        child: Text('Merge into…'),
                                       ),
                                       PopupMenuItem(
                                         value: 'delete',
@@ -678,10 +703,16 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
   double? _costPerInch({
     required ShopMaterial m,
     required double unitCost,
+    double? lineLengthIn,
   }) {
     final unit = m.unit.trim().toLowerCase();
     if (unit == 'in') return unitCost;
     if (unit == 'ft') return unitCost / 12;
+    if (lineLengthIn != null &&
+        lineLengthIn > 0 &&
+        (unit == 'ea' || unit.isEmpty)) {
+      return unitCost / lineLengthIn;
+    }
     final len = _lengthInchesFromSize(m.sizeLabel);
     if (len != null && len > 0 && (unit == 'ea' || unit.isEmpty)) {
       return unitCost / len;
@@ -818,10 +849,12 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
   /// Last / avg / $/in for the detail header price column. Null when no costs.
   _MaterialPriceSummary? _priceSummary(ShopMaterial m) {
     final costs = <double>[];
+    double? lastLineLength;
     for (final record in _historyRecords) {
       final item = PurchaseItem.fromRecord(record);
       if (item.unitCost != null && item.unitCost! > 0) {
         costs.add(item.unitCost!);
+        lastLineLength ??= item.lengthIn;
       }
     }
     if (costs.isEmpty) return null;
@@ -836,8 +869,14 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     }
     final unit = m.unit.trim().toLowerCase();
     // Avoid "Last $4.00/in" plus a duplicate "$4.00/in" line.
-    final perInch =
-        unit == 'in' ? null : _costPerInch(m: m, unitCost: last);
+    // Prefer purchase-line Length over trailing number in catalog size.
+    final perInch = unit == 'in'
+        ? null
+        : _costPerInch(
+            m: m,
+            unitCost: last,
+            lineLengthIn: lastLineLength,
+          );
     return _MaterialPriceSummary(
       last: last,
       avg: avg,
@@ -907,6 +946,8 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                 onSelected: (value) {
                   if (value == 'edit') {
                     _editMaterial(selected);
+                  } else if (value == 'merge') {
+                    _mergeMaterial(selected);
                   } else if (value == 'delete') {
                     _deleteMaterial(selected);
                   }
@@ -917,6 +958,14 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                     child: ListTile(
                       leading: Icon(Icons.edit_outlined),
                       title: Text('Edit material'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'merge',
+                    child: ListTile(
+                      leading: Icon(Icons.merge_type),
+                      title: Text('Merge into…'),
                       contentPadding: EdgeInsets.zero,
                     ),
                   ),

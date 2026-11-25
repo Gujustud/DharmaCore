@@ -7,6 +7,7 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'app_config.dart';
 import 'http_client_factory.dart';
+import 'material_size_parse.dart';
 import 'models.dart';
 
 class PocketBaseService {
@@ -3161,6 +3162,163 @@ class PocketBaseService {
     } catch (e) {
       print('Error deleting material: $e');
       rethrow;
+    }
+  }
+
+  /// Counts of records that still point at [materialId] (for merge preview).
+  Future<MaterialMergePreview> previewMaterialMerge(String materialId) async {
+    final purchases = await getPurchaseItemsByMaterial(materialId);
+    var pieces = 0;
+    try {
+      pieces = (await getMaterialPiecesForMaterial(materialId)).length;
+    } catch (_) {}
+    final quotes = await _countByFilter(
+      'quote_line_items',
+      'material = "$materialId"',
+    );
+    final drafts = await _countByFilter(
+      'purchase_draft_lines',
+      'matched_material = "$materialId"',
+    );
+    final proposals = await _countByFilter(
+      'material_proposals',
+      'created_material = "$materialId"',
+    );
+    return MaterialMergePreview(
+      purchaseLines: purchases.length,
+      pieces: pieces,
+      quoteLines: quotes,
+      draftLines: drafts,
+      proposals: proposals,
+    );
+  }
+
+  Future<int> _countByFilter(String collection, String filter) async {
+    try {
+      final list = await pb.collection(collection).getFullList(filter: filter);
+      return list.length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// Retarget every link from [sourceId] onto [survivorId], then delete source.
+  ///
+  /// When [inferLengthFromSize] is true, purchase lines missing `length_in`
+  /// get the trailing length from the source catalog size (e.g. `3×6×23` → 23).
+  /// When [stripSurvivorSizeLength] is true and survivor size still embeds a
+  /// bar length, rewrite survivor `size_label` to cross-section only.
+  Future<MaterialMergeResult> mergeMaterials({
+    required String sourceId,
+    required String survivorId,
+    bool inferLengthFromSize = true,
+    bool stripSurvivorSizeLength = true,
+  }) async {
+    if (sourceId.trim().isEmpty || survivorId.trim().isEmpty) {
+      throw ArgumentError('source and survivor are required');
+    }
+    if (sourceId == survivorId) {
+      throw ArgumentError('Pick a different material to merge into');
+    }
+
+    final sourceRec = await pb.collection('materials').getOne(sourceId);
+    final survivorRec = await pb.collection('materials').getOne(survivorId);
+    final source = ShopMaterial.fromRecord(sourceRec);
+    final survivor = ShopMaterial.fromRecord(survivorRec);
+
+    final inferredLen =
+        inferLengthFromSize ? barLengthFromSizeLabel(source.sizeLabel) : null;
+
+    var purchaseLines = 0;
+    var lengthsFilled = 0;
+    final purchaseRecs = await getPurchaseItemsByMaterial(sourceId);
+    for (final r in purchaseRecs) {
+      final body = <String, dynamic>{'material': survivorId};
+      if (inferredLen != null && inferredLen > 0) {
+        final existing = r.data['length_in'];
+        final existingNum = existing is num
+            ? existing.toDouble()
+            : double.tryParse('$existing');
+        if (existingNum == null || existingNum <= 0) {
+          body['length_in'] = inferredLen;
+          lengthsFilled++;
+        }
+      }
+      await pb.collection('purchase_items').update(r.id as String, body: body);
+      purchaseLines++;
+    }
+
+    var pieces = 0;
+    try {
+      final pieceRecs = await getMaterialPiecesForMaterial(sourceId);
+      for (final p in pieceRecs) {
+        await pb.collection('material_pieces').update(
+          p.id,
+          body: {'material': survivorId},
+        );
+        pieces++;
+      }
+    } catch (e) {
+      print('mergeMaterials: pieces skipped: $e');
+    }
+
+    final quoteLines = await _retargetFilter(
+      'quote_line_items',
+      'material = "$sourceId"',
+      {'material': survivorId},
+    );
+    final draftLines = await _retargetFilter(
+      'purchase_draft_lines',
+      'matched_material = "$sourceId"',
+      {'matched_material': survivorId},
+    );
+    final proposals = await _retargetFilter(
+      'material_proposals',
+      'created_material = "$sourceId"',
+      {'created_material': survivorId},
+    );
+
+    var survivorSizeUpdated = false;
+    if (stripSurvivorSizeLength) {
+      final stripped = stripTrailingLengthFromSizeLabel(survivor.sizeLabel);
+      if (stripped != null && stripped != survivor.sizeLabel.trim()) {
+        await pb.collection('materials').update(
+          survivorId,
+          body: {'size_label': stripped},
+        );
+        survivorSizeUpdated = true;
+      }
+    }
+
+    await pb.collection('materials').delete(sourceId);
+
+    return MaterialMergeResult(
+      survivorId: survivorId,
+      purchaseLines: purchaseLines,
+      lengthsFilled: lengthsFilled,
+      pieces: pieces,
+      quoteLines: quoteLines,
+      draftLines: draftLines,
+      proposals: proposals,
+      survivorSizeUpdated: survivorSizeUpdated,
+      inferredLengthIn: inferredLen,
+    );
+  }
+
+  Future<int> _retargetFilter(
+    String collection,
+    String filter,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      final list = await pb.collection(collection).getFullList(filter: filter);
+      for (final r in list) {
+        await pb.collection(collection).update(r.id as String, body: body);
+      }
+      return list.length;
+    } catch (e) {
+      print('mergeMaterials: $collection skipped: $e');
+      return 0;
     }
   }
 
