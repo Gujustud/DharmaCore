@@ -91,12 +91,21 @@ class _MaterialMergeDialogState extends State<_MaterialMergeDialog> {
     return stripTrailingLengthFromSizeLabel(s.sizeLabel);
   }
 
+  bool get _sourceIsPlate => catalogStoresBlankLength(widget.source.form);
+
+  bool get _survivorIsPlate =>
+      _survivor != null && catalogStoresBlankLength(_survivor!.form);
+
   @override
   void initState() {
     super.initState();
     final cands = _candidates;
     if (cands.isNotEmpty) {
       _survivor = cands.first;
+    }
+    // Plate blanks should stay separate; don't strip blank size on merge.
+    if (_sourceIsPlate || _survivorIsPlate) {
+      _stripSurvivorLength = false;
     }
     _loadPreview();
   }
@@ -195,6 +204,14 @@ class _MaterialMergeDialogState extends State<_MaterialMergeDialog> {
                 'Move everything from this catalog row onto another, then delete it.',
                 style: TextStyle(color: scheme.onSurfaceVariant),
               ),
+              if (_sourceIsPlate || _survivorIsPlate) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Plate blanks are usually kept separate (grain / cut size). '
+                  'Merge only if you really want one catalog row.',
+                  style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
+                ),
+              ],
               const SizedBox(height: 12),
               InputDecorator(
                 decoration: const InputDecoration(
@@ -261,6 +278,9 @@ class _MaterialMergeDialogState extends State<_MaterialMergeDialog> {
                                     break;
                                   }
                                 }
+                                if (_survivorIsPlate) {
+                                  _stripSurvivorLength = false;
+                                }
                               });
                             },
                     ),
@@ -287,7 +307,7 @@ class _MaterialMergeDialogState extends State<_MaterialMergeDialog> {
                   controlAffinity: ListTileControlAffinity.leading,
                 ),
               ],
-              if (stripped != null) ...[
+              if (stripped != null && !_survivorIsPlate) ...[
                 CheckboxListTile(
                   contentPadding: EdgeInsets.zero,
                   value: _stripSurvivorLength,

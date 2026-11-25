@@ -3001,37 +3001,6 @@ class PocketBaseService {
     }
   }
 
-  /// Distinct purchase-line lengths (inches) keyed by material id.
-  /// Used on the Material list for plate (blank size hint).
-  Future<Map<String, List<double>>> getMaterialPurchaseLengthsByMaterialId() async {
-    try {
-      final records = await pb.collection('purchase_items').getFullList(
-        filter: 'line_type = "material" && length_in > 0',
-      );
-      final map = <String, List<double>>{};
-      for (final r in records) {
-        final mid = r.data['material']?.toString() ?? '';
-        if (mid.isEmpty) continue;
-        final raw = r.data['length_in'];
-        final len = raw is num
-            ? raw.toDouble()
-            : double.tryParse('$raw');
-        if (len == null || len <= 0) continue;
-        final list = map.putIfAbsent(mid, () => <double>[]);
-        final exists = list.any((x) => (x - len).abs() < 0.0005);
-        if (!exists) list.add(len);
-      }
-      for (final list in map.values) {
-        list.sort();
-      }
-      return map;
-    } catch (e) {
-      print('Error getting material purchase lengths: $e');
-      // Older hosts without length_in: treat as empty.
-      return {};
-    }
-  }
-
   /// Material purchase lines that have a heat/lot (for job lot picker).
   Future<List<dynamic>> getMaterialLotsForPicker() async {
     try {
@@ -3311,8 +3280,12 @@ class PocketBaseService {
       {'created_material': survivorId},
     );
 
+    // Plate blanks keep full size on the catalog — never strip on merge.
+    final doStrip =
+        stripSurvivorSizeLength && !catalogStoresBlankLength(survivor.form);
+
     var survivorSizeUpdated = false;
-    if (stripSurvivorSizeLength) {
+    if (doStrip) {
       // Preserve trailing length on survivor purchases before dropping it
       // from the catalog size (e.g. 3×6×23 → Length 23, size 3×6).
       if (survivorLen != null && survivorLen > 0) {
@@ -3331,6 +3304,19 @@ class PocketBaseService {
       }
     }
 
+    // Keep grain / cert notes from the row being deleted.
+    final mergedNotes = _mergeMaterialNotes(
+      survivor.notes,
+      source.notes,
+    );
+    if (mergedNotes != null &&
+        mergedNotes != (survivor.notes ?? '').trim()) {
+      await pb.collection('materials').update(
+        survivorId,
+        body: {'notes': mergedNotes},
+      );
+    }
+
     await pb.collection('materials').delete(sourceId);
 
     return MaterialMergeResult(
@@ -3344,6 +3330,17 @@ class PocketBaseService {
       survivorSizeUpdated: survivorSizeUpdated,
       inferredLengthIn: inferredLen,
     );
+  }
+
+  /// Append [sourceNotes] onto [survivorNotes] when not already present.
+  String? _mergeMaterialNotes(String? survivorNotes, String? sourceNotes) {
+    final surv = (survivorNotes ?? '').trim();
+    final src = (sourceNotes ?? '').trim();
+    if (src.isEmpty) return surv.isEmpty ? null : surv;
+    if (surv.isEmpty) return src;
+    if (surv.toLowerCase().contains(src.toLowerCase())) return surv;
+    if (src.toLowerCase().contains(surv.toLowerCase())) return src;
+    return '$surv\n\n$src';
   }
 
   /// Set [lengthIn] on material purchase lines that have no `length_in` yet.

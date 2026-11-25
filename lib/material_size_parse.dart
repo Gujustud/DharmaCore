@@ -39,3 +39,37 @@ String? stripTrailingLengthFromSizeLabel(String sizeLabel) {
   if (out.isEmpty || out == trimmed) return null;
   return out;
 }
+
+/// Plate blanks keep all three dims on the catalog (`1.5×3` + `3.5` → `1.5×3×3.5`).
+/// Other forms store cross-section only; length lives on the purchase line.
+bool catalogStoresBlankLength(String form) {
+  final f = form.trim().toLowerCase();
+  return f == 'plate';
+}
+
+/// Catalog [size_label] from the Size + Length fields.
+String catalogSizeLabel({
+  required String sectionSize,
+  double? lengthIn,
+  required String form,
+}) {
+  final section = (stripTrailingLengthFromSizeLabel(sectionSize) ??
+          sectionSize.trim())
+      .trim();
+  if (section.isEmpty) return section;
+  if (catalogStoresBlankLength(form) &&
+      lengthIn != null &&
+      lengthIn > 0) {
+    // Prefer × to match existing shop labels.
+    return '$section×${_formatInchesForSize(lengthIn)}';
+  }
+  return section;
+}
+
+String _formatInchesForSize(double v) {
+  if (v == v.roundToDouble()) return '${v.round()}';
+  var s = v.toStringAsFixed(3);
+  s = s.replaceFirst(RegExp(r'0+$'), '');
+  if (s.endsWith('.')) s = s.substring(0, s.length - 1);
+  return s;
+}

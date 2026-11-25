@@ -113,17 +113,25 @@ class _ShopMaterialEditorDialogState extends State<_ShopMaterialEditorDialog> {
     return v;
   }
 
-  /// Size field → catalog cross-section; Length field (or trailing in Size).
+  /// Size + Length fields → catalog size_label and optional purchase length.
+  ///
+  /// Plate: catalog keeps full blank (`1.5×3×3.5`). Other forms: section only.
   ({String sizeLabel, double? lengthIn}) _normalizedSizeAndLength() {
-    var size = _sizeCtrl.text.trim();
+    var section = _sizeCtrl.text.trim();
     var lengthIn = _parseLengthField();
-    final fromSize = barLengthFromSizeLabel(size);
-    final stripped = stripTrailingLengthFromSizeLabel(size);
+    final fromSize = barLengthFromSizeLabel(section);
+    final stripped = stripTrailingLengthFromSizeLabel(section);
     if (stripped != null) {
-      size = stripped;
+      section = stripped;
       lengthIn ??= fromSize;
     }
-    return (sizeLabel: size, lengthIn: lengthIn);
+    final form = canonicalMaterialForm(_form);
+    final sizeLabel = catalogSizeLabel(
+      sectionSize: section,
+      lengthIn: lengthIn,
+      form: form,
+    );
+    return (sizeLabel: sizeLabel, lengthIn: lengthIn);
   }
 
   @override
@@ -247,11 +255,15 @@ class _ShopMaterialEditorDialogState extends State<_ShopMaterialEditorDialog> {
                     flex: 3,
                     child: TextField(
                       controller: _sizeCtrl,
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         labelText: 'Size',
-                        hintText: 'Cross-section, e.g. 3×6',
-                        helperText: 'No bar length here',
-                        border: OutlineInputBorder(),
+                        hintText: catalogStoresBlankLength(_form)
+                            ? 'Thickness × width, e.g. 1.5×3'
+                            : 'Cross-section, e.g. 3×6',
+                        helperText: catalogStoresBlankLength(_form)
+                            ? 'Blank length goes in Length'
+                            : 'No bar length here',
+                        border: const OutlineInputBorder(),
                       ),
                       enabled: !_saving,
                     ),
@@ -261,11 +273,13 @@ class _ShopMaterialEditorDialogState extends State<_ShopMaterialEditorDialog> {
                     flex: 2,
                     child: TextField(
                       controller: _lengthCtrl,
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         labelText: 'Length',
                         hintText: 'in',
-                        helperText: 'Per bar',
-                        border: OutlineInputBorder(),
+                        helperText: catalogStoresBlankLength(_form)
+                            ? 'Blank / cut length'
+                            : 'Per bar',
+                        border: const OutlineInputBorder(),
                       ),
                       keyboardType: const TextInputType.numberWithOptions(
                         decimal: true,
