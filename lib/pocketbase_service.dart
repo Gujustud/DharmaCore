@@ -3205,9 +3205,10 @@ class PocketBaseService {
   /// Retarget every link from [sourceId] onto [survivorId], then delete source.
   ///
   /// When [inferLengthFromSize] is true, purchase lines missing `length_in`
-  /// get the trailing length from the source catalog size (e.g. `3×6×23` → 23).
+  /// get the trailing length from the source catalog size (e.g. `3×6×60` → 60).
   /// When [stripSurvivorSizeLength] is true and survivor size still embeds a
-  /// bar length, rewrite survivor `size_label` to cross-section only.
+  /// bar length, fill survivor purchase lines missing Length from that trailing
+  /// number first, then rewrite survivor `size_label` to cross-section only.
   Future<MaterialMergeResult> mergeMaterials({
     required String sourceId,
     required String survivorId,
@@ -3228,6 +3229,7 @@ class PocketBaseService {
 
     final inferredLen =
         inferLengthFromSize ? barLengthFromSizeLabel(source.sizeLabel) : null;
+    final survivorLen = barLengthFromSizeLabel(survivor.sizeLabel);
 
     var purchaseLines = 0;
     var lengthsFilled = 0;
@@ -3280,6 +3282,14 @@ class PocketBaseService {
 
     var survivorSizeUpdated = false;
     if (stripSurvivorSizeLength) {
+      // Preserve trailing length on survivor purchases before dropping it
+      // from the catalog size (e.g. 3×6×23 → Length 23, size 3×6).
+      if (survivorLen != null && survivorLen > 0) {
+        lengthsFilled += await _fillMissingPurchaseLengths(
+          survivorId,
+          survivorLen,
+        );
+      }
       final stripped = stripTrailingLengthFromSizeLabel(survivor.sizeLabel);
       if (stripped != null && stripped != survivor.sizeLabel.trim()) {
         await pb.collection('materials').update(
@@ -3303,6 +3313,29 @@ class PocketBaseService {
       survivorSizeUpdated: survivorSizeUpdated,
       inferredLengthIn: inferredLen,
     );
+  }
+
+  /// Set [lengthIn] on material purchase lines that have no `length_in` yet.
+  Future<int> _fillMissingPurchaseLengths(
+    String materialId,
+    double lengthIn,
+  ) async {
+    if (lengthIn <= 0) return 0;
+    var filled = 0;
+    final lines = await getPurchaseItemsByMaterial(materialId);
+    for (final r in lines) {
+      final existing = r.data['length_in'];
+      final existingNum = existing is num
+          ? existing.toDouble()
+          : double.tryParse('$existing');
+      if (existingNum != null && existingNum > 0) continue;
+      await pb.collection('purchase_items').update(
+        r.id as String,
+        body: {'length_in': lengthIn},
+      );
+      filled++;
+    }
+    return filled;
   }
 
   Future<int> _retargetFilter(

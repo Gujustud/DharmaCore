@@ -295,9 +295,7 @@ class _MaterialMergeDialogState extends State<_MaterialMergeDialog> {
                       ? null
                       : (v) =>
                           setState(() => _stripSurvivorLength = v ?? true),
-                  title: Text(
-                    'Strip length from survivor size → “$stripped”',
-                  ),
+                  title: Text(_stripSurvivorCheckboxLabel(stripped)),
                   controlAffinity: ListTileControlAffinity.leading,
                 ),
               ],
@@ -329,6 +327,16 @@ class _MaterialMergeDialogState extends State<_MaterialMergeDialog> {
         ),
       ],
     );
+  }
+
+  String _stripSurvivorCheckboxLabel(String strippedSize) {
+    final survLen = barLengthFromSizeLabel(_survivor!.sizeLabel);
+    if (survLen != null && survLen > 0) {
+      return 'Strip survivor size → “$strippedSize”, and set Length '
+          '${formatInchesValue(survLen)} in on its purchase lines that have '
+          'no Length';
+    }
+    return 'Strip survivor size → “$strippedSize”';
   }
 
   String _previewSummary(MaterialMergePreview p) {
