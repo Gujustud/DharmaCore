@@ -42,7 +42,7 @@ dependencies:
   intl: ^0.20.2
   http: ^1.2.2
   http_parser: ^4.1.2
-  package_info_plus: ^10.1.0
+  package_info_plus: ^10.2.2
   url_launcher: ^6.2.5
   # pdf/barcode require qr ^3; keep aligned for packing-slip PDFs.
   qr: ^3.0.2
