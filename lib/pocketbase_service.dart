@@ -3035,6 +3035,7 @@ class PocketBaseService {
     String lineType = 'item',
     String? description,
     String? heatLot,
+    double? lengthIn,
     List<http.MultipartFile>? millCertFiles,
   }) async {
     try {
@@ -3052,6 +3053,7 @@ class PocketBaseService {
         body['description'] = description;
       }
       if (heatLot != null && heatLot.isNotEmpty) body['heat_lot'] = heatLot;
+      if (lengthIn != null && lengthIn > 0) body['length_in'] = lengthIn;
       if (millCertFiles != null && millCertFiles.isNotEmpty) {
         return await pb.collection('purchase_items').create(
           body: body,

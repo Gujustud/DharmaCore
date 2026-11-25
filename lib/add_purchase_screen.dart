@@ -138,6 +138,10 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
       if (descCtrl is TextEditingController) {
         descCtrl.dispose();
       }
+      final lengthCtrl = item['lengthController'];
+      if (lengthCtrl is TextEditingController) {
+        lengthCtrl.dispose();
+      }
     }
     super.dispose();
   }
@@ -242,6 +246,7 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
                   ? toolName
                   : (type == 'material' ? (item.materialLabel ?? '') : ''),
               'heatLot': item.heatLot ?? '',
+              'lengthIn': item.lengthIn,
               'sourceItemId': item.id,
               'sourceItemRecord': record,
               'millCertNames': List<String>.from(item.millCertNames),
@@ -283,6 +288,7 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
         'description': '',
         'itemText': '',
         'heatLot': '',
+        'lengthIn': null as double?,
         'sourceItemId': null as String?,
         'sourceItemRecord': null,
         'millCertNames': <String>[],
@@ -641,6 +647,12 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
         final millFiles = [
           for (final f in pending) _lineMillCertPart(f.name, f.bytes),
         ];
+        final lengthRaw = line['lengthIn'];
+        final lengthIn = type == 'material'
+            ? (lengthRaw is num
+                ? lengthRaw.toDouble()
+                : double.tryParse('$lengthRaw'))
+            : null;
         await pbService.createPurchaseItem(
           purchaseId: id,
           toolId: type == 'item' ? (line['toolId'] as String?) : null,
@@ -652,6 +664,7 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
               ? ((desc == null || desc.isEmpty) ? 'Shipping' : desc)
               : (type == 'misc' ? desc : null),
           heatLot: type == 'material' ? heat : null,
+          lengthIn: (lengthIn != null && lengthIn > 0) ? lengthIn : null,
           millCertFiles: millFiles.isEmpty ? null : millFiles,
         );
       }
@@ -802,8 +815,8 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
     }
   }
 
-  Future<ShopMaterial?> _showCreateMaterialDialog() =>
-      showShopMaterialEditor(context);
+  Future<ShopMaterialEditorResult?> _showCreateMaterialDialog() =>
+      showShopMaterialEditor(context, capturePurchaseLength: true);
 
   Iterable<ShopMaterial> _filterMaterials(String text) {
     if (text.trim().isEmpty) return _materials.take(_materialSuggestionsMax);
@@ -980,6 +993,14 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
                     item['descriptionController'] ??= TextEditingController(
                       text: (item['description'] as String?) ?? '',
                     );
+                    if (item['lengthController'] is! TextEditingController) {
+                      final len = item['lengthIn'];
+                      final lenText = len is num && len > 0
+                          ? formatInchesValue(len.toDouble())
+                          : '';
+                      item['lengthController'] =
+                          TextEditingController(text: lenText);
+                    }
                     // Lazily create controllers per line so typing doesn't fight rebuilds.
                     if (lineType == 'item' ||
                         lineType == 'material' ||
@@ -1105,9 +1126,12 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
                                           minHeight: 40,
                                         ),
                                         onPressed: () async {
-                                          final created =
+                                          final result =
                                               await _showCreateMaterialDialog();
-                                          if (created == null) return;
+                                          if (result == null) return;
+                                          final created = result.material;
+                                          final seedLen =
+                                              result.purchaseLengthIn;
                                           setState(() {
                                             _materials = [..._materials, created]
                                               ..sort(
@@ -1120,6 +1144,18 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
                                                 created.displayLabel;
                                             _lineItems[i]['itemText'] =
                                                 created.displayLabel;
+                                            if (seedLen != null &&
+                                                seedLen > 0) {
+                                              _lineItems[i]['lengthIn'] =
+                                                  seedLen;
+                                              final ctrl = _lineItems[i]
+                                                  ['lengthController'];
+                                              if (ctrl
+                                                  is TextEditingController) {
+                                                ctrl.text =
+                                                    formatInchesValue(seedLen);
+                                              }
+                                            }
                                           });
                                         },
                                       ),
@@ -1162,6 +1198,38 @@ class _AddPurchaseScreenState extends State<AddPurchaseScreen> with AutoOpenDraw
                                       ),
                                     ),
                                   );
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            SizedBox(
+                              width: 72,
+                              child: TextField(
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                  decimal: true,
+                                ),
+                                decoration: const InputDecoration(
+                                  floatingLabelBehavior:
+                                      FloatingLabelBehavior.always,
+                                  labelText: 'Length',
+                                  hintText: 'in',
+                                  border: OutlineInputBorder(),
+                                  contentPadding: EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 12,
+                                  ),
+                                ),
+                                controller: item['lengthController']
+                                    as TextEditingController,
+                                onChanged: (v) {
+                                  final raw =
+                                      v.trim().replaceAll(RegExp(r'[^0-9.]'), '');
+                                  final parsed = double.tryParse(raw);
+                                  _lineItems[i]['lengthIn'] =
+                                      (parsed != null && parsed > 0)
+                                          ? parsed
+                                          : null;
                                 },
                               ),
                             ),

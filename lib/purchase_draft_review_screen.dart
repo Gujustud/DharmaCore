@@ -227,7 +227,7 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
         mcmasterPartNumberFromText(notes) == null) {
       notes = '$notes\n${mcmasterNotesSeed(part)}'.trim();
     }
-    final created = await showShopMaterialEditor(
+    final result = await showShopMaterialEditor(
       context,
       existing: ShopMaterial(
         id: '',
@@ -238,7 +238,8 @@ class _PurchaseDraftReviewScreenState extends State<PurchaseDraftReviewScreen> {
         notes: notes.isEmpty ? null : notes,
       ),
     );
-    if (created == null) return;
+    if (result == null) return;
+    final created = result.material;
     // Editor already created the material when saving without id — but our
     // showShopMaterialEditor typically creates on save. Prefer linking result.
     await PocketBaseService().updatePurchaseDraftLine(line.id, {

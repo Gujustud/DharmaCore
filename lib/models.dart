@@ -696,6 +696,8 @@ class PurchaseItem {
   final String lineType; // 'item' | 'material' | 'misc' | 'tax' | 'shipping'
   final String? description; // e.g. 'GST', 'PST', 'Shipping', misc text
   final String? heatLot;
+  /// Ordered bar length in inches (`purchase_items.length_in`). Not catalog size.
+  final double? lengthIn;
   /// Mill cert filenames on this line (`purchase_items.mill_certs`).
   final List<String> millCertNames;
 
@@ -711,6 +713,7 @@ class PurchaseItem {
     this.lineType = 'item',
     this.description,
     this.heatLot,
+    this.lengthIn,
     this.millCertNames = const [],
   });
 
@@ -750,6 +753,11 @@ class PurchaseItem {
         ? qtyRaw
         : num.tryParse('$qtyRaw') ?? 0;
 
+    final lengthRaw = data['length_in'];
+    final lengthIn = lengthRaw is num
+        ? lengthRaw.toDouble()
+        : double.tryParse('$lengthRaw');
+
     return PurchaseItem(
       id: record.id,
       purchaseId: data['purchase'] ?? '',
@@ -764,6 +772,7 @@ class PurchaseItem {
       lineType: data['line_type'] ?? 'item',
       description: data['description'],
       heatLot: data['heat_lot']?.toString(),
+      lengthIn: (lengthIn != null && lengthIn > 0) ? lengthIn : null,
       millCertNames: _fileNamesFrom(data['mill_certs']),
     );
   }

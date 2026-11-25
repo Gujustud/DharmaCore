@@ -274,14 +274,14 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
   }
 
   Future<void> _editMaterial(ShopMaterial material) async {
-    final updated = await showShopMaterialEditor(
+    final result = await showShopMaterialEditor(
       context,
       existing: material,
     );
-    if (updated == null) return;
+    if (result == null) return;
     await _loadMaterials();
     if (!mounted) return;
-    await _selectMaterial(updated);
+    await _selectMaterial(result.material);
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Material updated'),
@@ -394,11 +394,11 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
   }
 
   Future<void> _createMaterial() async {
-    final created = await showShopMaterialEditor(context);
-    if (created == null) return;
+    final result = await showShopMaterialEditor(context);
+    if (result == null) return;
     await _loadMaterials();
     if (!mounted) return;
-    await _selectMaterial(created);
+    await _selectMaterial(result.material);
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Material created'),
