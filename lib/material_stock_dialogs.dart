@@ -63,11 +63,75 @@ String? materialHeatLotForSticker(String? heatLot) {
 
 String _formatInches(double v) => '${formatInchesValue(v)} in';
 
+Future<int?> _askMaterialLabelCopies(BuildContext context) async {
+  final controller = TextEditingController(text: '2');
+  final result = await showDialog<int>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Print stickers'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            kIsWeb
+                ? 'Copies print as separate pages. Set half-cut in the Brother print dialog if you want one strip.'
+                : 'Copies print on one strip with half-cuts between stickers (full cut at the end).',
+            style: TextStyle(
+              fontSize: 13,
+              color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: controller,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Copies',
+              border: OutlineInputBorder(),
+              helperText: 'e.g. 2 for both ends of a bar',
+            ),
+            onSubmitted: (v) {
+              final n = int.tryParse(v.trim()) ?? 0;
+              if (n >= 1 && n <= 99) Navigator.pop(ctx, n);
+            },
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final n = int.tryParse(controller.text.trim()) ?? 0;
+            if (n < 1 || n > 99) {
+              ScaffoldMessenger.of(ctx).showSnackBar(
+                const SnackBar(content: Text('Enter 1–99 copies')),
+              );
+              return;
+            }
+            Navigator.pop(ctx, n);
+          },
+          child: const Text('Print'),
+        ),
+      ],
+    ),
+  );
+  controller.dispose();
+  return result;
+}
+
 Future<void> printOrPreviewMaterialLabel(
   BuildContext context, {
   required ShopMaterial material,
   required MaterialPiece piece,
 }) async {
+  final copies = await _askMaterialLabelCopies(context);
+  if (copies == null || !context.mounted) return;
+
   final identity = materialPieceLabelIdentityLine(material);
   final location = (piece.locationNote ?? '').trim();
   final rem = formatRemnantForLabel(piece.lengthIn);
@@ -86,14 +150,18 @@ Future<void> printOrPreviewMaterialLabel(
     await LabelPrintService.sendLabelPng(
       bytes,
       jobName: 'material-${piece.labelCode}',
+      copies: copies,
+      halfCut: true,
     );
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
             kIsWeb
-                ? 'Opened system print — PT-P910BT, 18mm, Length ${LabelPrintService.targetLabelLengthMm.round()} mm'
-                : 'Label sent to Brother printer',
+                ? 'Opened system print — $copies page(s), 18mm. Use half-cut in the Brother dialog for one strip.'
+                : copies == 1
+                    ? 'Label sent to Brother (half-cut)'
+                    : '$copies labels sent — one strip, half-cut between',
           ),
           backgroundColor: Colors.green,
         ),
@@ -158,6 +226,8 @@ Future<void> printOrPreviewMaterialLabel(
               await LabelPrintService.sendLabelPng(
                 bytes,
                 jobName: 'material-${piece.labelCode}',
+                copies: copies,
+                halfCut: true,
               );
             } catch (_) {}
           },

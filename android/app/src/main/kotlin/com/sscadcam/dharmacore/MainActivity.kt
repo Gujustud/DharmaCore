@@ -36,6 +36,8 @@ class MainActivity : FlutterActivity() {
     private var pendingPrintBytes: ByteArray? = null
     private var pendingPrintResult: MethodChannel.Result? = null
     private var pendingTapeMm: Int = 18
+    private var pendingCopies: Int = 1
+    private var pendingHalfCut: Boolean = false
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -50,6 +52,8 @@ class MainActivity : FlutterActivity() {
                             return@setMethodCallHandler
                         }
                         val tapeMm = (args?.get("tapeMm") as? Number)?.toInt() ?: 18
+                        val copies = (args?.get("copies") as? Number)?.toInt()?.coerceIn(1, 99) ?: 1
+                        val halfCut = args?.get("halfCut") as? Boolean ?: false
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                             val needConnect = checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
                             val needScan = checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED
@@ -57,6 +61,8 @@ class MainActivity : FlutterActivity() {
                                 pendingPrintBytes = bytes
                                 pendingPrintResult = result
                                 pendingTapeMm = tapeMm
+                                pendingCopies = copies
+                                pendingHalfCut = halfCut
                                 val perms = mutableListOf<String>()
                                 if (needConnect) perms.add(Manifest.permission.BLUETOOTH_CONNECT)
                                 if (needScan) perms.add(Manifest.permission.BLUETOOTH_SCAN)
@@ -64,7 +70,9 @@ class MainActivity : FlutterActivity() {
                                 return@setMethodCallHandler
                             }
                         }
-                        executor.execute { runPrintViaService(bytes, result, tapeMm) }
+                        executor.execute {
+                            runPrintViaService(bytes, result, tapeMm, copies, halfCut)
+                        }
                     }
                     "exportLabelPng" -> {
                         val args = call.arguments as? Map<*, *>
@@ -152,12 +160,16 @@ class MainActivity : FlutterActivity() {
         val bytes = pendingPrintBytes
         val res = pendingPrintResult
         val tapeMm = pendingTapeMm
+        val copies = pendingCopies
+        val halfCut = pendingHalfCut
         pendingPrintBytes = null
         pendingPrintResult = null
         pendingTapeMm = 18
+        pendingCopies = 1
+        pendingHalfCut = false
         val granted = grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }
         if (granted && bytes != null && res != null) {
-            executor.execute { runPrintViaService(bytes, res, tapeMm) }
+            executor.execute { runPrintViaService(bytes, res, tapeMm, copies, halfCut) }
         } else if (res != null) {
             runOnUiThread {
                 Toast.makeText(this, "Bluetooth permission needed for printing", Toast.LENGTH_LONG).show()
@@ -193,6 +205,8 @@ class MainActivity : FlutterActivity() {
         pngBytes: ByteArray,
         result: MethodChannel.Result,
         tapeMm: Int = 18,
+        copies: Int = 1,
+        halfCut: Boolean = false,
     ) {
         val replied = AtomicBoolean(false)
         fun success() {
@@ -243,7 +257,7 @@ class MainActivity : FlutterActivity() {
 
                 Log.i(
                     TAG,
-                    "starting BrotherPrintService job=$jobId model=$modelName tape=${tapeMm}mm mac=${device.address} connected=${isBluetoothConnected(device)}",
+                    "starting BrotherPrintService job=$jobId model=$modelName tape=${tapeMm}mm copies=$copies halfCut=$halfCut mac=${device.address} connected=${isBluetoothConnected(device)}",
                 )
                 val intent = Intent(this, BrotherPrintService::class.java).apply {
                     action = BrotherPrintService.ACTION_PRINT
@@ -252,6 +266,8 @@ class MainActivity : FlutterActivity() {
                     putExtra(BrotherPrintService.EXTRA_MODEL, modelName)
                     putExtra(BrotherPrintService.EXTRA_JOB_ID, jobId)
                     putExtra(BrotherPrintService.EXTRA_TAPE_MM, tapeMm)
+                    putExtra(BrotherPrintService.EXTRA_COPIES, copies.coerceIn(1, 99))
+                    putExtra(BrotherPrintService.EXTRA_HALF_CUT, halfCut)
                 }
                 startService(intent)
 

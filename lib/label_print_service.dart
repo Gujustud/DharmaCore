@@ -374,20 +374,27 @@ class LabelPrintService {
     String jobName = 'label',
     double tapeHeightMm = tapeHeightMm18,
     double lengthMm = targetLabelLengthMm,
+    int copies = 1,
+    bool halfCut = false,
   }) async {
+    final n = copies.clamp(1, 99);
     if (kIsWeb || !androidUseBrotherSdk) {
       await _sendViaSystemPrint(
         pngBytes,
         jobName: jobName,
         tapeHeightMm: tapeHeightMm,
         lengthMm: lengthMm,
+        copies: n,
       );
       return;
     }
     // Pass Uint8List directly (becomes byte[] on Android) — not List<int>.
+    // copies + halfCut → one strip with half-cuts between labels (P910).
     await _channel.invokeMethod<void>('printLabel', {
       'imageBytes': pngBytes,
       'tapeMm': tapeHeightMm.round(),
+      'copies': n,
+      'halfCut': halfCut,
     });
   }
 
@@ -396,6 +403,7 @@ class LabelPrintService {
     required String jobName,
     double tapeHeightMm = tapeHeightMm18,
     double lengthMm = targetLabelLengthMm,
+    int copies = 1,
   }) async {
     final format = _labelPageFormat(
       tapeHeightMm: tapeHeightMm,
@@ -408,15 +416,18 @@ class LabelPrintService {
         pngBytes,
         tapeHeightMm: tapeHeightMm,
         lengthMm: lengthMm,
+        copies: copies,
       ),
     );
   }
 
   /// Wrap PNG in a PDF for the browser → Brother print dialog.
+  /// [copies] > 1 adds one page per sticker (half-cut is a driver setting on web).
   static Future<Uint8List> _pngAsLabelPdf(
     Uint8List pngBytes, {
     double tapeHeightMm = tapeHeightMm18,
     double lengthMm = targetLabelLengthMm,
+    int copies = 1,
   }) async {
     final page = _labelPageFormat(
       tapeHeightMm: tapeHeightMm,
@@ -434,22 +445,25 @@ class LabelPrintService {
 
     final doc = pw.Document();
     final image = pw.MemoryImage(pngBytes);
-    doc.addPage(
-      pw.Page(
-        pageFormat: page,
-        margin: pw.EdgeInsets.zero,
-        build: (_) => pw.Container(
-          width: pageW,
-          height: pageH,
-          alignment: pw.Alignment.centerLeft,
-          child: pw.SizedBox(
-            width: drawW,
-            height: drawH,
-            child: pw.Image(image, fit: pw.BoxFit.fill),
+    final n = copies.clamp(1, 99);
+    for (var i = 0; i < n; i++) {
+      doc.addPage(
+        pw.Page(
+          pageFormat: page,
+          margin: pw.EdgeInsets.zero,
+          build: (_) => pw.Container(
+            width: pageW,
+            height: pageH,
+            alignment: pw.Alignment.centerLeft,
+            child: pw.SizedBox(
+              width: drawW,
+              height: drawH,
+              child: pw.Image(image, fit: pw.BoxFit.fill),
+            ),
           ),
         ),
-      ),
-    );
+      );
+    }
     return doc.save();
   }
 
@@ -713,6 +727,8 @@ class LabelPrintService {
     required String codeLine,
     required String pieceId,
     String jobName = 'material',
+    int copies = 1,
+    bool halfCut = true,
   }) async {
     final pngBytes = await generateMaterialLabelImage(
       line1: line1,
@@ -721,7 +737,12 @@ class LabelPrintService {
       codeLine: codeLine,
       pieceId: pieceId,
     );
-    await sendLabelPng(pngBytes, jobName: jobName);
+    await sendLabelPng(
+      pngBytes,
+      jobName: jobName,
+      copies: copies,
+      halfCut: halfCut,
+    );
   }
 
   /// DEBUG: Export a sample label PNG to disk so it can be inspected without printing.

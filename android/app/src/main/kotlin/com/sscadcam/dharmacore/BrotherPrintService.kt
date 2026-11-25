@@ -34,6 +34,10 @@ class BrotherPrintService : Service() {
         const val EXTRA_JOB_ID = "job_id"
         /** Tape height in mm: 18 (bin labels) or 12 (~1/2" tool tags). */
         const val EXTRA_TAPE_MM = "tape_mm"
+        /** Copies on one strip (Brother numberOfCopies). */
+        const val EXTRA_COPIES = "copies"
+        /** Half-cut between copies; full cut at end of strip. */
+        const val EXTRA_HALF_CUT = "half_cut"
 
         private const val BLE_TIMEOUT_MS = 5_000L
 
@@ -89,6 +93,8 @@ class BrotherPrintService : Service() {
         val modelName = intent.getStringExtra(EXTRA_MODEL) ?: "PT_P910BT"
         val jobId = intent.getStringExtra(EXTRA_JOB_ID)
         val tapeMm = intent.getIntExtra(EXTRA_TAPE_MM, 18)
+        val copies = intent.getIntExtra(EXTRA_COPIES, 1).coerceIn(1, 99)
+        val halfCut = intent.getBooleanExtra(EXTRA_HALF_CUT, false)
         if (pngPath.isNullOrBlank() || mac.isNullOrBlank() || jobId.isNullOrBlank()) {
             Log.e(TAG, "missing extras")
             stopSelf(startId)
@@ -97,7 +103,7 @@ class BrotherPrintService : Service() {
 
         executor.execute {
             try {
-                runPrint(pngPath, mac, modelName, jobId, tapeMm)
+                runPrint(pngPath, mac, modelName, jobId, tapeMm, copies, halfCut)
             } catch (t: Throwable) {
                 Log.e(TAG, "print failed", t)
                 writeResult(this, jobId, "PRINT_ERROR", t.message ?: t.javaClass.simpleName)
@@ -114,6 +120,8 @@ class BrotherPrintService : Service() {
         modelName: String,
         jobId: String,
         tapeMm: Int,
+        copies: Int = 1,
+        halfCut: Boolean = false,
     ) {
         if (!File(pngPath).isFile) {
             writeResult(this, jobId, "FILE_MISSING", "Label image not found")
@@ -163,7 +171,7 @@ class BrotherPrintService : Service() {
         }
         Log.i(
             TAG,
-            "job=$jobId model=$modelName tape=${tapeMm}mm bitmap ${srcW}x${srcH} → ${bitmap.width}x${bitmap.height} (dots=$targetTapeDots p710=$isP710Family)",
+            "job=$jobId model=$modelName tape=${tapeMm}mm copies=$copies halfCut=$halfCut bitmap ${srcW}x${srcH} → ${bitmap.width}x${bitmap.height} (dots=$targetTapeDots p710=$isP710Family)",
         )
 
         val workDir = (getExternalFilesDir(null) ?: filesDir)
@@ -208,9 +216,12 @@ class BrotherPrintService : Service() {
             } else {
                 PrinterInfo.PrintMode.FIT_TO_PAPER
             }
+            // Half-cut between copies keeps one continuous strip; full cut at end.
+            info.numberOfCopies = copies
             info.isAutoCut = true
             info.isCutAtEnd = true
-            info.isHalfCut = false
+            info.isHalfCut = halfCut
+            info.isLabelEndCut = true
             info.isSpecialTape = false
             val labelOrdinal = if (useW12) LabelInfo.PT.W12.ordinal else LabelInfo.PT.W18.ordinal
             info.labelNameIndex = labelOrdinal
@@ -234,7 +245,7 @@ class BrotherPrintService : Service() {
                 labelInfo.labelNameIndex = labelOrdinal
                 labelInfo.isAutoCut = true
                 labelInfo.isEndCut = true
-                labelInfo.isHalfCut = false
+                labelInfo.isHalfCut = halfCut
                 labelInfo.isSpecialTape = false
                 printer.setLabelInfo(labelInfo)
             } catch (e: Exception) {
