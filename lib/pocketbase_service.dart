@@ -3001,6 +3001,37 @@ class PocketBaseService {
     }
   }
 
+  /// Distinct purchase-line lengths (inches) keyed by material id.
+  /// Used on the Material list for plate (blank size hint).
+  Future<Map<String, List<double>>> getMaterialPurchaseLengthsByMaterialId() async {
+    try {
+      final records = await pb.collection('purchase_items').getFullList(
+        filter: 'line_type = "material" && length_in > 0',
+      );
+      final map = <String, List<double>>{};
+      for (final r in records) {
+        final mid = r.data['material']?.toString() ?? '';
+        if (mid.isEmpty) continue;
+        final raw = r.data['length_in'];
+        final len = raw is num
+            ? raw.toDouble()
+            : double.tryParse('$raw');
+        if (len == null || len <= 0) continue;
+        final list = map.putIfAbsent(mid, () => <double>[]);
+        final exists = list.any((x) => (x - len).abs() < 0.0005);
+        if (!exists) list.add(len);
+      }
+      for (final list in map.values) {
+        list.sort();
+      }
+      return map;
+    } catch (e) {
+      print('Error getting material purchase lengths: $e');
+      // Older hosts without length_in: treat as empty.
+      return {};
+    }
+  }
+
   /// Material purchase lines that have a heat/lot (for job lot picker).
   Future<List<dynamic>> getMaterialLotsForPicker() async {
     try {

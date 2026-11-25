@@ -33,6 +33,8 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
   List<ShopMaterial> _filtered = [];
   /// materialId → distinct heat/lot values from purchase lines.
   Map<String, List<String>> _lotsByMaterialId = {};
+  /// materialId → distinct purchase-line lengths (inches); plate list hint.
+  Map<String, List<double>> _lengthsByMaterialId = {};
   /// Materials with at least one on-shelf piece (length > 0).
   Set<String> _onShelfMaterialIds = {};
   bool _onShelfIdsUnavailable = false;
@@ -67,6 +69,7 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
       final pb = PocketBaseService();
       final materialsFuture = pb.getMaterials();
       final lotsFuture = pb.getMaterialHeatLotsByMaterialId();
+      final lengthsFuture = pb.getMaterialPurchaseLengthsByMaterialId();
       Set<String> onShelfIds = {};
       var onShelfUnavailable = false;
       try {
@@ -77,10 +80,12 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
       }
       final records = await materialsFuture;
       final lots = await lotsFuture;
+      final lengths = await lengthsFuture;
       final list = records.map(ShopMaterial.fromRecord).toList();
       setState(() {
         _materials = list;
         _lotsByMaterialId = lots;
+        _lengthsByMaterialId = lengths;
         _onShelfMaterialIds = onShelfIds;
         _onShelfIdsUnavailable = onShelfUnavailable;
         if (onShelfUnavailable) _inStockOnly = false;
@@ -129,6 +134,20 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
   List<String> _lotsFor(ShopMaterial m) =>
       _lotsByMaterialId[m.id] ?? const <String>[];
 
+  List<double> _purchaseLengthsFor(ShopMaterial m) =>
+      _lengthsByMaterialId[m.id] ?? const <double>[];
+
+  /// Plate blanks: show purchase lengths under the section size in the list.
+  bool _showPurchaseLengthsInList(ShopMaterial m) =>
+      canonicalMaterialForm(m.form) == 'plate';
+
+  String? _plateLengthsLabel(ShopMaterial m) {
+    if (!_showPurchaseLengthsInList(m)) return null;
+    final lens = _purchaseLengthsFor(m);
+    if (lens.isEmpty) return null;
+    return lens.map((n) => '${formatInchesValue(n)} in').join(' · ');
+  }
+
   String? _firstMatchingLot(ShopMaterial m, String queryLower) {
     if (queryLower.isEmpty) return null;
     for (final lot in _lotsFor(m)) {
@@ -156,7 +175,19 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
           m.displayLabel.toLowerCase().contains(q)) {
         return true;
       }
-      return _lotsFor(m).any((lot) => lot.toLowerCase().contains(q));
+      if (_lotsFor(m).any((lot) => lot.toLowerCase().contains(q))) {
+        return true;
+      }
+      // Plate: allow searching by blank length shown under the size.
+      if (_showPurchaseLengthsInList(m)) {
+        for (final len in _purchaseLengthsFor(m)) {
+          if (formatInchesValue(len).contains(q) ||
+              '${formatInchesValue(len)} in'.contains(q)) {
+            return true;
+          }
+        }
+      }
+      return false;
     }).toList();
     String? highlight;
     for (final m in _filtered) {
@@ -741,6 +772,7 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
   }
 
   /// List row: bold grade, muted form, size on second line.
+  /// Plate also shows purchase blank lengths (e.g. `3 in · 3.5 in`).
   Widget _buildListIdentityTitle(
     ShopMaterial m,
     ColorScheme scheme,
@@ -749,6 +781,7 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     final grade = m.grade.trim();
     final form = materialFormLabel(m.form);
     final size = formatMaterialSizeForLabel(m.sizeLabel);
+    final plateLengths = _plateLengthsLabel(m);
     final muted = base?.copyWith(
           color: scheme.onSurfaceVariant,
           fontWeight: FontWeight.w400,
@@ -778,6 +811,15 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
           const SizedBox(height: 2),
           Text(
             size,
+            style: muted,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+        if (plateLengths != null) ...[
+          const SizedBox(height: 2),
+          Text(
+            plateLengths,
             style: muted,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
