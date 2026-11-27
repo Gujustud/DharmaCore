@@ -522,17 +522,17 @@ class _TransferDialogState extends State<TransferDialog> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.start,
                   children: [
+                    _greyDestinationShortcut(
+                      label: _trashShortcutName,
+                      icon: const Icon(Icons.recycling, size: 22),
+                      location: _locationForExactName(_trashShortcutName),
+                    ),
                     for (final name in _machineShortcutNames)
                       _greyDestinationShortcut(
                         label: name,
                         icon: const DmuMachineIcon(size: 22),
                         location: _locationForExactName(name),
                       ),
-                    _greyDestinationShortcut(
-                      label: _trashShortcutName,
-                      icon: const Icon(Icons.recycling, size: 22),
-                      location: _locationForExactName(_trashShortcutName),
-                    ),
                     if (_homeBin != null)
                       Padding(
                         padding: const EdgeInsets.only(left: 4),
