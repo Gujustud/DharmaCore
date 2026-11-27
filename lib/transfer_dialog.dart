@@ -1,6 +1,7 @@
 // transfer_dialog.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'dmu_machine_icon.dart';
 import 'models.dart';
 import 'pocketbase_service.dart';
 import 'tool_location_helpers.dart';
@@ -95,7 +96,7 @@ class _TransferDialogState extends State<TransferDialog> {
 
   Widget _greyDestinationShortcut({
     required String label,
-    required IconData icon,
+    required Widget icon,
     required Location? location,
   }) {
     final loc = location;
@@ -103,15 +104,19 @@ class _TransferDialogState extends State<TransferDialog> {
     final tooltip = loc != null
         ? label
         : 'No destination named "$label" (or same as source)';
+    final iconColor = enabled ? Colors.grey[700]! : Colors.grey[400]!;
 
     return Padding(
       padding: const EdgeInsets.only(left: 4),
       child: IconButton(
         tooltip: tooltip,
-        icon: Icon(icon, size: 22),
+        icon: IconTheme(
+          data: IconThemeData(color: iconColor, size: 22),
+          child: icon,
+        ),
         onPressed: enabled ? () => _selectDestination(loc) : null,
         style: IconButton.styleFrom(
-          foregroundColor: enabled ? Colors.grey[700] : Colors.grey[400],
+          foregroundColor: iconColor,
           backgroundColor: Colors.grey[200],
           disabledForegroundColor: Colors.grey[400],
           disabledBackgroundColor: Colors.grey[100],
@@ -520,12 +525,12 @@ class _TransferDialogState extends State<TransferDialog> {
                     for (final name in _machineShortcutNames)
                       _greyDestinationShortcut(
                         label: name,
-                        icon: Icons.precision_manufacturing,
+                        icon: const DmuMachineIcon(size: 22),
                         location: _locationForExactName(name),
                       ),
                     _greyDestinationShortcut(
                       label: _trashShortcutName,
-                      icon: Icons.recycling,
+                      icon: const Icon(Icons.recycling, size: 22),
                       location: _locationForExactName(_trashShortcutName),
                     ),
                     if (_homeBin != null)
@@ -538,8 +543,9 @@ class _TransferDialogState extends State<TransferDialog> {
                           style: TextButton.styleFrom(
                             foregroundColor: Colors.grey[800],
                             backgroundColor: Colors.grey[200],
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 8),
+                            minimumSize: const Size(0, 40),
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(8),
                             ),
