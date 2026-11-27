@@ -23,7 +23,7 @@ class DmuMachineIcon extends StatelessWidget {
       child: CustomPaint(
         painter: _DmuMachinePainter(
           color: c,
-          strokeWidth: strokeWidth ?? (size / 10).clamp(1.8, 2.6),
+          strokeWidth: strokeWidth ?? (size / 14).clamp(1.25, 1.75),
         ),
       ),
     );
