@@ -79,6 +79,11 @@ class _ReturnDialogState extends State<ReturnDialog> {
         for (var tl in toolLocations) {
           final toolId = tl.data['tool'];
           final tool = await pbService.getToolById(toolId);
+          // Filament lives under machines for stock tracking but is not a
+          // shop tool — omit from Return Tool (dashboard / inventory home).
+          final category =
+              (tool.data['category'] ?? '').toString().trim().toLowerCase();
+          if (category == '3d filament') continue;
 
           toolsInMachines.add({
             'tool': tool,

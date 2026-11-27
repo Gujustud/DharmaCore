@@ -40,7 +40,10 @@ class _ReturnToolScreenState extends State<ReturnToolScreen> {
         for (var tl in toolLocations) {
           final toolId = tl.data['tool'];
           final tool = await pbService.getToolById(toolId);
-          
+          final category =
+              (tool.data['category'] ?? '').toString().trim().toLowerCase();
+          if (category == '3d filament') continue;
+
           toolsInMachines.add({
             'tool': tool,
             'tool_location': tl,
