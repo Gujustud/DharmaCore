@@ -38,17 +38,27 @@ class _ReturnToolScreenState extends State<ReturnToolScreen> {
         final toolLocations = await pbService.getToolLocationsAtLocation(machineLoc.id);
         
         for (var tl in toolLocations) {
+          final qty = tl.data['quantity'];
+          final quantity = qty is int
+              ? qty
+              : (qty is num ? qty.toInt() : int.tryParse('$qty') ?? 0);
+          if (quantity <= 0) continue;
+
           final toolId = tl.data['tool'];
           final tool = await pbService.getToolById(toolId);
-          final category =
-              (tool.data['category'] ?? '').toString().trim().toLowerCase();
-          if (category == '3d filament') continue;
+          final category = (tool.data['category'] ?? '').toString();
+          final cat = category.trim().toLowerCase();
+          if (cat == '3d filament' ||
+              cat == '3dp filament' ||
+              cat.contains('filament')) {
+            continue;
+          }
 
           toolsInMachines.add({
             'tool': tool,
             'tool_location': tl,
             'machine_location': machineLoc,
-            'quantity': tl.data['quantity'],
+            'quantity': quantity,
           });
         }
       }

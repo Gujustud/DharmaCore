@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'models.dart';
 import 'pocketbase_service.dart';
+import 'tool_location_helpers.dart';
 
 class TransferDialog extends StatefulWidget {
   final Tool tool;
@@ -30,6 +31,7 @@ class _TransferDialogState extends State<TransferDialog> {
   int _quantity = 1;
   String? _selectedDestination;
   bool _isSubmitting = false;
+  Location? _homeBin;
 
   final TextEditingController _searchController = TextEditingController();
   List<Location>? _suggestions;
@@ -38,37 +40,47 @@ class _TransferDialogState extends State<TransferDialog> {
   static const int _minSearchLength = 2;
 
   @override
+  void initState() {
+    super.initState();
+    _loadHomeBin();
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     _searchDebounce?.cancel();
     super.dispose();
   }
 
-  // Build full hierarchical path for a location
-  String _buildLocationPath(Location location) {
-    final names = <String>[];
-    var current = location;
-    
-    while (true) {
-      names.insert(0, current.name);
-      
-      if (current.parentId == null || current.parentId!.isEmpty) break;
-      
-      try {
-        current = widget.allLocations.firstWhere((loc) => loc.id == current.parentId);
-      } catch (e) {
-        break;
-      }
+  Future<void> _loadHomeBin() async {
+    try {
+      final records =
+          await PocketBaseService().getToolLocations(widget.tool.id);
+      final toolLocs =
+          records.map((r) => ToolLocation.fromRecord(r)).toList();
+      final home = findHomeBinLocation(
+        toolLocations: toolLocs,
+        allLocations: widget.allLocations,
+        excludeLocationId: widget.sourceLocation.locationId,
+      );
+      if (!mounted) return;
+      setState(() => _homeBin = home);
+    } catch (_) {
+      // Leave _homeBin null — shortcut hidden.
     }
-    
-    return names.join(' - ');
   }
 
-  /// All locations that are valid destinations (exclude source).
+  String _buildLocationPath(Location location) {
+    return buildLocationPath(location, widget.allLocations);
+  }
+
+  /// Valid destinations (exclude source; hide filament shelves).
   List<Location> get _destinationLocations {
-    return widget.allLocations
-        .where((loc) => loc.id != widget.sourceLocation.locationId)
-        .toList();
+    return widget.allLocations.where((loc) {
+      if (loc.id == widget.sourceLocation.locationId) return false;
+      if (isFilamentShelfLocation(loc)) return false;
+      return true;
+    }).toList();
   }
 
   /// First destination whose leaf [Location.name] equals [exactName], or null.
@@ -516,6 +528,28 @@ class _TransferDialogState extends State<TransferDialog> {
                       icon: Icons.recycling,
                       location: _locationForExactName(_trashShortcutName),
                     ),
+                    if (_homeBin != null)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 4),
+                        child: TextButton(
+                          onPressed: _isSubmitting
+                              ? null
+                              : () => _selectDestination(_homeBin!),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.grey[800],
+                            backgroundColor: Colors.grey[200],
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 8),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                          child: Text(
+                            _homeBin!.name,
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),

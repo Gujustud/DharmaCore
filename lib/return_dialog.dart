@@ -1,8 +1,9 @@
 // return_dialog.dart
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'models.dart';
 import 'pocketbase_service.dart';
+import 'tool_location_helpers.dart';
 
 class ReturnDialog extends StatefulWidget {
   const ReturnDialog({super.key});
@@ -13,6 +14,7 @@ class ReturnDialog extends StatefulWidget {
 
 class _ReturnDialogState extends State<ReturnDialog> {
   final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _destSearchController = TextEditingController();
   List<Map<String, dynamic>> _toolsInMachines = [];
   List<Map<String, dynamic>> _filteredTools = [];
   Map<String, dynamic>? _selectedTool;
@@ -21,6 +23,13 @@ class _ReturnDialogState extends State<ReturnDialog> {
   bool _isLoading = true;
   bool _isSubmitting = false;
   List<Location> _allLocations = [];
+
+  /// Home bin for the currently selected tool (toolbox row, qty may be 0).
+  Location? _homeBin;
+  List<Location>? _destSuggestions;
+  Timer? _destSearchDebounce;
+  static const int _maxDestSuggestions = 8;
+  static const int _minDestSearchLength = 1;
 
   @override
   void initState() {
@@ -32,27 +41,9 @@ class _ReturnDialogState extends State<ReturnDialog> {
   @override
   void dispose() {
     _searchController.dispose();
+    _destSearchController.dispose();
+    _destSearchDebounce?.cancel();
     super.dispose();
-  }
-
-  // Build full hierarchical path for a location
-  String _buildLocationPath(Location location) {
-    final names = <String>[];
-    var current = location;
-
-    while (true) {
-      names.insert(0, current.name);
-
-      if (current.parentId == null || current.parentId!.isEmpty) break;
-
-      try {
-        current = _allLocations.firstWhere((loc) => loc.id == current.parentId);
-      } catch (e) {
-        break;
-      }
-    }
-
-    return names.join(' - ');
   }
 
   Future<void> _loadToolsInMachines() async {
@@ -63,33 +54,34 @@ class _ReturnDialogState extends State<ReturnDialog> {
     try {
       final pbService = PocketBaseService();
 
-      // Load all locations for destination selection
       final locationRecords = await pbService.getLocations();
-      _allLocations = locationRecords.map((r) => Location.fromRecord(r)).toList();
+      _allLocations =
+          locationRecords.map((r) => Location.fromRecord(r)).toList();
 
-      // Find all machine locations
-      final machineLocations = locationRecords.where((loc) => loc.data['type'] == 'machine').toList();
+      final machineLocations =
+          locationRecords.where((loc) => loc.data['type'] == 'machine').toList();
 
-      // Get tools in each machine
       final List<Map<String, dynamic>> toolsInMachines = [];
 
       for (var machineLoc in machineLocations) {
-        final toolLocations = await pbService.getToolLocationsAtLocation(machineLoc.id);
+        final toolLocations =
+            await pbService.getToolLocationsAtLocation(machineLoc.id);
 
         for (var tl in toolLocations) {
+          final qty = toolLocationQuantity(tl.data['quantity']);
+          // Zero-qty machine tags are leftover "was here" rows — not returnable.
+          if (qty <= 0) continue;
+
           final toolId = tl.data['tool'];
           final tool = await pbService.getToolById(toolId);
-          // Filament lives under machines for stock tracking but is not a
-          // shop tool — omit from Return Tool (dashboard / inventory home).
-          final category =
-              (tool.data['category'] ?? '').toString().trim().toLowerCase();
-          if (category == '3d filament') continue;
+          final category = (tool.data['category'] ?? '').toString();
+          if (isFilamentToolCategory(category)) continue;
 
           toolsInMachines.add({
             'tool': tool,
             'tool_location': tl,
             'machine_location': machineLoc,
-            'quantity': tl.data['quantity'],
+            'quantity': qty,
           });
         }
       }
@@ -123,29 +115,66 @@ class _ReturnDialogState extends State<ReturnDialog> {
         _filteredTools = _toolsInMachines.where((toolData) {
           final tool = toolData['tool'] as dynamic;
           final machineLoc = toolData['machine_location'] as dynamic;
-          return tool.data['tool_name'].toString().toLowerCase().contains(query) ||
-                 (tool.data['brand']?.toString().toLowerCase().contains(query) ?? false) ||
-                 (tool.data['model_number']?.toString().toLowerCase().contains(query) ?? false) ||
-                 machineLoc.data['name'].toString().toLowerCase().contains(query);
+          return tool.data['tool_name']
+                  .toString()
+                  .toLowerCase()
+                  .contains(query) ||
+              (tool.data['brand']
+                      ?.toString()
+                      .toLowerCase()
+                      .contains(query) ??
+                  false) ||
+              (tool.data['model_number']
+                      ?.toString()
+                      .toLowerCase()
+                      .contains(query) ??
+                  false) ||
+              machineLoc.data['name']
+                  .toString()
+                  .toLowerCase()
+                  .contains(query);
         }).toList();
       }
     });
   }
 
-  void _selectTool(Map<String, dynamic> toolData) {
-    setState(() {
-      if (_selectedTool == toolData) {
-        // Deselect if already selected
+  Future<void> _selectTool(Map<String, dynamic> toolData) async {
+    if (_selectedTool == toolData) {
+      setState(() {
         _selectedTool = null;
         _quantity = 1;
         _selectedDestination = null;
-      } else {
-        // Select new tool
-        _selectedTool = toolData;
-        _quantity = 1; // Reset quantity
-        _selectedDestination = null; // Reset destination
-      }
+        _homeBin = null;
+        _destSearchController.clear();
+        _destSuggestions = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _selectedTool = toolData;
+      _quantity = 1;
+      _selectedDestination = null;
+      _homeBin = null;
+      _destSearchController.clear();
+      _destSuggestions = null;
     });
+
+    try {
+      final tool = toolData['tool'];
+      final records = await PocketBaseService().getToolLocations(tool.id);
+      final toolLocs =
+          records.map((r) => ToolLocation.fromRecord(r)).toList();
+      final home = findHomeBinLocation(
+        toolLocations: toolLocs,
+        allLocations: _allLocations,
+        excludeLocationId: toolData['machine_location'].id as String?,
+      );
+      if (!mounted || _selectedTool != toolData) return;
+      setState(() => _homeBin = home);
+    } catch (_) {
+      // No home bin → quick button stays hidden.
+    }
   }
 
   void _incrementQuantity() {
@@ -164,21 +193,109 @@ class _ReturnDialogState extends State<ReturnDialog> {
     }
   }
 
-  // Get available destinations grouped by type (recycle first, then shelves, then toolboxes)
+  /// Leaf recycle / shelf / toolbox destinations (no filament shelves, no parents).
   List<Location> get _availableDestinations {
-    final locations = _allLocations.where((loc) => loc.type != 'machine').toList();
+    final destinations = _allLocations.where((loc) {
+      final type = loc.type.trim().toLowerCase();
+      if (type == 'machine') return false;
+      if (isFilamentShelfLocation(loc)) return false;
+      if (type == 'shelf' || type == 'toolbox' || type == 'recycle') {
+        return isLeafLocation(loc, _allLocations);
+      }
+      return false;
+    }).toList();
 
-    // Group by type with specific ordering: recycle, shelf, toolbox
-    final grouped = <Location>[];
+    destinations.sort((a, b) {
+      const order = {'recycle': 0, 'shelf': 1, 'toolbox': 2};
+      final ao = order[a.type.toLowerCase()] ?? 9;
+      final bo = order[b.type.toLowerCase()] ?? 9;
+      if (ao != bo) return ao.compareTo(bo);
+      return buildLocationPath(a, _allLocations)
+          .compareTo(buildLocationPath(b, _allLocations));
+    });
+    return destinations;
+  }
 
-    // Add recycle locations first
-    grouped.addAll(locations.where((loc) => loc.type == 'recycle'));
-    // Add shelf locations
-    grouped.addAll(locations.where((loc) => loc.type == 'shelf'));
-    // Add toolbox locations
-    grouped.addAll(locations.where((loc) => loc.type == 'toolbox'));
+  void _onDestSearchChanged() {
+    final query = _destSearchController.text.trim();
+    if (query.length < _minDestSearchLength) {
+      setState(() => _destSuggestions = null);
+      return;
+    }
+    _destSearchDebounce?.cancel();
+    _destSearchDebounce = Timer(const Duration(milliseconds: 150), () {
+      final q = query.toLowerCase();
+      final matches = _availableDestinations
+          .map((loc) => MapEntry(loc, buildLocationPath(loc, _allLocations)))
+          .where((e) => e.value.toLowerCase().contains(q))
+          .toList();
+      if (mounted) {
+        setState(() {
+          _destSuggestions =
+              matches.take(_maxDestSuggestions).map((e) => e.key).toList();
+        });
+      }
+    });
+  }
 
-    return grouped;
+  void _selectDestination(Location loc) {
+    setState(() {
+      _selectedDestination = loc.id;
+      _destSearchController.clear();
+      _destSuggestions = null;
+    });
+  }
+
+  void _clearDestination() {
+    setState(() {
+      _selectedDestination = null;
+      _destSuggestions = null;
+    });
+  }
+
+  Future<void> _performReturn({required String toLocationId}) async {
+    if (_selectedTool == null) return;
+
+    setState(() {
+      _isSubmitting = true;
+    });
+
+    try {
+      final pbService = PocketBaseService();
+      final tool = _selectedTool!['tool'];
+      final sourceLocationId = _selectedTool!['tool_location'].data['location'];
+
+      await pbService.moveTool(
+        toolId: tool.id,
+        fromLocationId: sourceLocationId,
+        toLocationId: toLocationId,
+        quantity: _quantity,
+      );
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Tool returned successfully!'),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      setState(() {
+        _isSubmitting = false;
+      });
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error returning tool: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   Future<void> _handleReturn() async {
@@ -202,51 +319,21 @@ class _ReturnDialogState extends State<ReturnDialog> {
       return;
     }
 
-    setState(() {
-      _isSubmitting = true;
-    });
+    await _performReturn(toLocationId: _selectedDestination!);
+  }
 
-    try {
-      final pbService = PocketBaseService();
-      final tool = _selectedTool!['tool'];
-      final sourceLocationId = _selectedTool!['tool_location'].data['location'];
-
-      await pbService.moveTool(
-        toolId: tool.id,
-        fromLocationId: sourceLocationId,
-        toLocationId: _selectedDestination!,
-        quantity: _quantity,
-      );
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Tool returned successfully!'),
-          backgroundColor: Colors.green,
-        ),
-      );
-
-      // Close dialog and refresh parent screen
-      Navigator.of(context).pop(true);
-    } catch (e) {
-      setState(() {
-        _isSubmitting = false;
-      });
-
-      if (!mounted) return;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error returning tool: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
+  /// One-tap return to home bin (no second Confirm click).
+  Future<void> _handleQuickHomeBin() async {
+    final home = _homeBin;
+    if (home == null || _selectedTool == null || _isSubmitting) return;
+    await _performReturn(toLocationId: home.id);
   }
 
   @override
   Widget build(BuildContext context) {
+    final home = _homeBin;
+    final homeLabel = home?.name;
+
     return AlertDialog(
       title: const Text(
         'Select Tool to Return',
@@ -254,12 +341,11 @@ class _ReturnDialogState extends State<ReturnDialog> {
       ),
       content: SingleChildScrollView(
         child: SizedBox(
-          width: 600, // Make dialog wider
+          width: 600,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Search field
               TextField(
                 controller: _searchController,
                 style: const TextStyle(fontSize: 14),
@@ -269,16 +355,14 @@ class _ReturnDialogState extends State<ReturnDialog> {
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 ),
               ),
               const SizedBox(height: 16),
-
-              // Loading state
               if (_isLoading)
                 const Center(child: CircularProgressIndicator())
               else ...[
-                // Results list
                 Container(
                   constraints: const BoxConstraints(maxHeight: 200),
                   decoration: BoxDecoration(
@@ -317,24 +401,28 @@ class _ReturnDialogState extends State<ReturnDialog> {
                                 tool.data['tool_name'] ?? 'Unknown Tool',
                                 style: TextStyle(
                                   fontSize: 14,
-                                  fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                                  fontWeight: isSelected
+                                      ? FontWeight.bold
+                                      : FontWeight.normal,
                                 ),
                               ),
                               subtitle: Text(
                                 '${machineLoc.data['name']} (Qty: $quantity)',
                                 style: TextStyle(
                                   fontSize: 14,
-                                  color: isSelected ? Colors.blue[700] : Colors.grey[600],
+                                  color: isSelected
+                                      ? Colors.blue[700]
+                                      : Colors.grey[600],
                                 ),
                               ),
                               selected: isSelected,
-                              onTap: () => _selectTool(toolData),
+                              onTap: _isSubmitting
+                                  ? null
+                                  : () => _selectTool(toolData),
                             );
                           },
                         ),
                 ),
-
-                // Selection details
                 if (_selectedTool != null) ...[
                   const SizedBox(height: 16),
                   Container(
@@ -349,25 +437,27 @@ class _ReturnDialogState extends State<ReturnDialog> {
                       children: [
                         Text(
                           'Selected: ${_selectedTool!['tool'].data['tool_name']}',
-                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                          style: const TextStyle(
+                              fontSize: 14, fontWeight: FontWeight.bold),
                         ),
                         Text(
                           'From: ${_selectedTool!['machine_location'].data['name']}',
-                          style: TextStyle(fontSize: 14, color: Colors.grey[700]),
+                          style: TextStyle(
+                              fontSize: 14, color: Colors.grey[700]),
                         ),
                         const SizedBox(height: 8),
-
-                        // Quantity controls
                         Row(
                           children: [
                             const Text('Quantity: '),
                             IconButton(
-                              onPressed: _decrementQuantity,
+                              onPressed:
+                                  _isSubmitting ? null : _decrementQuantity,
                               icon: const Icon(Icons.remove),
                               iconSize: 16,
                             ),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
                               decoration: BoxDecoration(
                                 border: Border.all(color: Colors.grey[400]!),
                                 borderRadius: BorderRadius.circular(4),
@@ -375,44 +465,138 @@ class _ReturnDialogState extends State<ReturnDialog> {
                               child: Text('$_quantity'),
                             ),
                             IconButton(
-                              onPressed: _incrementQuantity,
+                              onPressed:
+                                  _isSubmitting ? null : _incrementQuantity,
                               icon: const Icon(Icons.add),
                               iconSize: 16,
                             ),
                             Text(' (max: ${_selectedTool!['quantity']})'),
                           ],
                         ),
-
                         const SizedBox(height: 8),
-
-                        // Destination dropdown
-                        DropdownButtonFormField<String>(
-                          value: _selectedDestination,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            color: Colors.black,
-                          ),
-                          decoration: const InputDecoration(
-                            labelText: 'Return to',
-                            border: OutlineInputBorder(),
-                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          ),
-                          items: _availableDestinations.map((location) {
-                            return DropdownMenuItem<String>(
-                              value: location.id,
-                              child: Text(
-                                _buildLocationPath(location),
-                                style: const TextStyle(fontSize: 14),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: _selectedDestination != null
+                                  ? Builder(
+                                      builder: (context) {
+                                        Location? loc;
+                                        try {
+                                          loc = _allLocations.firstWhere(
+                                              (l) =>
+                                                  l.id == _selectedDestination);
+                                        } catch (_) {
+                                          loc = null;
+                                        }
+                                        final path = loc != null
+                                            ? buildLocationPath(
+                                                loc, _allLocations)
+                                            : _selectedDestination!;
+                                        return Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 12, vertical: 12),
+                                          decoration: BoxDecoration(
+                                            border: Border.all(
+                                                color: Colors.grey[400]!),
+                                            borderRadius:
+                                                BorderRadius.circular(8),
+                                            color: Colors.grey[50],
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              Expanded(
+                                                child: Text(
+                                                  path,
+                                                  style: const TextStyle(
+                                                      fontSize: 14),
+                                                ),
+                                              ),
+                                              if (!_isSubmitting)
+                                                TextButton(
+                                                  onPressed: _clearDestination,
+                                                  child: const Text('Change'),
+                                                ),
+                                            ],
+                                          ),
+                                        );
+                                      },
+                                    )
+                                  : Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        TextField(
+                                          controller: _destSearchController,
+                                          enabled: !_isSubmitting,
+                                          style: const TextStyle(fontSize: 14),
+                                          decoration: InputDecoration(
+                                            labelText: 'Return to',
+                                            hintText: 'Search destination…',
+                                            prefixIcon:
+                                                const Icon(Icons.search),
+                                            border: const OutlineInputBorder(),
+                                            contentPadding:
+                                                const EdgeInsets.symmetric(
+                                                    horizontal: 12,
+                                                    vertical: 8),
+                                          ),
+                                          onChanged: (_) =>
+                                              _onDestSearchChanged(),
+                                        ),
+                                        if (_destSuggestions != null &&
+                                            _destSuggestions!.isNotEmpty) ...[
+                                          const SizedBox(height: 8),
+                                          Card(
+                                            elevation: 2,
+                                            child: ListView.separated(
+                                              shrinkWrap: true,
+                                              padding: EdgeInsets.zero,
+                                              itemCount:
+                                                  _destSuggestions!.length,
+                                              separatorBuilder: (_, __) =>
+                                                  const Divider(height: 1),
+                                              itemBuilder: (context, i) {
+                                                final loc =
+                                                    _destSuggestions![i];
+                                                final path = buildLocationPath(
+                                                    loc, _allLocations);
+                                                return ListTile(
+                                                  dense: true,
+                                                  title: Text(
+                                                    path,
+                                                    style: const TextStyle(
+                                                        fontSize: 13),
+                                                  ),
+                                                  onTap: () =>
+                                                      _selectDestination(loc),
+                                                );
+                                              },
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                            ),
+                            if (home != null && homeLabel != null) ...[
+                              const SizedBox(width: 8),
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: OutlinedButton.icon(
+                                  onPressed: _isSubmitting
+                                      ? null
+                                      : _handleQuickHomeBin,
+                                  icon: const Icon(Icons.inventory_2_outlined,
+                                      size: 18),
+                                  label: Text(homeLabel),
+                                  style: OutlinedButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 14),
+                                  ),
+                                ),
                               ),
-                            );
-                          }).toList(),
-                          onChanged: _isSubmitting
-                              ? null
-                              : (value) {
-                                  setState(() {
-                                    _selectedDestination = value;
-                                  });
-                                },
+                            ],
+                          ],
                         ),
                       ],
                     ),
@@ -425,11 +609,16 @@ class _ReturnDialogState extends State<ReturnDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: _isSubmitting ? null : () => Navigator.of(context).pop(false),
+          onPressed:
+              _isSubmitting ? null : () => Navigator.of(context).pop(false),
           child: const Text('Cancel'),
         ),
         ElevatedButton(
-          onPressed: _isSubmitting || _selectedTool == null ? null : _handleReturn,
+          onPressed: _isSubmitting ||
+                  _selectedTool == null ||
+                  _selectedDestination == null
+              ? null
+              : _handleReturn,
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.green,
             foregroundColor: Colors.white,
