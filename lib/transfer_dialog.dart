@@ -530,7 +530,7 @@ class _TransferDialogState extends State<TransferDialog> {
                     for (final name in _machineShortcutNames)
                       _greyDestinationShortcut(
                         label: name,
-                        icon: const DmuMachineIcon(size: 22),
+                        icon: const DmuMachineIcon(size: 28),
                         location: _locationForExactName(name),
                       ),
                     if (_homeBin != null)
