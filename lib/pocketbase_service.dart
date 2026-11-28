@@ -2979,6 +2979,74 @@ class PocketBaseService {
     }
   }
 
+  /// Material catalog ids with purchase lines still waiting to be received
+  /// onto the shelf (purchase date on/after [fromDate], remaining qty > 0).
+  Future<Set<String>> getMaterialIdsPendingReceiveStock({
+    required DateTime fromDate,
+  }) async {
+    try {
+      final items = await pb.collection('purchase_items').getFullList(
+        filter: 'line_type = "material" && material != ""',
+        expand: 'purchase',
+      );
+      final cutoff = DateTime(fromDate.year, fromDate.month, fromDate.day);
+      final remainingByItem = <String, int>{};
+      final materialByItem = <String, String>{};
+
+      for (final r in items) {
+        final item = PurchaseItem.fromRecord(r);
+        final mid = (item.materialId ?? '').trim();
+        if (mid.isEmpty) continue;
+        final ordered = item.quantity.round();
+        if (ordered <= 0) continue;
+
+        DateTime? purchaseDate;
+        try {
+          final p = r.expand?['purchase'];
+          final purchaseRec = (p is List && p.isNotEmpty) ? p.first : p;
+          final raw = purchaseRec?.data?['purchase_date'];
+          if (raw != null) purchaseDate = DateTime.tryParse(raw.toString());
+        } catch (_) {}
+        if (purchaseDate == null) continue;
+        final d = DateTime(
+          purchaseDate.year,
+          purchaseDate.month,
+          purchaseDate.day,
+        );
+        if (d.isBefore(cutoff)) continue;
+
+        remainingByItem[item.id] = ordered;
+        materialByItem[item.id] = mid;
+      }
+      if (remainingByItem.isEmpty) return {};
+
+      // Subtract pieces already linked to those purchase lines.
+      try {
+        final pieces = await pb.collection('material_pieces').getFullList(
+          filter: 'purchase_item != ""',
+        );
+        for (final p in pieces) {
+          final pid = _relationId(p.data['purchase_item']) ?? '';
+          if (pid.isEmpty || !remainingByItem.containsKey(pid)) continue;
+          remainingByItem[pid] = remainingByItem[pid]! - 1;
+        }
+      } catch (_) {
+        // Pieces collection missing — treat all eligible lines as pending.
+      }
+
+      final materialIds = <String>{};
+      for (final entry in remainingByItem.entries) {
+        if (entry.value <= 0) continue;
+        final mid = materialByItem[entry.key];
+        if (mid != null && mid.isNotEmpty) materialIds.add(mid);
+      }
+      return materialIds;
+    } catch (e) {
+      print('Error getting materials pending receive stock: $e');
+      return {};
+    }
+  }
+
   /// Heat/lot strings keyed by material id (for Material list search).
   Future<Map<String, List<String>>> getMaterialHeatLotsByMaterialId() async {
     try {

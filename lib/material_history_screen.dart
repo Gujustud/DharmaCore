@@ -37,6 +37,9 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
   Set<String> _onShelfMaterialIds = {};
   bool _onShelfIdsUnavailable = false;
   bool _inStockOnly = false;
+  /// Materials with purchase lines still waiting to be received (from cutoff).
+  Set<String> _pendingReceiveMaterialIds = {};
+  bool _toStockOnly = false;
   ShopMaterial? _selected;
   List<dynamic> _historyRecords = [];
   List<MaterialPiece> _pieces = [];
@@ -67,6 +70,9 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
       final pb = PocketBaseService();
       final materialsFuture = pb.getMaterials();
       final lotsFuture = pb.getMaterialHeatLotsByMaterialId();
+      final pendingReceiveFuture = pb.getMaterialIdsPendingReceiveStock(
+        fromDate: kReceiveStockFromDate,
+      );
       Set<String> onShelfIds = {};
       var onShelfUnavailable = false;
       try {
@@ -77,13 +83,16 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
       }
       final records = await materialsFuture;
       final lots = await lotsFuture;
+      final pendingReceive = await pendingReceiveFuture;
       final list = records.map(ShopMaterial.fromRecord).toList();
       setState(() {
         _materials = list;
         _lotsByMaterialId = lots;
         _onShelfMaterialIds = onShelfIds;
         _onShelfIdsUnavailable = onShelfUnavailable;
+        _pendingReceiveMaterialIds = pendingReceive;
         if (onShelfUnavailable) _inStockOnly = false;
+        if (pendingReceive.isEmpty) _toStockOnly = false;
         _syncFilter(_searchController.text);
         // Refresh selected if it still exists.
         if (_selected != null) {
@@ -126,6 +135,20 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     }
   }
 
+  Future<void> _refreshPendingReceiveIds() async {
+    try {
+      final ids = await PocketBaseService().getMaterialIdsPendingReceiveStock(
+        fromDate: kReceiveStockFromDate,
+      );
+      if (!mounted) return;
+      setState(() {
+        _pendingReceiveMaterialIds = ids;
+        if (ids.isEmpty) _toStockOnly = false;
+        _syncFilter(_searchController.text);
+      });
+    } catch (_) {}
+  }
+
   List<String> _lotsFor(ShopMaterial m) =>
       _lotsByMaterialId[m.id] ?? const <String>[];
 
@@ -142,6 +165,9 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     Iterable<ShopMaterial> source = _materials;
     if (_inStockOnly && !_onShelfIdsUnavailable) {
       source = source.where((m) => _onShelfMaterialIds.contains(m.id));
+    }
+    if (_toStockOnly) {
+      source = source.where((m) => _pendingReceiveMaterialIds.contains(m.id));
     }
     if (q.isEmpty) {
       _filtered = source.toList();
@@ -174,6 +200,27 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     if (_onShelfIdsUnavailable) return;
     setState(() {
       _inStockOnly = !_inStockOnly;
+      if (_inStockOnly) _toStockOnly = false;
+      _syncFilter(_searchController.text);
+    });
+  }
+
+  void _activateToStockFilter() {
+    if (_pendingReceiveMaterialIds.isEmpty) return;
+    setState(() {
+      _toStockOnly = true;
+      _inStockOnly = false;
+      _syncFilter(_searchController.text);
+    });
+    // Jump to the first material that needs receiving.
+    if (_filtered.isNotEmpty) {
+      _selectMaterial(_filtered.first);
+    }
+  }
+
+  void _clearToStockFilter() {
+    setState(() {
+      _toStockOnly = false;
       _syncFilter(_searchController.text);
     });
   }
@@ -226,16 +273,6 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
   List<MaterialPiece> get _onShelfPieces =>
       _pieces.where((p) => p.isOnShelf && p.lengthIn > 0).toList();
 
-  /// Only offer receive-to-stock for purchases on/after this day (feature launch).
-  /// Older history stays purchases-only — most of that metal is already used.
-  static final DateTime _receiveStockFromDate = DateTime(2026, 11, 28);
-
-  static bool _isOnOrAfterReceiveStockCutoff(DateTime? purchaseDate) {
-    if (purchaseDate == null) return false;
-    final d = DateTime(purchaseDate.year, purchaseDate.month, purchaseDate.day);
-    return !d.isBefore(_receiveStockFromDate);
-  }
-
   /// Purchase lines that still have pieces left to receive onto the shelf.
   List<_PurchaseReceiveCandidate> get _purchasesToStock {
     if (_piecesUnavailable) return const [];
@@ -262,7 +299,7 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
         date = DateTime.tryParse(rawDate.toString());
       }
       // Historical POs: do not nag to stock (metal usually long gone).
-      if (!_isOnOrAfterReceiveStockCutoff(date)) continue;
+      if (!purchaseDateEligibleForReceiveStock(date)) continue;
 
       String supplier = '';
       try {
@@ -517,36 +554,58 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
               : null,
         ),
       );
+      Widget filterChip({
+        required String label,
+        required bool selected,
+        required VoidCallback onPressed,
+      }) {
+        return SizedBox(
+          height: kListToolbarControlHeight,
+          child: OutlinedButton(
+            onPressed: onPressed,
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              minimumSize: const Size(0, kListToolbarControlHeight),
+              maximumSize:
+                  const Size(double.infinity, kListToolbarControlHeight),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              backgroundColor: selected ? scheme.primary : Colors.transparent,
+              foregroundColor: selected ? scheme.onPrimary : scheme.onSurface,
+              side: BorderSide(
+                color: selected ? scheme.primary : scheme.outlineVariant,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 14, height: 1.2),
+            ),
+          ),
+        );
+      }
+
       final inStockChip = _onShelfIdsUnavailable
           ? null
-          : SizedBox(
-              height: kListToolbarControlHeight,
-              child: OutlinedButton(
-                onPressed: _toggleInStockOnly,
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  minimumSize: const Size(0, kListToolbarControlHeight),
-                  maximumSize:
-                      const Size(double.infinity, kListToolbarControlHeight),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  backgroundColor:
-                      _inStockOnly ? scheme.primary : Colors.transparent,
-                  foregroundColor:
-                      _inStockOnly ? scheme.onPrimary : scheme.onSurface,
-                  side: BorderSide(
-                    color: _inStockOnly
-                        ? scheme.primary
-                        : scheme.outlineVariant,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-                child: const Text(
-                  'In stock',
-                  style: TextStyle(fontSize: 14, height: 1.2),
-                ),
-              ),
+          : filterChip(
+              label: 'In stock',
+              selected: _inStockOnly,
+              onPressed: _toggleInStockOnly,
+            );
+      final pendingCount = _pendingReceiveMaterialIds.length;
+      final toStockChip = pendingCount == 0
+          ? null
+          : filterChip(
+              label: 'To stock ($pendingCount)',
+              selected: _toStockOnly,
+              onPressed: () {
+                if (_toStockOnly) {
+                  _clearToStockFilter();
+                } else {
+                  _activateToStockFilter();
+                }
+              },
             );
       final addButton = InventoryListActionButton(
         label: 'Add material',
@@ -562,7 +621,11 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
               children: [
                 if (inStockChip != null) ...[
                   inStockChip,
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 8),
+                ],
+                if (toStockChip != null) ...[
+                  toStockChip,
+                  const SizedBox(width: 8),
                 ],
                 Expanded(child: addButton),
               ],
@@ -576,6 +639,10 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
           if (inStockChip != null) ...[
             const SizedBox(width: 12),
             inStockChip,
+          ],
+          if (toStockChip != null) ...[
+            const SizedBox(width: 8),
+            toStockChip,
           ],
           const SizedBox(width: 12),
           addButton,
@@ -606,10 +673,13 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                         child: Text(
                           _materials.isEmpty
                               ? 'No materials yet.\nAdd one here, or from a purchase line.'
-                              : _inStockOnly &&
+                              : _toStockOnly &&
                                       _searchController.text.trim().isEmpty
-                                  ? 'Nothing in stock.\nTurn off In stock to see the full catalog.'
-                                  : 'No materials match your search.',
+                                  ? 'Nothing waiting to stock.\nTurn off To stock to see the full catalog.'
+                                  : _inStockOnly &&
+                                          _searchController.text.trim().isEmpty
+                                      ? 'Nothing in stock.\nTurn off In stock to see the full catalog.'
+                                      : 'No materials match your search.',
                           textAlign: TextAlign.center,
                           style: TextStyle(color: scheme.onSurfaceVariant),
                         ),
@@ -622,6 +692,8 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                           final selected = _selected?.id == m.id;
                           final q = _searchController.text.trim().toLowerCase();
                           final matchedLot = _firstMatchingLot(m, q);
+                          final needsStock =
+                              _pendingReceiveMaterialIds.contains(m.id);
                           return Card(
                             color:
                                 selected ? scheme.secondaryContainer : null,
@@ -633,10 +705,26 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                               ),
                               subtitle: matchedLot != null
                                   ? Text('Lot $matchedLot', style: muted)
-                                  : null,
+                                  : (needsStock
+                                      ? Text(
+                                          'Purchase to stock',
+                                          style: muted?.copyWith(
+                                            color: scheme.primary,
+                                          ),
+                                        )
+                                      : null),
                               trailing: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
+                                  if (needsStock)
+                                    Padding(
+                                      padding: const EdgeInsets.only(right: 4),
+                                      child: Icon(
+                                        Icons.inventory_2_outlined,
+                                        size: 18,
+                                        color: scheme.primary,
+                                      ),
+                                    ),
                                   PopupMenuButton<String>(
                                     onSelected: (value) {
                                       if (value == 'history') {
@@ -1259,6 +1347,7 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     if (pieces.isEmpty || _selected == null) return;
     await _selectMaterial(_selected!);
     await _refreshOnShelfIds();
+    await _refreshPendingReceiveIds();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

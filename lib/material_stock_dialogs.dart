@@ -11,6 +11,16 @@ import 'material_form_icons.dart';
 import 'models.dart';
 import 'pocketbase_service.dart';
 
+/// Receive-to-stock only for purchases on/after this calendar day.
+/// Older POs stay history-only (metal usually already used).
+final DateTime kReceiveStockFromDate = DateTime(2026, 11, 28);
+
+bool purchaseDateEligibleForReceiveStock(DateTime? purchaseDate) {
+  if (purchaseDate == null) return false;
+  final d = DateTime(purchaseDate.year, purchaseDate.month, purchaseDate.day);
+  return !d.isBefore(kReceiveStockFromDate);
+}
+
 String materialPieceIdentityLine(ShopMaterial m) {
   final grade = m.grade.trim();
   final form = materialFormLabel(m.form);
