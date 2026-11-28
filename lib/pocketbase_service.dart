@@ -3002,10 +3002,12 @@ class PocketBaseService {
 
         DateTime? purchaseDate;
         try {
-          final p = r.expand?['purchase'];
-          final purchaseRec = (p is List && p.isNotEmpty) ? p.first : p;
-          final raw = purchaseRec?.data?['purchase_date'];
-          if (raw != null) purchaseDate = DateTime.tryParse(raw.toString());
+          final purchases = r.expand?['purchase'];
+          if (purchases == null || purchases.isEmpty) continue;
+          final raw = purchases.first.data['purchase_date'];
+          if (raw != null) {
+            purchaseDate = DateTime.tryParse(raw.toString());
+          }
         } catch (_) {}
         if (purchaseDate == null) continue;
         final d = DateTime(
