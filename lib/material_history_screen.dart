@@ -226,6 +226,16 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
   List<MaterialPiece> get _onShelfPieces =>
       _pieces.where((p) => p.isOnShelf && p.lengthIn > 0).toList();
 
+  /// Only offer receive-to-stock for purchases on/after this day (feature launch).
+  /// Older history stays purchases-only — most of that metal is already used.
+  static final DateTime _receiveStockFromDate = DateTime(2026, 11, 28);
+
+  static bool _isOnOrAfterReceiveStockCutoff(DateTime? purchaseDate) {
+    if (purchaseDate == null) return false;
+    final d = DateTime(purchaseDate.year, purchaseDate.month, purchaseDate.day);
+    return !d.isBefore(_receiveStockFromDate);
+  }
+
   /// Purchase lines that still have pieces left to receive onto the shelf.
   List<_PurchaseReceiveCandidate> get _purchasesToStock {
     if (_piecesUnavailable) return const [];
@@ -251,6 +261,9 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
       if (rawDate != null) {
         date = DateTime.tryParse(rawDate.toString());
       }
+      // Historical POs: do not nag to stock (metal usually long gone).
+      if (!_isOnOrAfterReceiveStockCutoff(date)) continue;
+
       String supplier = '';
       try {
         final p = record.expand?['purchase'];
