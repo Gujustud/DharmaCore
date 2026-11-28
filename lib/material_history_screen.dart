@@ -226,6 +226,51 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
   List<MaterialPiece> get _onShelfPieces =>
       _pieces.where((p) => p.isOnShelf && p.lengthIn > 0).toList();
 
+  /// Purchase lines that still have pieces left to receive onto the shelf.
+  List<_PurchaseReceiveCandidate> get _purchasesToStock {
+    if (_piecesUnavailable) return const [];
+    final linkedCount = <String, int>{};
+    for (final p in _pieces) {
+      final id = (p.purchaseItemId ?? '').trim();
+      if (id.isEmpty) continue;
+      linkedCount[id] = (linkedCount[id] ?? 0) + 1;
+    }
+    final out = <_PurchaseReceiveCandidate>[];
+    for (final record in _historyRecords) {
+      final item = PurchaseItem.fromRecord(record);
+      if (item.lineType != 'material') continue;
+      final ordered = item.quantity.round();
+      if (ordered <= 0) continue;
+      final have = linkedCount[item.id] ?? 0;
+      final remaining = ordered - have;
+      if (remaining <= 0) continue;
+
+      final purchaseData = _expandFirst(record.expand, 'purchase');
+      DateTime? date;
+      final rawDate = purchaseData?['purchase_date'];
+      if (rawDate != null) {
+        date = DateTime.tryParse(rawDate.toString());
+      }
+      String supplier = '';
+      try {
+        final p = record.expand?['purchase'];
+        final purchaseRec = (p is List && p.isNotEmpty) ? p.first : p;
+        final supplierData = _expandFirst(purchaseRec?.expand, 'supplier');
+        supplier = (supplierData?['company_name'] ?? '').toString().trim();
+      } catch (_) {}
+
+      out.add(
+        _PurchaseReceiveCandidate(
+          item: item,
+          remainingQty: remaining,
+          purchaseDate: date,
+          supplierName: supplier,
+        ),
+      );
+    }
+    return out;
+  }
+
   String _onHandSummary() {
     final onShelf = _onShelfPieces;
     if (onShelf.isEmpty) return 'Empty';
@@ -991,6 +1036,10 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
             padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
             children: [
               if (!_piecesUnavailable) ...[
+                if (_purchasesToStock.isNotEmpty) ...[
+                  _buildPurchasesToStockBanner(scheme, selected),
+                  const SizedBox(height: 20),
+                ],
                 _sectionHeader(
                   scheme,
                   title: 'On shelf',
@@ -1006,7 +1055,9 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: Text(
-                      'Nothing on the shelf. Add stock to log a piece and print its sticker.',
+                      _purchasesToStock.isNotEmpty
+                          ? 'Nothing on the shelf yet. Add a purchase above, or use Add stock for rem / odd pieces.'
+                          : 'Nothing on the shelf. Add stock to log a piece and print its sticker.',
                       style: TextStyle(color: scheme.onSurfaceVariant),
                     ),
                   )
@@ -1178,6 +1229,108 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
     if (piece == null || _selected == null) return;
     await _selectMaterial(_selected!);
     await _refreshOnShelfIds();
+  }
+
+  Future<void> _receivePurchaseToStock(
+    ShopMaterial material,
+    _PurchaseReceiveCandidate candidate,
+  ) async {
+    final pieces = await showReceivePurchaseToStockDialog(
+      context,
+      material: material,
+      item: candidate.item,
+      remainingQty: candidate.remainingQty,
+      purchaseDate: candidate.purchaseDate,
+      supplierName: candidate.supplierName,
+    );
+    if (pieces.isEmpty || _selected == null) return;
+    await _selectMaterial(_selected!);
+    await _refreshOnShelfIds();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          pieces.length == 1
+              ? 'Added 1 piece to stock'
+              : 'Added ${pieces.length} pieces to stock',
+        ),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  Widget _buildPurchasesToStockBanner(
+    ColorScheme scheme,
+    ShopMaterial material,
+  ) {
+    final pending = _purchasesToStock;
+    final textTheme = Theme.of(context).textTheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            pending.length == 1
+                ? 'Purchase ready to stock'
+                : '${pending.length} purchases ready to stock',
+            style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            'Metal on a PO but not on the shelf yet. Add it when it arrives.',
+            style: textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 10),
+          for (var i = 0; i < pending.length; i++) ...[
+            if (i > 0) const SizedBox(height: 8),
+            _buildPurchaseToStockRow(scheme, material, pending[i]),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPurchaseToStockRow(
+    ColorScheme scheme,
+    ShopMaterial material,
+    _PurchaseReceiveCandidate c,
+  ) {
+    final textTheme = Theme.of(context).textTheme;
+    final dateText = c.purchaseDate != null
+        ? DateFormat.yMMMd().format(c.purchaseDate!)
+        : 'No date';
+    final len = c.item.lengthIn;
+    final heat = (c.item.heatLot ?? '').trim();
+    final bits = <String>[
+      dateText,
+      if ((c.supplierName ?? '').isNotEmpty) c.supplierName!,
+      '${c.remainingQty} × ${len != null && len > 0 ? '${formatInchesValue(len)} in' : '? in'}',
+      if (heat.isNotEmpty) 'Lot $heat',
+    ];
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            bits.join(' · '),
+            style: textTheme.bodyMedium,
+          ),
+        ),
+        const SizedBox(width: 8),
+        FilledButton(
+          onPressed: () => _receivePurchaseToStock(material, c),
+          child: const Text('Add to stock'),
+        ),
+      ],
+    );
   }
 
   Future<void> _cutPiece(ShopMaterial material, MaterialPiece piece) async {
@@ -1394,6 +1547,13 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
             style: detailStyle,
             children: [
               TextSpan(text: 'Qty $qty'),
+              if (item.lengthIn != null && item.lengthIn! > 0) ...[
+                const TextSpan(text: ' × '),
+                TextSpan(
+                  text: '${formatInchesValue(item.lengthIn!)} in',
+                  style: detailBold,
+                ),
+              ],
               if (unit != null) ...[
                 const TextSpan(text: ' at '),
                 TextSpan(
@@ -1435,51 +1595,71 @@ class _MaterialHistoryScreenState extends State<MaterialHistoryScreen>
       ],
     );
 
+    final pending = _purchasesToStock
+        .where((c) => c.item.id == item.id)
+        .toList();
+
     return Material(
       color: highlight
           ? scheme.secondaryContainer.withValues(alpha: 0.55)
           : Colors.transparent,
-      child: InkWell(
-        onTap: () => _openPurchase(item.purchaseId),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final compact = constraints.maxWidth < 560;
-            return Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: compact
-                        ? Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              dateText,
-                              const SizedBox(height: 4),
-                              details,
-                              if (certs.isNotEmpty) ...[
-                                const SizedBox(height: 8),
-                                certChips,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 560;
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: () => _openPurchase(item.purchaseId),
+                    borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: compact
+                          ? Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                dateText,
+                                const SizedBox(height: 4),
+                                details,
+                                if (certs.isNotEmpty) ...[
+                                  const SizedBox(height: 8),
+                                  certChips,
+                                ],
                               ],
-                            ],
-                          )
-                        : Row(
-                            children: [
-                              SizedBox(width: 110, child: dateText),
-                              Expanded(child: details),
-                              if (certs.isNotEmpty) ...[
-                                const SizedBox(width: 12),
-                                certChips,
+                            )
+                          : Row(
+                              children: [
+                                SizedBox(width: 110, child: dateText),
+                                Expanded(child: details),
+                                if (certs.isNotEmpty) ...[
+                                  const SizedBox(width: 12),
+                                  certChips,
+                                ],
                               ],
-                            ],
-                          ),
+                            ),
+                    ),
                   ),
+                ),
+                if (pending.isNotEmpty && _selected != null) ...[
                   const SizedBox(width: 4),
-                  Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
+                  TextButton(
+                    onPressed: () => _receivePurchaseToStock(
+                      _selected!,
+                      pending.first,
+                    ),
+                    child: const Text('Stock'),
+                  ),
                 ],
-              ),
-            );
-          },
-        ),
+                Icon(
+                  Icons.chevron_right,
+                  color: scheme.onSurfaceVariant,
+                ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -1508,4 +1688,18 @@ class _MaterialPriceSummary {
   final double? avg;
   final double? perInch;
   final String unitSuffix;
+}
+
+class _PurchaseReceiveCandidate {
+  const _PurchaseReceiveCandidate({
+    required this.item,
+    required this.remainingQty,
+    this.purchaseDate,
+    this.supplierName,
+  });
+
+  final PurchaseItem item;
+  final int remainingQty;
+  final DateTime? purchaseDate;
+  final String? supplierName;
 }

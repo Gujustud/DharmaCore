@@ -3495,6 +3495,39 @@ class PocketBaseService {
     }
   }
 
+  /// Create [quantity] on-shelf pieces from a purchase line (receive to stock).
+  Future<List<dynamic>> receivePurchaseItemToStock({
+    required String materialId,
+    required String purchaseItemId,
+    required double lengthIn,
+    required int quantity,
+    String? heatLot,
+    String? locationNote,
+    String? notes,
+  }) async {
+    if (quantity <= 0) {
+      throw ArgumentError('quantity must be greater than zero');
+    }
+    if (lengthIn <= 0) {
+      throw ArgumentError('length must be greater than zero');
+    }
+    final created = <dynamic>[];
+    for (var i = 0; i < quantity; i++) {
+      created.add(
+        await createMaterialPiece(
+          materialId: materialId,
+          lengthIn: lengthIn,
+          source: 'purchase',
+          heatLot: heatLot,
+          locationNote: locationNote,
+          purchaseItemId: purchaseItemId,
+          notes: notes,
+        ),
+      );
+    }
+    return created;
+  }
+
   Future<dynamic> createMaterialPiece({
     required String materialId,
     required double lengthIn,

@@ -242,6 +242,218 @@ Future<void> printOrPreviewMaterialLabel(
   );
 }
 
+/// Receive a purchase line onto the shelf: creates [remainingQty] pieces linked
+/// to that purchase item (Length / heat from the PO, editable).
+///
+/// Returns the created pieces (empty list if cancelled).
+Future<List<MaterialPiece>> showReceivePurchaseToStockDialog(
+  BuildContext context, {
+  required ShopMaterial material,
+  required PurchaseItem item,
+  required int remainingQty,
+  DateTime? purchaseDate,
+  String? supplierName,
+}) async {
+  final defaultLen = item.lengthIn;
+  final lengthCtrl = TextEditingController(
+    text: defaultLen != null && defaultLen > 0
+        ? formatInchesValue(defaultLen)
+        : '',
+  );
+  final qtyCtrl = TextEditingController(text: '$remainingQty');
+  final locationCtrl = TextEditingController();
+  final heatCtrl = TextEditingController(text: item.heatLot ?? '');
+  var printAfter = true;
+  var saving = false;
+
+  final dateLabel = purchaseDate != null
+      ? DateFormat.yMMMd().format(purchaseDate)
+      : null;
+  final supplier = (supplierName ?? '').trim();
+
+  final created = await showDialog<List<MaterialPiece>>(
+    context: context,
+    barrierDismissible: false,
+    builder: (ctx) {
+      return StatefulBuilder(
+        builder: (ctx, setLocal) {
+          return AlertDialog(
+            title: const Text('Add purchase to stock'),
+            content: SizedBox(
+              width: 420,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      materialPieceIdentityLine(material),
+                      style: Theme.of(ctx).textTheme.titleSmall,
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      [
+                        if (dateLabel != null) dateLabel,
+                        if (supplier.isNotEmpty) supplier,
+                        'up to $remainingQty left to receive',
+                      ].join(' · '),
+                      style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                          ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: lengthCtrl,
+                      autofocus: defaultLen == null || defaultLen <= 0,
+                      enabled: !saving,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      decoration: const InputDecoration(
+                        labelText: 'Length (inches)',
+                        hintText: 'Per piece',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: qtyCtrl,
+                      enabled: !saving,
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        labelText: 'Pieces to add',
+                        hintText: 'Max $remainingQty',
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: heatCtrl,
+                      enabled: !saving,
+                      decoration: const InputDecoration(
+                        labelText: 'Heat / lot (optional)',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: locationCtrl,
+                      enabled: !saving,
+                      decoration: const InputDecoration(
+                        labelText: 'Location (optional)',
+                        hintText: 'e.g. Rack B',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Print stickers after save'),
+                      value: printAfter,
+                      onChanged: saving
+                          ? null
+                          : (v) => setLocal(() => printAfter = v ?? true),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: saving ? null : () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: saving
+                    ? null
+                    : () async {
+                        final length = parseLengthToInches(lengthCtrl.text) ??
+                            double.tryParse(
+                              lengthCtrl.text
+                                  .trim()
+                                  .replaceAll(RegExp(r'[^0-9.]'), ''),
+                            );
+                        final qty = int.tryParse(qtyCtrl.text.trim()) ?? 0;
+                        if (length == null || length <= 0) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            const SnackBar(
+                              content:
+                                  Text('Enter a length greater than zero'),
+                            ),
+                          );
+                          return;
+                        }
+                        if (qty <= 0 || qty > remainingQty) {
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                'Enter pieces between 1 and $remainingQty',
+                              ),
+                            ),
+                          );
+                          return;
+                        }
+                        setLocal(() => saving = true);
+                        try {
+                          final recs =
+                              await PocketBaseService().receivePurchaseItemToStock(
+                            materialId: material.id,
+                            purchaseItemId: item.id,
+                            lengthIn: length,
+                            quantity: qty,
+                            heatLot: heatCtrl.text,
+                            locationNote: locationCtrl.text,
+                          );
+                          final pieces = [
+                            for (final r in recs) MaterialPiece.fromRecord(r),
+                          ];
+                          if (ctx.mounted) Navigator.pop(ctx, pieces);
+                        } catch (e) {
+                          if (ctx.mounted) {
+                            setLocal(() => saving = false);
+                            ScaffoldMessenger.of(ctx).showSnackBar(
+                              SnackBar(
+                                content: Text('Could not add to stock: $e'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        }
+                      },
+                child: saving
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Add to stock'),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+
+  lengthCtrl.dispose();
+  qtyCtrl.dispose();
+  locationCtrl.dispose();
+  heatCtrl.dispose();
+
+  final pieces = created ?? const <MaterialPiece>[];
+  if (pieces.isNotEmpty && printAfter && context.mounted) {
+    for (final piece in pieces) {
+      if (!context.mounted) break;
+      await printOrPreviewMaterialLabel(
+        context,
+        material: material,
+        piece: piece,
+      );
+    }
+  }
+  return pieces;
+}
+
 /// Returns the created [MaterialPiece] (and prints/previews label when asked).
 Future<MaterialPiece?> showAddMaterialStockDialog(
   BuildContext context, {
